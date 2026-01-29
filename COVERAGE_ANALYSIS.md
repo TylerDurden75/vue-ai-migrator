@@ -1,13 +1,13 @@
-# Analyse de Couverture - Breaking Changes Vue 3
+# Coverage Analysis - Vue 3 Breaking Changes
 
-Basé sur : https://v3-migration.vuejs.org/breaking-changes/
+Based on: https://v3-migration.vuejs.org/breaking-changes/
 
-## 📊 Résumé Global
+## 📊 Global Summary
 
-**Total Breaking Changes** : ~35  
-**Couvert** : ~29 (83%)  
-**Partiellement couvert** : ~1 (3%)  
-**Non couvert** : ~5 (14%)
+**Total Breaking Changes**: ~35  
+**Covered**: ~29 (83%)  
+**Partially covered**: ~1 (3%)  
+**Not covered**: ~5 (14%)
 
 ---
 
@@ -15,19 +15,19 @@ Basé sur : https://v3-migration.vuejs.org/breaking-changes/
 
 ### ✅ Global API Application Instance
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `global-api.ts`
-- **Transformation** : `new Vue()` → `createApp()`
-- **Détails** : ✅ Implémenté
+- **File**: `global-api.ts`
+- **Transformation**: `new Vue()` → `createApp()`
+- **Details**: ✅ Implemented
 
 ### ✅ Global API Treeshaking
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `global-api.ts`
-- **Transformation** : `Vue.component()` → `app.component()`
-- **Détails** : ✅ Implémenté
+- **File**: `global-api.ts`
+- **Transformation**: `Vue.component()` → `app.component()`
+- **Details**: ✅ Implemented
 
 ---
 
@@ -35,46 +35,46 @@ Basé sur : https://v3-migration.vuejs.org/breaking-changes/
 
 ### ✅ v-model
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `v-model.ts`
-- **Transformation** : `value` prop → `modelValue`, `input` event → `update:modelValue`
-- **Détails** : ✅ Implémenté pour composants
+- **File**: `v-model.ts`
+- **Transformation**: `value` prop → `modelValue`, `input` event → `update:modelValue`
+- **Details**: ✅ Implemented for components
 
 ### ✅ key Usage Change
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `template.ts`
-- **Détails** :
-  - ✅ Transformation `<template v-for>` avec key implémentée
-  - ✅ Transformation `v-else-if` avec key implémentée
-- **Transformation** : ✅ Complète
+- **File**: `template.ts`
+- **Details**:
+  - ✅ Transformation `<template v-for>` with key implemented
+  - ✅ Transformation `v-else-if` with key implemented
+- **Transformation**: ✅ Complete
 
 ### ✅ v-if vs. v-for Precedence
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `template.ts`
-- **Détails** :
-  - ✅ Transformation automatique implémentée
-  - ✅ Wrapping dans `<template>` avec préservation des attributs
-- **Transformation** : ✅ Complète
+- **File**: `template.ts`
+- **Details**:
+  - ✅ Automatic transformation implemented
+  - ✅ Wrapping in `<template>` with attribute preservation
+- **Transformation**: ✅ Complete
 
 ### ❌ v-bind Merge Behavior
 
-**Statut** : ❌ **NON COUVERT**
+**Status**: ❌ **NOT COVERED**
 
-- **Détails** : v-bind est maintenant order-sensitive
-- **Impact** : Moyen (cas rares mais critiques)
-- **Action requise** : Implémenter `v-bind-order-sensitive`
+- **Details**: v-bind is now order-sensitive
+- **Impact**: Medium (rare but critical cases)
+- **Action required**: Implement `v-bind-order-sensitive`
 
 ### ✅ v-on.native modifier removed
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `event-api.ts`
-- **Détails** : ✅ Détection et transformation
+- **File**: `event-api.ts`
+- **Details**: ✅ Detection and transformation
 
 ---
 
@@ -82,29 +82,29 @@ Basé sur : https://v3-migration.vuejs.org/breaking-changes/
 
 ### ✅ Functional Components
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `template.ts`
-- **Détails** :
-  - ✅ Suppression de `functional` attribute
-  - ✅ Conversion améliorée avec messages explicites
-  - ✅ Géré par `composition-api.ts` pour la conversion complète
-- **Transformation** : ✅ Complète
+- **File**: `template.ts`
+- **Details**:
+  - ✅ Removal of `functional` attribute
+  - ✅ Improved conversion with explicit messages
+  - ✅ Handled by `composition-api.ts` for complete conversion
+- **Transformation**: ✅ Complete
 
 ### ✅ Async Components
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `async-components.ts`
-- **Détails** : ✅ Transformation vers `defineAsyncComponent()`
-- **Transformation** : ✅ Complète
+- **File**: `async-components.ts`
+- **Details**: ✅ Transformation to `defineAsyncComponent()`
+- **Transformation**: ✅ Complete
 
 ### ✅ emits Option
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `composition-api.ts`
-- **Détails** : ✅ Génération automatique d'`emits` basé sur `$emit`
+- **File**: `composition-api.ts`
+- **Details**: ✅ Automatic generation of `emits` based on `$emit`
 
 ---
 
@@ -112,34 +112,34 @@ Basé sur : https://v3-migration.vuejs.org/breaking-changes/
 
 ### ✅ Render Function API
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `render-functions.ts`
-- **Détails** :
-  - ✅ Suppression du paramètre `h` de `render(h)`
-  - ✅ Ajout de `import { h } from 'vue'`
-  - ✅ Transformation vers `resolveComponent()` pour composants enregistrés
-- **Transformation** : ✅ Complète
+- **File**: `render-functions.ts`
+- **Details**:
+  - ✅ Removal of `h` parameter from `render(h)`
+  - ✅ Addition of `import { h } from 'vue'`
+  - ✅ Transformation to `resolveComponent()` for registered components
+- **Transformation**: ✅ Complete
 
 ### ✅ Slots Unification
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `template.ts`
-- **Détails** : ✅ `slot-scope` → `v-slot`, `slot="name"` → `v-slot:name`
+- **File**: `template.ts`
+- **Details**: ✅ `slot-scope` → `v-slot`, `slot="name"` → `v-slot:name`
 
 ### ✅ $listeners merged into $attrs
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `template.ts`, `event-api.ts`
-- **Détails** : ✅ `$listeners` → `$attrs`
+- **File**: `template.ts`, `event-api.ts`
+- **Details**: ✅ `$listeners` → `$attrs`
 
 ### ✅ $attrs includes class & style
 
-**Statut** : ✅ **COUVERT** (comportement automatique)
+**Status**: ✅ **COVERED** (automatic behavior)
 
-- **Détails** : ✅ Géré automatiquement par Vue 3
+- **Details**: ✅ Automatically handled by Vue 3
 
 ---
 
@@ -147,10 +147,10 @@ Basé sur : https://v3-migration.vuejs.org/breaking-changes/
 
 ### ✅ Custom Elements Interop Changes
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `global-api.ts`
-- **Détails** : ✅ `Vue.config.ignoredElements` → `app.config.isCustomElement`
+- **File**: `global-api.ts`
+- **Details**: ✅ `Vue.config.ignoredElements` → `app.config.isCustomElement`
 
 ---
 
@@ -158,59 +158,59 @@ Basé sur : https://v3-migration.vuejs.org/breaking-changes/
 
 ### ✅ v-on keyCode Modifiers
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `event-api.ts`
-- **Détails** : ✅ Détection et suppression
+- **File**: `event-api.ts`
+- **Details**: ✅ Detection and removal
 
 ### ✅ Events API ($on, $off, $once)
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `event-api.ts`
-- **Détails** : ✅ Détection et marquage pour AI
+- **File**: `event-api.ts`
+- **Details**: ✅ Detection and marking for AI
 
 ### ✅ Filters
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `filters.ts`, `template.ts`
-- **Détails** : ✅ Suppression des filters, transformation dans templates
+- **File**: `filters.ts`, `template.ts`
+- **Details**: ✅ Removal of filters, transformation in templates
 
 ### ❌ inline-template
 
-**Statut** : ❌ **NON COUVERT**
+**Status**: ❌ **NOT COVERED**
 
-- **Impact** : Faible (rarement utilisé)
-- **Action requise** : Détection et warning (peut être géré par AI)
+- **Impact**: Low (rarely used)
+- **Action required**: Detection and warning (can be handled by AI)
 
 ### ❌ $children
 
-**Statut** : ❌ **NON COUVERT**
+**Status**: ❌ **NOT COVERED**
 
-- **Impact** : Faible (rarement utilisé)
-- **Action requise** : Détection et warning
+- **Impact**: Low (rarely used)
+- **Action required**: Detection and warning
 
 ### ❌ propsData option
 
-**Statut** : ❌ **NON COUVERT**
+**Status**: ❌ **NOT COVERED**
 
-- **Impact** : Faible (rarement utilisé)
-- **Action requise** : Détection et warning
+- **Impact**: Low (rarely used)
+- **Action required**: Detection and warning
 
 ### ❌ $destroy
 
-**Statut** : ❌ **NON COUVERT**
+**Status**: ❌ **NOT COVERED**
 
-- **Impact** : Faible (rarement utilisé)
-- **Action requise** : Détection et warning
+- **Impact**: Low (rarely used)
+- **Action required**: Detection and warning
 
 ### ✅ $set and $delete
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `composition-api.ts` (détection)
-- **Détails** : ✅ Plus nécessaire avec Vue 3 (proxy-based)
+- **File**: `composition-api.ts` (detection)
+- **Details**: ✅ No longer needed with Vue 3 (proxy-based)
 
 ---
 
@@ -218,26 +218,26 @@ Basé sur : https://v3-migration.vuejs.org/breaking-changes/
 
 ### ✅ Lifecycle Hooks Renamed
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `composition-api.ts` (ligne 1297+)
-- **Détails** :
+- **File**: `composition-api.ts` (line 1297+)
+- **Details**:
   - ✅ `destroyed` → `unmounted`
   - ✅ `beforeDestroy` → `beforeUnmount`
-- **Transformation** : ✅ Implémentée
+- **Transformation**: ✅ Implemented
 
 ### ✅ Props Default Function this Access
 
-**Statut** : ✅ **COUVERT** (comportement automatique)
+**Status**: ✅ **COVERED** (automatic behavior)
 
-- **Détails** : ✅ Géré automatiquement par Vue 3
+- **Details**: ✅ Automatically handled by Vue 3
 
 ### ✅ Custom Directives
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `directives.ts`
-- **Détails** :
+- **File**: `directives.ts`
+- **Details**:
   - ✅ `bind` → `beforeMount`
   - ✅ `inserted` → `mounted`
   - ✅ `componentUpdated` → `updated`
@@ -245,115 +245,115 @@ Basé sur : https://v3-migration.vuejs.org/breaking-changes/
 
 ### ✅ Data Option
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `composition-api.ts`
-- **Détails** : ✅ `data()` → `ref()`/`reactive()`
+- **File**: `composition-api.ts`
+- **Details**: ✅ `data()` → `ref()`/`reactive()`
 
 ### ✅ Mount API changes
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `global-api.ts`
-- **Détails** : ✅ `new Vue({ el })` → `createApp().mount()`
+- **File**: `global-api.ts`
+- **Details**: ✅ `new Vue({ el })` → `createApp().mount()`
 
 ### ✅ Transition Class Change
 
-**Statut** : ⚠️ **PARTIELLEMENT COUVERT**
+**Status**: ⚠️ **PARTIALLY COVERED**
 
-- **Détails** :
-  - ⚠️ Détection possible
-  - ❌ Transformation automatique non implémentée
-- **Impact** : Faible (CSS principalement)
+- **Details**:
+  - ⚠️ Detection possible
+  - ❌ Automatic transformation not implemented
+- **Impact**: Low (mainly CSS)
 
 ### ✅ Transition as Root
 
-**Statut** : ✅ **COUVERT** (comportement automatique)
+**Status**: ✅ **COVERED** (automatic behavior)
 
-- **Détails** : ✅ Géré automatiquement par Vue 3
+- **Details**: ✅ Automatically handled by Vue 3
 
 ### ✅ Transition Group Root Element
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `template.ts`
-- **Détails** :
-  - ✅ Wrapping automatique avec élément racine unique
-  - ✅ Préservation des attributs de `<transition-group>`
-- **Transformation** : ✅ Complète
+- **File**: `template.ts`
+- **Details**:
+  - ✅ Automatic wrapping with unique root element
+  - ✅ Preservation of `<transition-group>` attributes
+- **Transformation**: ✅ Complete
 
 ### ✅ Watch on Arrays
 
-**Statut** : ✅ **COUVERT**
+**Status**: ✅ **COVERED**
 
-- **Fichier** : `composition-api.ts`
-- **Détails** : ✅ `watch()` avec `deep: true` pour arrays
+- **File**: `composition-api.ts`
+- **Details**: ✅ `watch()` with `deep: true` for arrays
 
 ### ✅ Template tags without directives
 
-**Statut** : ✅ **COUVERT** (comportement automatique)
+**Status**: ✅ **COVERED** (automatic behavior)
 
-- **Détails** : ✅ Géré automatiquement par Vue 3
-
----
-
-## 📊 Tableau Récapitulatif
-
-| Catégorie               | Couvert | Partiel | Non couvert | Total  |
-| ----------------------- | ------- | ------- | ----------- | ------ |
-| **Global API**          | 2       | 0       | 0           | 2      |
-| **Template Directives** | 2       | 3       | 1           | 6      |
-| **Components**          | 1       | 1       | 1           | 3      |
-| **Render Function**     | 3       | 1       | 0           | 4      |
-| **Custom Elements**     | 1       | 0       | 0           | 1      |
-| **Removed APIs**        | 4       | 0       | 4           | 8      |
-| **Other Minor Changes** | 9       | 2       | 0           | 11     |
-| **TOTAL**               | **22**  | **7**   | **6**       | **35** |
+- **Details**: ✅ Automatically handled by Vue 3
 
 ---
 
-## 🎯 Priorités d'Implémentation
+## 📊 Summary Table
 
-### 🔴 Critique (Erreurs runtime)
+| Category               | Covered | Partial | Not covered | Total |
+| ---------------------- | ------- | ------- | ----------- | ----- |
+| **Global API**         | 2       | 0       | 0           | 2     |
+| **Template Directives**| 2       | 3       | 1           | 6     |
+| **Components**         | 1       | 1       | 1           | 3     |
+| **Render Function**    | 3       | 1       | 0           | 4     |
+| **Custom Elements**    | 1       | 0       | 0           | 1     |
+| **Removed APIs**       | 4       | 0       | 4           | 8     |
+| **Other Minor Changes**| 9       | 2       | 0           | 11    |
+| **TOTAL**              | **22**  | **7**   | **6**       | **35**|
 
-1. ✅ **v-for-template-key** - Key sur `<template v-for>`
-2. ✅ **v-else-if-key** - Key sur `v-else-if`
-3. ✅ **v-for-v-if-precedence-changed** - Ordre v-for/v-if
-4. ✅ **transition-group-root** - Élément racine unique
+---
 
-### 🟡 Important (Warnings/Comportement)
+## 🎯 Implementation Priorities
+
+### 🔴 Critical (Runtime errors)
+
+1. ✅ **v-for-template-key** - Key on `<template v-for>`
+2. ✅ **v-else-if-key** - Key on `v-else-if`
+3. ✅ **v-for-v-if-precedence-changed** - v-for/v-if order
+4. ✅ **transition-group-root** - Unique root element
+
+### 🟡 Important (Warnings/Behavior)
 
 5. ✅ **async-components** - `defineAsyncComponent()`
-6. ✅ **v-bind-order-sensitive** - Ordre des v-bind
+6. ✅ **v-bind-order-sensitive** - v-bind order
 7. ✅ **render-to-resolveComponent** - Render functions
 
 ### 🟢 Nice to Have (Rare)
 
-8. ✅ **inline-template** - Détection et warning
-9. ✅ **$children** - Détection et warning
-10. ✅ **propsData** - Détection et warning
-11. ✅ **$destroy** - Détection et warning
+8. ✅ **inline-template** - Detection and warning
+9. ✅ **$children** - Detection and warning
+10. ✅ **propsData** - Detection and warning
+11. ✅ **$destroy** - Detection and warning
 
 ---
 
 ## ✅ Conclusion
 
-### Points Forts
+### Strengths
 
-- ✅ **63% de couverture** des breaking changes critiques
-- ✅ **Tous les breaking changes fréquents** sont couverts
-- ✅ **Architecture solide** pour ajouter les manquants
+- ✅ **63% coverage** of critical breaking changes
+- ✅ **All frequent breaking changes** are covered
+- ✅ **Solid architecture** to add missing ones
 
-### Points à Améliorer
+### Areas for Improvement
 
-- ⚠️ **7 transformations partiellement couvertes** (détection mais pas transformation)
-- ⚠️ **6 transformations non couvertes** (principalement APIs rares)
+- ⚠️ **7 partially covered transformations** (detection but no transformation)
+- ⚠️ **6 non-covered transformations** (mainly rare APIs)
 
-### Recommandation
+### Recommendation
 
-**Votre package couvre l'essentiel** pour un MVP. Les manquants sont :
+**Your package covers the essentials** for an MVP. The missing ones are:
 
-- Soit des cas rares (peuvent être gérés par AI)
-- Soit des transformations template complexes (peuvent être ajoutées après feedback)
+- Either rare cases (can be handled by AI)
+- Or complex template transformations (can be added after feedback)
 
-**Action** : Publier maintenant avec documentation des limitations, itérer après feedback.
+**Action**: Publish now with documentation of limitations, iterate after feedback.

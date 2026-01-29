@@ -1,12 +1,12 @@
-# Instructions pour Créer les Screenshots Réels
+# Instructions for Creating Real Screenshots
 
-## 🎯 Objectif
+## 🎯 Objective
 
-Créer des screenshots visuels professionnels du CLI en action pour le README.
+Create professional visual screenshots of the CLI in action for the README.
 
 ## 📋 Checklist
 
-### Screenshots à Créer
+### Screenshots to Create
 
 - [ ] **cli-help.png** - `vue-ai-migrator --help`
 - [ ] **cli-analyze.png** - `vue-ai-migrator analyze --classify`
@@ -14,9 +14,9 @@ Créer des screenshots visuels professionnels du CLI en action pour le README.
 - [ ] **cli-diff.png** - `vue-ai-migrator migrate --dry-run --show-diff`
 - [ ] **cli-report.png** - `vue-ai-migrator report migration-report.json`
 - [ ] **cli-rollback.png** - `vue-ai-migrator rollback`
-- [ ] **demo.gif** - Workflow complet animé
+- [ ] **demo.gif** - Complete animated workflow
 
-## 🛠️ Commandes Exactes
+## 🛠️ Exact Commands
 
 ### 1. Help
 ```bash
@@ -54,26 +54,26 @@ cd vue-ai-migrator
 node dist/cli.js rollback test-project
 ```
 
-## 📸 Conseils pour les Screenshots
+## 📸 Tips for Screenshots
 
-1. **Terminal**: Utiliser un terminal avec thème sombre
-2. **Police**: Monospace, taille 14-16px
+1. **Terminal**: Use a terminal with dark theme
+2. **Font**: Monospace, size 14-16px
 3. **Dimensions**: 800x600px minimum
-4. **Format**: PNG pour statique, GIF pour animé
-5. **Qualité**: Haute résolution (2x pour Retina)
+4. **Format**: PNG for static, GIF for animated
+5. **Quality**: High resolution (2x for Retina)
 
-## 🎬 Pour le GIF
+## 🎬 For the GIF
 
-1. Utiliser Kap (macOS), Peek (Linux), ou LICEcap (Windows)
-2. Enregistrer le workflow complet:
+1. Use Kap (macOS), Peek (Linux), or LICEcap (Windows)
+2. Record the complete workflow:
    - Analyze
    - Migrate dry-run
    - View report
-3. Durée: 10-15 secondes max
-4. Taille: < 5MB
+3. Duration: 10-15 seconds max
+4. Size: < 5MB
 
-## ✅ Après Création
+## ✅ After Creation
 
-1. Sauvegarder dans `assets/screenshots/`
-2. Mettre à jour README.md avec les images
-3. Vérifier que les images s'affichent correctement
+1. Save in `assets/screenshots/`
+2. Update README.md with the images
+3. Verify that images display correctly

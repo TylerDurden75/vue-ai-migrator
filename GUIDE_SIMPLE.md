@@ -1,37 +1,37 @@
-# Guide Simple - vue-ai-migrator
+# Simple Guide - vue-ai-migrator
 
-## 🤔 Qu'est-ce que c'est ?
+## 🤔 What is it?
 
-**vue-ai-migrator** est un outil qui transforme automatiquement votre code Vue 2 en code Vue 3.
+**vue-ai-migrator** is a tool that automatically transforms your Vue 2 code into Vue 3 code.
 
-### Vue 2 vs Vue 3 - Explication simple
+### Vue 2 vs Vue 3 - Simple Explanation
 
-Imaginez que vous avez une voiture (Vue 2) et que vous voulez la transformer en voiture électrique moderne (Vue 3). Le problème, c'est que :
+Imagine you have a car (Vue 2) and you want to transform it into a modern electric car (Vue 3). The problem is:
 
-- Certaines pièces ne sont plus compatibles
-- La façon de conduire a changé
-- Il faut adapter beaucoup de choses manuellement
+- Some parts are no longer compatible
+- The way to drive has changed
+- Many things need to be adapted manually
 
-**vue-ai-migrator** fait ce travail automatiquement pour vous ! 🚗➡️🚗⚡
+**vue-ai-migrator** does this work automatically for you! 🚗➡️🚗⚡
 
 ---
 
-## 🎯 À quoi ça sert concrètement ?
+## 🎯 What is it used for concretely?
 
-### Exemple concret
+### Concrete Example
 
-**AVANT (Vue 2)** - Votre code actuel :
+**BEFORE (Vue 2)** - Your current code:
 
 ```vue
 <script>
 export default {
   data() {
     return {
-      message: 'Bonjour',
+      message: 'Hello',
     };
   },
   methods: {
-    direBonjour() {
+    greet() {
       alert(this.message);
     },
   },
@@ -39,141 +39,141 @@ export default {
 </script>
 ```
 
-**APRÈS (Vue 3)** - Ce que l'outil génère automatiquement :
+**AFTER (Vue 3)** - What the tool automatically generates:
 
 ```vue
 <script setup>
 import { ref } from 'vue';
 
-const message = ref('Bonjour');
+const message = ref('Hello');
 
-const direBonjour = () => {
+const greet = () => {
   alert(message.value);
 };
 </script>
 ```
 
-L'outil a transformé votre code pour qu'il fonctionne avec Vue 3, **sans que vous ayez à tout réécrire manuellement** !
+The tool has transformed your code to work with Vue 3, **without you having to rewrite everything manually**!
 
-> 💡 **Note** :
+> 💡 **Note**:
 >
-> - **Sans `--typescript`** : Génère `<script setup>` (syntaxe moderne Vue 3)
-> - **Avec `--typescript`** : Génère `<script setup lang="ts">` avec types TypeScript (`ref<string>()`)
+> - **Without `--typescript`**: Generates `<script setup>` (modern Vue 3 syntax)
+> - **With `--typescript`**: Generates `<script setup lang="ts">` with TypeScript types (`ref<string>()`)
 
 ---
 
 ## 📦 Installation
 
-### Étape 1 : Installer Node.js
+### Step 1: Install Node.js
 
-Si vous n'avez pas Node.js installé :
+If you don't have Node.js installed:
 
-1. Allez sur [nodejs.org](https://nodejs.org/)
-2. Téléchargez la version "LTS" (recommandée)
-3. Installez-le en suivant les instructions
+1. Go to [nodejs.org](https://nodejs.org/)
+2. Download the "LTS" version (recommended)
+3. Install it by following the instructions
 
-### Étape 2 : Installer vue-ai-migrator
+### Step 2: Install vue-ai-migrator
 
-Ouvrez un terminal (ou invite de commande) et tapez :
+Open a terminal (or command prompt) and type:
 
 ```bash
 npm install -g vue-ai-migrator
 ```
 
-Cela installe l'outil sur votre ordinateur pour que vous puissiez l'utiliser partout.
+This installs the tool on your computer so you can use it anywhere.
 
 ---
 
-## 🚀 Utilisation - Guide pas à pas
+## 🚀 Usage - Step by step guide
 
-### Cas d'usage 1 : Migrer un projet complet
+### Use Case 1: Migrate a complete project
 
-Vous avez un dossier avec tous vos fichiers Vue 2 et vous voulez tout migrer :
+You have a folder with all your Vue 2 files and you want to migrate everything:
 
 ```bash
-vue-ai-migrator migrate ./mon-projet
+vue-ai-migrator migrate ./my-project
 ```
 
-**Ce que ça fait :**
+**What it does:**
 
-- ✅ Scanne tous les fichiers `.vue`, `.js`, `.ts` dans votre projet
-- ✅ Transforme automatiquement le code Vue 2 en Vue 3
-- ✅ Crée une sauvegarde de vos fichiers originaux (au cas où)
-- ✅ Vous montre un rapport de ce qui a été changé
+- ✅ Scans all `.vue`, `.js`, `.ts` files in your project
+- ✅ Automatically transforms Vue 2 code to Vue 3
+- ✅ Creates a backup of your original files (just in case)
+- ✅ Shows you a report of what was changed
 
-**Exemple :**
+**Example:**
 
 ```bash
-# Vous êtes dans le dossier de votre projet
-cd /chemin/vers/mon-projet
+# You are in your project folder
+cd /path/to/my-project
 
-# Lancez la migration
+# Launch the migration
 vue-ai-migrator migrate .
 
-# Résultat :
-# ✅ 15 fichiers transformés
-# ✅ 3 fichiers nécessitent une vérification manuelle
-# ✅ Sauvegarde créée dans ./backup/
+# Result:
+# ✅ 15 files transformed
+# ✅ 3 files require manual verification
+# ✅ Backup created in ./backup/
 ```
 
 ---
 
-### Cas d'usage 2 : Tester avant de migrer (Mode "dry-run")
+### Use Case 2: Test before migrating (Dry-run mode)
 
-Vous voulez voir ce qui va changer **sans modifier vos fichiers** :
+You want to see what will change **without modifying your files**:
 
 ```bash
-vue-ai-migrator migrate ./mon-projet --dry-run
+vue-ai-migrator migrate ./my-project --dry-run
 ```
 
-**Ce que ça fait :**
+**What it does:**
 
-- ✅ Analyse votre code
-- ✅ Vous montre ce qui serait changé
-- ✅ **NE MODIFIE RIEN** (mode test)
+- ✅ Analyzes your code
+- ✅ Shows you what would be changed
+- ✅ **DOES NOT MODIFY ANYTHING** (test mode)
 
-C'est comme essayer des vêtements avant de les acheter ! 👔
+It's like trying on clothes before buying them! 👔
 
 ---
 
-### Cas d'usage 3 : Migrer seulement certains fichiers
+### Use Case 3: Migrate only certain files
 
-Vous voulez migrer seulement un dossier spécifique :
+You want to migrate only a specific folder:
 
 ```bash
 vue-ai-migrator migrate ./src/components
 ```
 
-**Ce que ça fait :**
+**What it does:**
 
-- ✅ Migre uniquement les fichiers dans `./src/components`
-- ✅ Laisse le reste de votre projet intact
+- ✅ Migrates only files in `./src/components`
+- ✅ Leaves the rest of your project intact
 
 ---
 
-### Cas d'usage 4 : Migrer avec l'aide de l'IA
+### Use Case 4: Migrate with AI assistance
 
-Pour les cas complexes, l'outil peut utiliser l'IA pour mieux comprendre votre code :
+For complex cases, the tool can use AI to better understand your code:
 
 ```bash
-vue-ai-migrator migrate ./mon-projet --ai-api-key VOTRE_CLE_API
+vue-ai-migrator migrate ./my-project --ai-api-key YOUR_API_KEY
 ```
 
-**Ce que ça fait :**
+**What it does:**
 
-- ✅ Utilise l'IA pour les transformations complexes
-- ✅ Génère du code plus intelligent
-- ✅ Explique pourquoi certains changements ont été faits
+- ✅ Uses AI for complex transformations
+- ✅ Generates smarter code
+- ✅ Explains why certain changes were made
 
-**Note :** Vous devez avoir une clé API (OpenAI, Mistral, Claude, etc.)
+**Note:** You need to have an API key (OpenAI, Mistral, Claude, etc.)
 
 ---
 
-## 🎨 Exemples de transformations automatiques
+## 🎨 Examples of automatic transformations
 
-### Transformation 1 : Les données (data)
+### Transformation 1: Data
 
-**Vue 2 :**
+**Vue 2:**
 
 ```vue
 <script>
@@ -181,31 +181,31 @@ export default {
   data() {
     return {
       count: 0,
-      name: 'Jean',
+      name: 'John',
     };
   },
 };
 </script>
 ```
 
-**Vue 3 (automatique) :**
+**Vue 3 (automatic):**
 
 ```vue
 <script setup>
 import { ref } from 'vue';
 
 const count = ref(0);
-const name = ref('Jean');
+const name = ref('John');
 </script>
 ```
 
-> 💡 **Avec `--typescript`** : `<script setup lang="ts">` avec `ref<number>(0)` et `ref<string>('Jean')`
+> 💡 **With `--typescript`**: `<script setup lang="ts">` with `ref<number>(0)` and `ref<string>('John')`
 
 ---
 
-### Transformation 2 : Les méthodes
+### Transformation 2: Methods
 
-**Vue 2 :**
+**Vue 2:**
 
 ```vue
 <script>
@@ -222,7 +222,7 @@ export default {
 </script>
 ```
 
-**Vue 3 (automatique) :**
+**Vue 3 (automatic):**
 
 ```vue
 <script setup>
@@ -236,13 +236,13 @@ const increment = () => {
 </script>
 ```
 
-> 💡 **Avec `--typescript`** : `<script setup lang="ts">` avec `ref<number>(0)` et types TypeScript
+> 💡 **With `--typescript`**: `<script setup lang="ts">` with `ref<number>(0)` and TypeScript types
 
 ---
 
-### Transformation 3 : Les templates (HTML)
+### Transformation 3: Templates (HTML)
 
-**Vue 2 :**
+**Vue 2:**
 
 ```vue
 <template>
@@ -252,7 +252,7 @@ const increment = () => {
 </template>
 ```
 
-**Vue 3 (automatique) :**
+**Vue 3 (automatic):**
 
 ```vue
 <template>
@@ -264,100 +264,100 @@ const increment = () => {
 
 ---
 
-## 📋 Options utiles
+## 📋 Useful Options
 
-### Voir les différences en détail
-
-```bash
-vue-ai-migrator migrate ./mon-projet --show-diff
-```
-
-Affiche exactement ce qui a changé dans chaque fichier.
-
----
-
-### Générer des tests automatiquement
+### See differences in detail
 
 ```bash
-vue-ai-migrator migrate ./mon-projet --generate-tests
+vue-ai-migrator migrate ./my-project --show-diff
 ```
 
-Crée automatiquement des tests pour vérifier que tout fonctionne.
+Shows exactly what changed in each file.
 
 ---
 
-### Migrer sans utiliser l'IA
+### Generate tests automatically
 
 ```bash
-vue-ai-migrator migrate ./mon-projet --no-ai
+vue-ai-migrator migrate ./my-project --generate-tests
 ```
 
-Utilise uniquement les transformations automatiques (plus rapide, gratuit).
+Automatically creates tests to verify everything works.
 
 ---
 
-### Migrer avec TypeScript
+### Migrate without using AI
 
 ```bash
-vue-ai-migrator migrate ./mon-projet --typescript
+vue-ai-migrator migrate ./my-project --no-ai
 ```
 
-Ajoute automatiquement les types TypeScript au code migré.
-
-**Exemple de résultat :**
-
-- **Sans `--typescript`** : `<script setup>` avec `const count = ref(0)`
-- **Avec `--typescript`** : `<script setup lang="ts">` avec `const count = ref<number>(0)`
+Uses only automatic transformations (faster, free).
 
 ---
 
-## ⚠️ Important : Sauvegarde automatique
-
-**L'outil crée automatiquement une sauvegarde** de vos fichiers originaux avant de les modifier.
-
-Si quelque chose ne va pas, vous pouvez toujours revenir en arrière !
-
----
-
-## 🔄 Annuler une migration (Rollback)
-
-Si vous voulez annuler les changements :
+### Migrate with TypeScript
 
 ```bash
-vue-ai-migrator rollback ./mon-projet
+vue-ai-migrator migrate ./my-project --typescript
 ```
 
-Cela restaure vos fichiers originaux depuis la sauvegarde.
+Automatically adds TypeScript types to migrated code.
+
+**Result example:**
+
+- **Without `--typescript`**: `<script setup>` with `const count = ref(0)`
+- **With `--typescript`**: `<script setup lang="ts">` with `const count = ref<number>(0)`
 
 ---
 
-## 📊 Comprendre le rapport de migration
+## ⚠️ Important: Automatic backup
 
-Après la migration, vous verrez quelque chose comme :
+**The tool automatically creates a backup** of your original files before modifying them.
+
+If something goes wrong, you can always go back!
+
+---
+
+## 🔄 Undo a migration (Rollback)
+
+If you want to cancel the changes:
+
+```bash
+vue-ai-migrator rollback ./my-project
+```
+
+This restores your original files from the backup.
+
+---
+
+## 📊 Understanding the migration report
+
+After migration, you will see something like:
 
 ```
-✅ Migration terminée !
+✅ Migration completed!
 
-📊 Statistiques :
-   - 25 fichiers analysés
-   - 20 fichiers transformés automatiquement
-   - 3 fichiers nécessitent une vérification manuelle
-   - 2 fichiers non modifiés (déjà en Vue 3)
+📊 Statistics:
+   - 25 files analyzed
+   - 20 files automatically transformed
+   - 3 files require manual verification
+   - 2 files not modified (already Vue 3)
 
-⚠️ Fichiers à vérifier :
-   - src/components/ComplexComponent.vue (cas complexe)
-   - src/store/oldStore.js (nécessite migration manuelle)
+⚠️ Files to verify:
+   - src/components/ComplexComponent.vue (complex case)
+   - src/store/oldStore.js (requires manual migration)
 
-💾 Sauvegarde créée : ./backup/2024-01-29_14-30-00/
+💾 Backup created: ./backup/2024-01-29_14-30-00/
 ```
 
 ---
 
-## 🆘 Problèmes courants et solutions
+## 🆘 Common problems and solutions
 
-### Problème 1 : "Command not found"
+### Problem 1: "Command not found"
 
-**Solution :** L'outil n'est pas installé globalement. Réessayez :
+**Solution:** The tool is not installed globally. Try again:
 
 ```bash
 npm install -g vue-ai-migrator
@@ -365,9 +365,9 @@ npm install -g vue-ai-migrator
 
 ---
 
-### Problème 2 : "Permission denied"
+### Problem 2: "Permission denied"
 
-**Solution :** Sur Mac/Linux, utilisez `sudo` :
+**Solution:** On Mac/Linux, use `sudo`:
 
 ```bash
 sudo npm install -g vue-ai-migrator
@@ -375,92 +375,92 @@ sudo npm install -g vue-ai-migrator
 
 ---
 
-### Problème 3 : "No files found"
+### Problem 3: "No files found"
 
-**Solution :** Vérifiez que vous êtes dans le bon dossier et qu'il contient des fichiers `.vue` ou `.js`.
-
----
-
-### Problème 4 : Le code ne fonctionne pas après migration
-
-**Solution :**
-
-1. Vérifiez le rapport de migration
-2. Regardez les fichiers marqués "nécessitent vérification"
-3. Utilisez `--dry-run` pour voir ce qui va changer avant
-4. Consultez la documentation Vue 3 pour les cas complexes
+**Solution:** Check that you are in the correct folder and that it contains `.vue` or `.js` files.
 
 ---
 
-## 💡 Conseils pour bien utiliser l'outil
+### Problem 4: Code doesn't work after migration
 
-### ✅ À FAIRE
+**Solution:**
 
-1. **Toujours tester d'abord** avec `--dry-run`
-2. **Faire une sauvegarde manuelle** avant (même si l'outil en fait une)
-3. **Migrer petit à petit** : commencez par un dossier, testez, puis continuez
-4. **Lire le rapport** : il vous dit exactement ce qui a changé
-5. **Tester votre application** après la migration
-
-### ❌ À NE PAS FAIRE
-
-1. **Ne pas migrer directement en production** : testez d'abord !
-2. **Ne pas ignorer les warnings** : ils indiquent des choses importantes
-3. **Ne pas supprimer les sauvegardes** trop vite
-4. **Ne pas migrer sans comprendre** : lisez au moins le rapport
+1. Check the migration report
+2. Look at files marked "require verification"
+3. Use `--dry-run` to see what will change before
+4. Consult Vue 3 documentation for complex cases
 
 ---
 
-## 🎓 Ressources pour apprendre
+## 💡 Tips for using the tool well
 
-Si vous voulez comprendre ce que fait l'outil :
+### ✅ TO DO
 
-- **Documentation Vue 3** : [v3.vuejs.org](https://v3.vuejs.org/)
-- **Guide de migration officiel** : [v3-migration.vuejs.org](https://v3-migration.vuejs.org/)
-- **Tutoriels Vue 3** : Recherchez "Vue 3 tutorial" sur YouTube
+1. **Always test first** with `--dry-run`
+2. **Make a manual backup** before (even if the tool makes one)
+3. **Migrate gradually**: start with one folder, test, then continue
+4. **Read the report**: it tells you exactly what changed
+5. **Test your application** after migration
 
----
+### ❌ NOT TO DO
 
-## 📞 Besoin d'aide ?
-
-Si vous rencontrez un problème :
-
-1. Vérifiez ce guide
-2. Regardez les messages d'erreur (ils sont souvent explicites)
-3. Consultez la documentation complète dans `README.md`
-4. Ouvrez une issue sur GitHub si c'est un bug
+1. **Don't migrate directly to production**: test first!
+2. **Don't ignore warnings**: they indicate important things
+3. **Don't delete backups** too quickly
+4. **Don't migrate without understanding**: read at least the report
 
 ---
 
-## 🎉 Résumé en 3 étapes
+## 🎓 Learning resources
 
-1. **Installez** : `npm install -g vue-ai-migrator`
-2. **Testez** : `vue-ai-migrator migrate ./mon-projet --dry-run`
-3. **Migrez** : `vue-ai-migrator migrate ./mon-projet`
+If you want to understand what the tool does:
 
-C'est aussi simple que ça ! 🚀
+- **Vue 3 Documentation**: [v3.vuejs.org](https://v3.vuejs.org/)
+- **Official migration guide**: [v3-migration.vuejs.org](https://v3-migration.vuejs.org/)
+- **Vue 3 Tutorials**: Search for "Vue 3 tutorial" on YouTube
 
 ---
 
-## 📝 Exemple complet de workflow
+## 📞 Need help?
+
+If you encounter a problem:
+
+1. Check this guide
+2. Look at error messages (they are often explicit)
+3. Consult the complete documentation in `README.md`
+4. Open an issue on GitHub if it's a bug
+
+---
+
+## 🎉 Summary in 3 steps
+
+1. **Install**: `npm install -g vue-ai-migrator`
+2. **Test**: `vue-ai-migrator migrate ./my-project --dry-run`
+3. **Migrate**: `vue-ai-migrator migrate ./my-project`
+
+It's that simple! 🚀
+
+---
+
+## 📝 Complete workflow example
 
 ```bash
-# 1. Aller dans votre projet
-cd /chemin/vers/mon-projet-vue2
+# 1. Go to your project
+cd /path/to/my-vue2-project
 
-# 2. Voir ce qui va changer (sans modifier)
+# 2. See what will change (without modifying)
 vue-ai-migrator migrate . --dry-run --show-diff
 
-# 3. Si ça vous convient, migrer pour de vrai
+# 3. If it suits you, migrate for real
 vue-ai-migrator migrate . --typescript
 
-# 4. Tester votre application
+# 4. Test your application
 npm run dev
 
-# 5. Si tout fonctionne, c'est bon ! Sinon, rollback
+# 5. If everything works, you're good! Otherwise, rollback
 vue-ai-migrator rollback .
 ```
 
 ---
 
-**Bon courage avec votre migration ! 💪**
+**Good luck with your migration! 💪**

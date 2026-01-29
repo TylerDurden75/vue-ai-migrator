@@ -214,13 +214,13 @@ vue-ai-migrator migrate ./my-vue2-project
 
 ### 🔄 Complete Migration
 
-vue-ai-migrator migre automatiquement **TOUT** votre projet Vue 2 vers Vue 3 :
+vue-ai-migrator automatically migrates **ALL** of your Vue 2 project to Vue 3:
 
-- ✅ **Composants Vue** (fichiers `.vue`)
-- ✅ **Stores Vuex → Pinia** (fichiers avec `new Vuex.Store()`)
+- ✅ **Vue Components** (`.vue` files)
+- ✅ **Vuex → Pinia Stores** (files with `new Vuex.Store()`)
 - ✅ **Router** (Vue Router 3 → Vue Router 4)
 - ✅ **Plugins, Mixins, Directives**
-- ✅ **Tous les fichiers JS/TS** du projet
+- ✅ **All JS/TS files** in the project
 
 **Example: Migrate only stores**
 
