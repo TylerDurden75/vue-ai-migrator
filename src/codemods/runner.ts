@@ -4,6 +4,7 @@ import { compositionApiTransform } from "./transforms/composition-api";
 import { scriptSetupTransform } from "./transforms/script-setup";
 import { routerTransform } from "./transforms/router";
 import { vuexPiniaSetupTransform } from "./transforms/vuex-pinia-setup";
+import { vuexPiniaComponentsTransform } from "./transforms/vuex-pinia-components";
 import { mixinsTransform } from "./transforms/mixins";
 import { pluginsTransform } from "./transforms/plugins";
 import { directivesTransform } from "./transforms/directives";
@@ -23,6 +24,7 @@ const AVAILABLE_TRANSFORMS: Record<string, Transform> = {
   "script-setup": scriptSetupTransform,
   router: routerTransform,
   "vuex-pinia": vuexPiniaSetupTransform,
+  "vuex-pinia-components": vuexPiniaComponentsTransform,
   mixins: mixinsTransform,
   plugins: pluginsTransform,
   directives: directivesTransform,
@@ -66,8 +68,39 @@ export class CodemodRunner {
     let vueParts = isVue ? parseVueFile(source) : null;
 
     // Determine which transformations to apply
-    const transformationsToApply =
+    let transformationsToApply =
       options.transformations || Object.keys(AVAILABLE_TRANSFORMS);
+
+    // If vuex-pinia is used, automatically add vuex-pinia-components
+    if (
+      transformationsToApply.includes("vuex-pinia") &&
+      !transformationsToApply.includes("vuex-pinia-components")
+    ) {
+      transformationsToApply = [
+        ...transformationsToApply,
+        "vuex-pinia-components",
+      ];
+    }
+
+    // Ensure vuex-pinia-components runs after vuex-pinia
+    if (
+      transformationsToApply.includes("vuex-pinia") &&
+      transformationsToApply.includes("vuex-pinia-components")
+    ) {
+      const vuexIndex = transformationsToApply.indexOf("vuex-pinia");
+      const componentsIndex = transformationsToApply.indexOf(
+        "vuex-pinia-components",
+      );
+      if (componentsIndex < vuexIndex) {
+        // Move vuex-pinia-components after vuex-pinia
+        transformationsToApply.splice(componentsIndex, 1);
+        transformationsToApply.splice(
+          vuexIndex + 1,
+          0,
+          "vuex-pinia-components",
+        );
+      }
+    }
 
     try {
       let currentCode = source;

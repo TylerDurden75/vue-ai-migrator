@@ -1,29 +1,29 @@
-import { CodemodRunner } from '../codemods/runner';
-import { UnifiedAIService } from '../ai/unified-service';
-import { MigrationClassifier, ClassificationResult } from './classifier';
-import type { IAIService, AgentResponse } from '../interfaces';
-import { analyzeProject } from '../utils/analysis';
-import { TestGenerator } from '../utils/codegen';
-import { generateDiff, DiffResult } from '../utils/codegen';
+import { CodemodRunner } from "../codemods/runner";
+import { UnifiedAIService } from "../ai/unified-service";
+import { MigrationClassifier, ClassificationResult } from "./classifier";
+import type { IAIService, AgentResponse } from "../interfaces";
+import { analyzeProject } from "../utils/analysis";
+import { TestGenerator } from "../utils/codegen";
+import { generateDiff, DiffResult } from "../utils/codegen";
 import {
   validateProjectPath,
   safeReadFile,
   safeWriteFile,
   retry,
   MigrationError,
-} from '../utils/safety';
-import { RollbackManager } from '../utils/safety';
-import { migratePackageJson } from '../utils/migration';
-import { validateMigration } from '../utils/migration';
-import { CacheManager } from '../utils/cache';
-import { MigrationReporter, FileReport } from './reporter';
-import * as path from 'path';
-import { glob } from 'glob';
+} from "../utils/safety";
+import { RollbackManager } from "../utils/safety";
+import { migratePackageJson } from "../utils/migration";
+import { validateMigration } from "../utils/migration";
+import { CacheManager } from "../utils/cache";
+import { MigrationReporter, FileReport } from "./reporter";
+import * as path from "path";
+import { glob } from "glob";
 
 export interface MigrationOptions {
   projectPath: string;
   aiApiKey?: string;
-  aiProvider?: 'openai' | 'mistral' | 'claude' | 'anthropic';
+  aiProvider?: "openai" | "mistral" | "claude" | "anthropic";
   dryRun?: boolean;
   useAI?: boolean;
   outputReport?: string;
@@ -56,14 +56,16 @@ export interface MigrationResult {
   testFilesGenerated?: number;
 }
 
-export async function migrate(options: MigrationOptions): Promise<MigrationResult> {
+export async function migrate(
+  options: MigrationOptions,
+): Promise<MigrationResult> {
   const {
     projectPath,
     aiApiKey,
-    aiProvider = 'openai',
+    aiProvider = "openai",
     dryRun = false,
     useAI = true,
-    outputReport = 'migration-report.json',
+    outputReport = "migration-report.json",
     enableRollback = true,
     migratePackageJson: shouldMigratePackage = true,
     validateAfterMigration: shouldValidate = true,
@@ -87,16 +89,16 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
     const analysis = await analyzeProject(projectPath);
 
     // Find all Vue files
-    const vueFiles = await glob('**/*.{vue,js,ts}', {
+    const vueFiles = await glob("**/*.{vue,js,ts}", {
       cwd: projectPath,
-      ignore: ['node_modules/**', 'dist/**', 'build/**'],
+      ignore: ["node_modules/**", "dist/**", "build/**"],
       absolute: true,
     });
 
     result.filesAnalyzed = vueFiles.length;
 
     if (vueFiles.length === 0) {
-      result.warnings.push('No Vue files found in the project');
+      result.warnings.push("No Vue files found in the project");
       return result;
     }
 
@@ -112,7 +114,9 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
     const classifier = new MigrationClassifier();
     const testGenerator = options.generateTests ? new TestGenerator() : null;
     const reporter = new MigrationReporter();
-    const rollbackManager = enableRollback ? new RollbackManager(projectPath) : null;
+    const rollbackManager = enableRollback
+      ? new RollbackManager(projectPath)
+      : null;
     const cacheManager = useCache ? new CacheManager(projectPath) : null;
 
     // Track classification and diffs
@@ -135,12 +139,47 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
     const fileCache = new Map<string, string>();
 
     // Determine transformations to apply
-    const transformationsToApply =
-      options.transformations || Object.keys(CodemodRunner.AVAILABLE_TRANSFORMS);
+    let transformationsToApply =
+      options.transformations ||
+      Object.keys(CodemodRunner.AVAILABLE_TRANSFORMS);
+
+    // If vuex-pinia is used, automatically add vuex-pinia-components
+    if (
+      transformationsToApply.includes("vuex-pinia") &&
+      !transformationsToApply.includes("vuex-pinia-components")
+    ) {
+      transformationsToApply = [
+        ...transformationsToApply,
+        "vuex-pinia-components",
+      ];
+    }
+
+    // Ensure vuex-pinia-components runs after vuex-pinia
+    if (
+      transformationsToApply.includes("vuex-pinia") &&
+      transformationsToApply.includes("vuex-pinia-components")
+    ) {
+      const vuexIndex = transformationsToApply.indexOf("vuex-pinia");
+      const componentsIndex = transformationsToApply.indexOf(
+        "vuex-pinia-components",
+      );
+      if (componentsIndex < vuexIndex) {
+        // Move vuex-pinia-components after vuex-pinia
+        transformationsToApply.splice(componentsIndex, 1);
+        transformationsToApply.splice(
+          vuexIndex + 1,
+          0,
+          "vuex-pinia-components",
+        );
+      }
+    }
 
     // Process files in parallel batches for better performance
     // Increased batch size for better scalability
-    const BATCH_SIZE = Math.min(20, Math.max(10, Math.floor(vueFiles.length / 4) || 10));
+    const BATCH_SIZE = Math.min(
+      20,
+      Math.max(10, Math.floor(vueFiles.length / 4) || 10),
+    );
     const batches: string[][] = [];
     for (let i = 0; i < vueFiles.length; i += BATCH_SIZE) {
       batches.push(vueFiles.slice(i, i + BATCH_SIZE));
@@ -155,7 +194,13 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
 
             // Check cache if enabled and incremental mode
             if (cacheManager && incremental) {
-              if (!cacheManager.needsProcessing(filePath, content, transformationsToApply)) {
+              if (
+                !cacheManager.needsProcessing(
+                  filePath,
+                  content,
+                  transformationsToApply,
+                )
+              ) {
                 return; // Skip if already processed with same transformations
               }
             }
@@ -185,44 +230,60 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
                   ? {
                       analyzeComplexity: async (code: string) => {
                         try {
-                          const agentResult: AgentResponse = await migrationAgent.migrate({
-                            code,
-                            filePath,
-                            issues: [],
-                            classification: 'medium',
-                          });
+                          const agentResult: AgentResponse =
+                            await migrationAgent.migrate({
+                              code,
+                              filePath,
+                              issues: [],
+                              classification: "medium",
+                            });
                           return {
                             complexity:
-                              agentResult.confidence && agentResult.confidence > 0.8
-                                ? 'high'
-                                : ('medium' as const),
+                              agentResult.confidence &&
+                              agentResult.confidence > 0.8
+                                ? "high"
+                                : ("medium" as const),
                             recommendations: agentResult.suggestions || [],
                           };
                         } catch {
-                          return { complexity: 'medium' as const, recommendations: [] };
+                          return {
+                            complexity: "medium" as const,
+                            recommendations: [],
+                          };
                         }
                       },
                     }
                   : undefined,
               });
               const level = classification.level;
-              if (level === 'simple' || level === 'medium' || level === 'complex') {
+              if (
+                level === "simple" ||
+                level === "medium" ||
+                level === "complex"
+              ) {
                 classificationCounts[level]++;
               }
             }
 
             // Apply codemod transformations
-            const codemodResult = await codemodRunner.transform(filePath, content, {
-              transformations: transformationsToApply,
-              enableTypeScript: options.enableTypeScript || false,
-            });
+            const codemodResult = await codemodRunner.transform(
+              filePath,
+              content,
+              {
+                transformations: transformationsToApply,
+                enableTypeScript: options.enableTypeScript || false,
+              },
+            );
 
             let finalCode = codemodResult.code;
             let migrated = codemodResult.modified;
             let explanation: string | undefined;
 
             // For complex cases, use MigrationAgent with retry logic
-            if (migrationAgent && (codemodResult.needsAI || classification?.level === 'complex')) {
+            if (
+              migrationAgent &&
+              (codemodResult.needsAI || classification?.level === "complex")
+            ) {
               try {
                 const agentResult: AgentResponse = await retry(
                   async () =>
@@ -230,17 +291,17 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
                       code: codemodResult.code,
                       filePath,
                       issues: codemodResult.issues,
-                      classification: classification?.level || 'medium',
+                      classification: classification?.level || "medium",
                     }),
                   {
                     maxRetries: 2,
                     retryDelay: 1000,
                     onRetry: (attempt: number, error: Error) => {
                       result.warnings.push(
-                        `AI retry attempt ${attempt} for ${filePath}: ${error.message}`
+                        `AI retry attempt ${attempt} for ${filePath}: ${error.message}`,
                       );
                     },
-                  }
+                  },
                 );
 
                 if (agentResult.success && agentResult.migratedCode) {
@@ -253,30 +314,32 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
                   if (testGenerator && agentResult.migratedCode) {
                     try {
                       const componentName =
-                        filePath.split('/').pop()?.replace('.vue', '') || 'Component';
+                        filePath.split("/").pop()?.replace(".vue", "") ||
+                        "Component";
                       const testResult = await testGenerator.generateTest(
                         filePath,
                         agentResult.migratedCode,
                         {
                           componentName,
-                        }
+                        },
                       );
                       await testGenerator.writeTest(testResult);
-                      result.testFilesGenerated = (result.testFilesGenerated || 0) + 1;
+                      result.testFilesGenerated =
+                        (result.testFilesGenerated || 0) + 1;
                     } catch (error) {
                       result.warnings.push(
-                        `Could not generate test for ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+                        `Could not generate test for ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
                       );
                     }
                   }
                 } else {
                   result.warnings.push(
-                    `AI could not migrate ${filePath}: ${agentResult.reason || 'Unknown reason'}`
+                    `AI could not migrate ${filePath}: ${agentResult.reason || "Unknown reason"}`,
                   );
                 }
               } catch (error) {
                 result.errors.push(
-                  `AI error for ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+                  `AI error for ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
                 );
               }
             }
@@ -292,16 +355,24 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
             // Update cache
             if (cacheManager) {
               if (migrated) {
-                cacheManager.markProcessed(filePath, finalCode, transformationsToApply);
+                cacheManager.markProcessed(
+                  filePath,
+                  finalCode,
+                  transformationsToApply,
+                );
               } else {
-                cacheManager.markProcessed(filePath, content, transformationsToApply);
+                cacheManager.markProcessed(
+                  filePath,
+                  content,
+                  transformationsToApply,
+                );
               }
             } else {
               // Fallback cache
               if (migrated) {
                 fileCache.set(
                   filePath,
-                  `${finalCode.length}-${finalCode.slice(0, 50)}-${finalCode.slice(-50)}`
+                  `${finalCode.length}-${finalCode.slice(0, 50)}-${finalCode.slice(-50)}`,
                 );
               } else {
                 const contentHash = `${content.length}-${content.slice(0, 50)}-${content.slice(-50)}`;
@@ -314,14 +385,15 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
                 await safeWriteFile(filePath, finalCode);
               }
               result.filesModified++;
-              result.transformationsApplied += codemodResult.transformationsApplied;
+              result.transformationsApplied +=
+                codemodResult.transformationsApplied;
             }
 
             // Create file report
             const fileReport: FileReport = {
               filePath,
               classification: classification || {
-                level: 'medium',
+                level: "medium",
                 confidence: 0.5,
                 reasons: [],
                 requiresAI: false,
@@ -344,15 +416,15 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
           } catch (error) {
             if (error instanceof MigrationError) {
               result.errors.push(
-                `[${error.code}] ${error.message}${error.filePath ? ` (${error.filePath})` : ''}`
+                `[${error.code}] ${error.message}${error.filePath ? ` (${error.filePath})` : ""}`,
               );
             } else {
               result.errors.push(
-                `Error processing ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+                `Error processing ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
               );
             }
           }
-        })
+        }),
       );
     }
 
@@ -367,7 +439,11 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
 
     // Generate report
     if (outputReport) {
-      const reportPath = await reporter.generateReport(result, fileReports, outputReport);
+      const reportPath = await reporter.generateReport(
+        result,
+        fileReports,
+        outputReport,
+      );
       result.reportPath = reportPath;
     }
 
@@ -376,12 +452,14 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
       try {
         const packageResult = await migratePackageJson(projectPath, dryRun);
         if (packageResult.modified) {
-          result.warnings.push(...packageResult.changes.map((c) => `Package: ${c}`));
+          result.warnings.push(
+            ...packageResult.changes.map((c) => `Package: ${c}`),
+          );
           result.warnings.push(...packageResult.warnings);
         }
       } catch (error) {
         result.warnings.push(
-          `Package migration error: ${error instanceof Error ? error.message : String(error)}`
+          `Package migration error: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -397,7 +475,7 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
         result.warnings.push(...validationResult.warnings);
       } catch (error) {
         result.warnings.push(
-          `Validation error: ${error instanceof Error ? error.message : String(error)}`
+          `Validation error: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -422,7 +500,9 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
           analysis,
           result,
           dryRun,
-          rollbackAvailable: rollbackManager ? rollbackManager.getBackupCount() > 0 : false,
+          rollbackAvailable: rollbackManager
+            ? rollbackManager.getBackupCount() > 0
+            : false,
           validation: validationResult,
           suggestions: validationResult?.suggestions || [],
         };
@@ -433,7 +513,7 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
         }
       } catch (error) {
         result.warnings.push(
-          `Failed to generate report: ${error instanceof Error ? error.message : String(error)}`
+          `Failed to generate report: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -442,11 +522,11 @@ export async function migrate(options: MigrationOptions): Promise<MigrationResul
   } catch (error) {
     if (error instanceof MigrationError) {
       result.errors.push(
-        `[${error.code}] ${error.message}${error.filePath ? ` (${error.filePath})` : ''}`
+        `[${error.code}] ${error.message}${error.filePath ? ` (${error.filePath})` : ""}`,
       );
     } else {
       result.errors.push(
-        `General error: ${error instanceof Error ? error.message : String(error)}`
+        `General error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
     // Don't throw, return result with errors instead

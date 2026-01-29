@@ -1198,6 +1198,19 @@ function transformComputedAST(
   }
 
   computedValue.properties.forEach((compProp: any) => {
+    // Handle SpreadElement (e.g., ...mapGetters('module', ['getter1']))
+    if (compProp.type === "SpreadElement" && compProp.argument) {
+      const spreadArg = compProp.argument;
+      if (spreadArg.type === "CallExpression" && spreadArg.callee) {
+        const helperName = spreadArg.callee.name;
+        if (["mapGetters", "mapState"].includes(helperName)) {
+          // Mark for vuex-pinia-components transformation
+          // This will be handled by vuex-pinia-components transform
+          return;
+        }
+      }
+    }
+
     // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
     const compValue =
       compProp.value || (compProp.type === "ObjectMethod" ? compProp : null);
@@ -1279,6 +1292,20 @@ function transformMethodsAST(
   }
 
   methodsValue.properties.forEach((methodProp: any) => {
+    // Handle SpreadElement (e.g., ...mapActions('module', ['action1']))
+    if (methodProp.type === "SpreadElement" && methodProp.argument) {
+      const spreadArg = methodProp.argument;
+      if (spreadArg.type === "CallExpression" && spreadArg.callee) {
+        const helperName = spreadArg.callee.name;
+        if (["mapActions", "mapMutations"].includes(helperName)) {
+          // Mark for vuex-pinia-components transformation
+          // This will be handled by vuex-pinia-components transform
+          return;
+        }
+      }
+    }
+
+    // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
     // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
     const methodValue =
       methodProp.value ||

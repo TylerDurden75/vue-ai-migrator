@@ -2,6 +2,7 @@ export { compositionApiTransform } from "./composition-api";
 export { scriptSetupTransform } from "./script-setup";
 export { routerTransform } from "./router";
 export { vuexPiniaSetupTransform } from "./vuex-pinia-setup";
+export { vuexPiniaComponentsTransform } from "./vuex-pinia-components";
 export { asyncComponentsTransform } from "./async-components";
 export { renderFunctionsTransform } from "./render-functions";
 export { mixinsTransform } from "./mixins";

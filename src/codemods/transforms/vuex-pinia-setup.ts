@@ -1,4 +1,4 @@
-import { Transform, FileInfo, API } from 'jscodeshift';
+import { Transform, FileInfo, API } from "jscodeshift";
 
 /**
  * Transforms Vuex stores to Pinia Setup Stores
@@ -13,7 +13,7 @@ import { Transform, FileInfo, API } from 'jscodeshift';
 export const vuexPiniaSetupTransform: Transform = (
   fileInfo: FileInfo,
   api: API,
-  options: any = {}
+  options: any = {},
 ) => {
   const j = api.jscodeshift;
   const root = j(fileInfo.source);
@@ -30,86 +30,428 @@ export const vuexPiniaSetupTransform: Transform = (
   const objectPropertyDetails = new Map<string, any>(); // Property name → object AST for interface generation
   const computedReturnTypes = new Map<string, string>(); // Computed name → inferred return type
 
+  // Also detect Vuex modules (export default { namespaced: true, state, getters, mutations, actions })
+  // These should be transformed to separate Pinia stores
+  root.find(j.ExportDefaultDeclaration).forEach((path: any) => {
+    const declaration = path.value.declaration;
+
+    if (declaration && declaration.type === "ObjectExpression") {
+      const properties = declaration.properties || [];
+
+      // Check if this is a Vuex module (has namespaced: true or has state/getters/mutations/actions)
+      const hasNamespaced = properties.some(
+        (p: any) =>
+          p.key &&
+          p.key.name === "namespaced" &&
+          p.value &&
+          p.value.value === true,
+      );
+      const hasVuexStructure = properties.some(
+        (p: any) =>
+          p.key &&
+          ["state", "getters", "mutations", "actions"].includes(p.key.name),
+      );
+
+      if (
+        hasNamespaced ||
+        (hasVuexStructure && !path.value.declaration.callee)
+      ) {
+        // This is a Vuex module - transform it to a Pinia store
+        const fileName = fileInfo.path || "module";
+        const moduleName =
+          fileName
+            .replace(/\.(js|ts)$/, "")
+            .split("/")
+            .pop() || "module";
+
+        const storeName =
+          moduleName.charAt(0).toUpperCase() + moduleName.slice(1);
+        const useStoreName = `use${storeName}Store`;
+
+        // Build Setup Store function body
+        const setupStatements: any[] = [];
+        const stateProperties = new Map<
+          string,
+          { isObject: boolean; value: any }
+        >();
+        const localComputedProperties = new Set<string>();
+        const localFunctionNames = new Set<string>();
+        const returnProperties: string[] = [];
+
+        // Extract state
+        const stateProp = properties.find(
+          (p: any) => p.key && p.key.name === "state",
+        );
+        if (stateProp && stateProp.value) {
+          if (stateProp.value.type === "ObjectExpression") {
+            const stateProps = stateProp.value.properties || [];
+            stateProps.forEach((prop: any) => {
+              if (prop && prop.key) {
+                const propName = prop.key.name || prop.key.value;
+                if (propName) {
+                  const isObject =
+                    prop.value && prop.value.type === "ObjectExpression";
+                  stateProperties.set(propName, {
+                    isObject,
+                    value: prop.value,
+                  });
+                  returnProperties.push(propName);
+
+                  if (isObject) {
+                    setupStatements.push(
+                      j.variableDeclaration("const", [
+                        j.variableDeclarator(
+                          j.identifier(propName),
+                          j.callExpression(j.identifier("reactive"), [
+                            prop.value,
+                          ]),
+                        ),
+                      ]),
+                    );
+                    imports.add("reactive");
+                  } else {
+                    setupStatements.push(
+                      j.variableDeclaration("const", [
+                        j.variableDeclarator(
+                          j.identifier(propName),
+                          j.callExpression(j.identifier("ref"), [
+                            prop.value || j.literal(null),
+                          ]),
+                        ),
+                      ]),
+                    );
+                    imports.add("ref");
+                  }
+                }
+              }
+            });
+          } else if (stateProp.value.type === "FunctionExpression") {
+            // state is a function - execute it
+            const stateCall = j.callExpression(stateProp.value, []);
+            setupStatements.push(
+              j.variableDeclaration("const", [
+                j.variableDeclarator(j.identifier("state"), stateCall),
+              ]),
+            );
+            // Then extract properties from state object
+            // This is simplified - in reality we'd need to execute the function
+          }
+          hasChanges = true;
+        }
+
+        // Extract getters
+        const gettersProp = properties.find(
+          (p: any) => p.key && p.key.name === "getters",
+        );
+        if (
+          gettersProp &&
+          gettersProp.value &&
+          gettersProp.value.type === "ObjectExpression"
+        ) {
+          const getterProps = gettersProp.value.properties || [];
+          getterProps.forEach((getterProp: any) => {
+            if (getterProp && getterProp.key) {
+              const getterName = getterProp.key.name || getterProp.key.value;
+              if (getterName) {
+                localComputedProperties.add(getterName);
+                computedProperties.add(getterName);
+                returnProperties.push(getterName);
+
+                // Transform getter to computed
+                let getterValue: any = getterProp.value;
+                let getterBody: any = null;
+
+                if (
+                  getterValue.type === "FunctionExpression" ||
+                  getterValue.type === "ArrowFunctionExpression"
+                ) {
+                  getterBody = getterValue.body;
+
+                  // Transform state references
+                  if (getterBody.type === "BlockStatement") {
+                    const returnStmt = getterBody.body.find(
+                      (stmt: any) => stmt.type === "ReturnStatement",
+                    );
+                    if (returnStmt && returnStmt.argument) {
+                      const returnExpr = returnStmt.argument;
+                      const arrowFn = j.arrowFunctionExpression([], returnExpr);
+                      setupStatements.push(
+                        j.variableDeclaration("const", [
+                          j.variableDeclarator(
+                            j.identifier(getterName),
+                            j.callExpression(j.identifier("computed"), [
+                              arrowFn,
+                            ]),
+                          ),
+                        ]),
+                      );
+                      imports.add("computed");
+                    }
+                  } else {
+                    // Arrow function with expression body
+                    const arrowFn = j.arrowFunctionExpression([], getterBody);
+                    setupStatements.push(
+                      j.variableDeclaration("const", [
+                        j.variableDeclarator(
+                          j.identifier(getterName),
+                          j.callExpression(j.identifier("computed"), [arrowFn]),
+                        ),
+                      ]),
+                    );
+                    imports.add("computed");
+                  }
+                }
+              }
+            }
+          });
+          hasChanges = true;
+        }
+
+        // Extract mutations
+        const mutationsProp = properties.find(
+          (p: any) => p.key && p.key.name === "mutations",
+        );
+        if (
+          mutationsProp &&
+          mutationsProp.value &&
+          mutationsProp.value.type === "ObjectExpression"
+        ) {
+          const mutProps = mutationsProp.value.properties || [];
+          mutProps.forEach((mutProp: any) => {
+            if (mutProp && mutProp.key) {
+              const mutName = mutProp.key.name || mutProp.key.value;
+              if (mutName) {
+                localFunctionNames.add(mutName);
+                functionNames.add(mutName);
+                returnProperties.push(mutName);
+
+                let mutValue: any = mutProp.value;
+                let mutBody: any = null;
+                let mutParams: any[] = [];
+
+                if (
+                  mutValue.type === "FunctionExpression" ||
+                  mutValue.type === "ArrowFunctionExpression"
+                ) {
+                  mutBody = mutValue.body;
+                  mutParams = mutValue.params || [];
+                }
+
+                // Remove state parameter
+                const newParams =
+                  mutParams.length > 0 &&
+                  mutParams[0] &&
+                  mutParams[0].name === "state"
+                    ? mutParams.slice(1)
+                    : mutParams;
+
+                setupStatements.push(
+                  j.functionDeclaration(
+                    j.identifier(mutName),
+                    newParams,
+                    mutBody || j.blockStatement([]),
+                  ),
+                );
+              }
+            }
+          });
+          hasChanges = true;
+        }
+
+        // Extract actions
+        const actionsProp = properties.find(
+          (p: any) => p.key && p.key.name === "actions",
+        );
+        if (
+          actionsProp &&
+          actionsProp.value &&
+          actionsProp.value.type === "ObjectExpression"
+        ) {
+          const actionProps = actionsProp.value.properties || [];
+          actionProps.forEach((actionProp: any) => {
+            if (actionProp && actionProp.key) {
+              const actionName = actionProp.key.name || actionProp.key.value;
+              if (actionName && !localFunctionNames.has(actionName)) {
+                localFunctionNames.add(actionName);
+                functionNames.add(actionName);
+                returnProperties.push(actionName);
+
+                let actionValue: any = actionProp.value;
+                let actionBody: any = null;
+                let actionParams: any[] = [];
+
+                if (
+                  actionValue.type === "FunctionExpression" ||
+                  actionValue.type === "ArrowFunctionExpression"
+                ) {
+                  actionBody = actionValue.body;
+                  actionParams = actionValue.params || [];
+                }
+
+                // Remove Vuex context parameters
+                const cleanedParams = actionParams.filter((param: any) => {
+                  if (param.type === "ObjectPattern") {
+                    const properties = param.properties || [];
+                    const vuexContextProps = [
+                      "commit",
+                      "dispatch",
+                      "state",
+                      "getters",
+                      "rootState",
+                      "rootGetters",
+                    ];
+                    const hasOnlyVuexProps = properties.every((p: any) => {
+                      const keyName = p.key?.name || p.key?.value;
+                      return vuexContextProps.includes(keyName);
+                    });
+                    return !hasOnlyVuexProps;
+                  }
+                  return true;
+                });
+
+                setupStatements.push(
+                  j.functionDeclaration(
+                    j.identifier(actionName),
+                    cleanedParams,
+                    actionBody || j.blockStatement([]),
+                  ),
+                );
+              }
+            }
+          });
+          hasChanges = true;
+        }
+
+        // Create return statement
+        const returnPropertiesAST = returnProperties.map((name) =>
+          j.property("init", j.identifier(name), j.identifier(name)),
+        );
+        setupStatements.push(
+          j.returnStatement(j.objectExpression(returnPropertiesAST)),
+        );
+
+        // Create defineStore call
+        const setupFunction = j.arrowFunctionExpression(
+          [],
+          j.blockStatement(setupStatements),
+        );
+        const storeId = j.literal(moduleName);
+        const defineStoreCall = j.callExpression(j.identifier("defineStore"), [
+          storeId,
+          setupFunction,
+        ]);
+
+        // Replace export default with export const useStoreName = defineStore(...)
+        const exportDeclaration = j.exportNamedDeclaration(
+          j.variableDeclaration("const", [
+            j.variableDeclarator(j.identifier(useStoreName), defineStoreCall),
+          ]),
+        );
+
+        j(path).replaceWith(exportDeclaration);
+        hasChanges = true;
+      }
+    }
+  });
+
   // Transform new Vuex.Store({ ... }) to defineStore('name', () => { ... })
   root.find(j.NewExpression).forEach((path: any) => {
     if (
       path.value.callee &&
-      path.value.callee.type === 'MemberExpression' &&
+      path.value.callee.type === "MemberExpression" &&
       path.value.callee.object &&
-      path.value.callee.object.type === 'Identifier' &&
-      path.value.callee.object.name === 'Vuex' &&
+      path.value.callee.object.type === "Identifier" &&
+      path.value.callee.object.name === "Vuex" &&
       path.value.callee.property &&
-      path.value.callee.property.type === 'Identifier' &&
-      path.value.callee.property.name === 'Store'
+      path.value.callee.property.type === "Identifier" &&
+      path.value.callee.property.name === "Store"
     ) {
       const args = path.value.arguments || [];
 
-      if (args.length > 0 && args[0] && args[0].type === 'ObjectExpression') {
+      if (args.length > 0 && args[0] && args[0].type === "ObjectExpression") {
         const config = args[0];
         const properties = config.properties || [];
 
         // Extract store name from filename
-        const fileName = fileInfo.path || 'store';
+        const fileName = fileInfo.path || "store";
         const storeName =
           fileName
-            .replace(/\.(js|ts)$/, '')
-            .split('/')
-            .pop() || 'main';
+            .replace(/\.(js|ts)$/, "")
+            .split("/")
+            .pop() || "main";
 
         // Build Setup Store function body
         const setupStatements: any[] = [];
-        const stateProperties = new Map<string, { isObject: boolean; value: any }>();
+        const stateProperties = new Map<
+          string,
+          { isObject: boolean; value: any }
+        >();
         const localComputedProperties = new Set<string>();
         const localFunctionNames = new Set<string>();
         const returnProperties: string[] = [];
 
         // Step 1: Extract state properties and convert to ref()/reactive()
-        const stateProp = properties.find((p: any) => p.key && p.key.name === 'state');
-        if (stateProp && stateProp.value && stateProp.value.type === 'ObjectExpression') {
+        const stateProp = properties.find(
+          (p: any) => p.key && p.key.name === "state",
+        );
+        if (
+          stateProp &&
+          stateProp.value &&
+          stateProp.value.type === "ObjectExpression"
+        ) {
           const stateProps = stateProp.value.properties || [];
           stateProps.forEach((prop: any) => {
             if (prop && prop.key) {
               const propName = prop.key.name || prop.key.value;
               if (propName) {
-                const isObject = prop.value && prop.value.type === 'ObjectExpression';
+                const isObject =
+                  prop.value && prop.value.type === "ObjectExpression";
                 stateProperties.set(propName, { isObject, value: prop.value });
                 returnProperties.push(propName);
 
                 // Convert to ref() or reactive()
                 if (isObject) {
                   setupStatements.push(
-                    j.variableDeclaration('const', [
+                    j.variableDeclaration("const", [
                       j.variableDeclarator(
                         j.identifier(propName),
-                        j.callExpression(j.identifier('reactive'), [prop.value])
+                        j.callExpression(j.identifier("reactive"), [
+                          prop.value,
+                        ]),
                       ),
-                    ])
+                    ]),
                   );
-                  imports.add('reactive');
+                  imports.add("reactive");
 
                   // Track property types for interface generation (objects)
                   if (enableTypeScript) {
-                    statePropertyTypes.set(propName, 'object');
+                    statePropertyTypes.set(propName, "object");
                     // Store object AST for interface property generation
                     objectPropertyDetails.set(propName, prop.value);
                   }
                 } else {
                   setupStatements.push(
-                    j.variableDeclaration('const', [
+                    j.variableDeclaration("const", [
                       j.variableDeclarator(
                         j.identifier(propName),
-                        j.callExpression(j.identifier('ref'), [prop.value || j.literal(null)])
+                        j.callExpression(j.identifier("ref"), [
+                          prop.value || j.literal(null),
+                        ]),
                       ),
-                    ])
+                    ]),
                   );
-                  imports.add('ref');
+                  imports.add("ref");
                   // Track ref properties for TypeScript typing
                   refProperties.add(propName);
 
                   // Track property types for interface generation
                   if (enableTypeScript) {
-                    const propCode = j(prop.value || j.literal(null)).toSource();
-                    const inferredType = inferTypeFromValueString(propCode.trim());
+                    const propCode = j(
+                      prop.value || j.literal(null),
+                    ).toSource();
+                    const inferredType = inferTypeFromValueString(
+                      propCode.trim(),
+                    );
                     statePropertyTypes.set(propName, inferredType);
                   }
                 }
@@ -120,8 +462,14 @@ export const vuexPiniaSetupTransform: Transform = (
         }
 
         // Step 2: Extract getters and convert to computed()
-        const gettersProp = properties.find((p: any) => p.key && p.key.name === 'getters');
-        if (gettersProp && gettersProp.value && gettersProp.value.type === 'ObjectExpression') {
+        const gettersProp = properties.find(
+          (p: any) => p.key && p.key.name === "getters",
+        );
+        if (
+          gettersProp &&
+          gettersProp.value &&
+          gettersProp.value.type === "ObjectExpression"
+        ) {
           const getterProps = gettersProp.value.properties || [];
           if (getterProps.length > 0) {
             getterProps.forEach((getterProp: any) => {
@@ -137,7 +485,7 @@ export const vuexPiniaSetupTransform: Transform = (
                   let getterBody: any = null;
                   let isArrowExpression = false;
 
-                  if (getterProp.type === 'ObjectMethod') {
+                  if (getterProp.type === "ObjectMethod") {
                     // Shorthand method: doubleCount(state) { ... }
                     getterValue = getterProp;
                     getterBody = getterProp.body;
@@ -145,18 +493,18 @@ export const vuexPiniaSetupTransform: Transform = (
                     // Property with value: doubleCount: function(state) { ... } or (state) => state.count * 2
                     getterValue = getterProp.value;
                     if (
-                      getterValue.type === 'FunctionExpression' ||
-                      getterValue.type === 'ArrowFunctionExpression'
+                      getterValue.type === "FunctionExpression" ||
+                      getterValue.type === "ArrowFunctionExpression"
                     ) {
                       getterBody = getterValue.body;
                       // Check if it's an arrow function with expression body (not block)
                       if (
-                        getterValue.type === 'ArrowFunctionExpression' &&
-                        getterBody.type !== 'BlockStatement'
+                        getterValue.type === "ArrowFunctionExpression" &&
+                        getterBody.type !== "BlockStatement"
                       ) {
                         isArrowExpression = true;
                       }
-                    } else if (getterValue.type === 'ObjectMethod') {
+                    } else if (getterValue.type === "ObjectMethod") {
                       getterBody = getterValue.body;
                     }
                   }
@@ -164,16 +512,19 @@ export const vuexPiniaSetupTransform: Transform = (
                   if (!getterBody) {
                     // Create a placeholder computed if body is missing
                     setupStatements.push(
-                      j.variableDeclaration('const', [
+                      j.variableDeclaration("const", [
                         j.variableDeclarator(
                           j.identifier(getterName),
-                          j.callExpression(j.identifier('computed'), [
-                            j.arrowFunctionExpression([], j.identifier('undefined')),
-                          ])
+                          j.callExpression(j.identifier("computed"), [
+                            j.arrowFunctionExpression(
+                              [],
+                              j.identifier("undefined"),
+                            ),
+                          ]),
                         ),
-                      ])
+                      ]),
                     );
-                    imports.add('computed');
+                    imports.add("computed");
                     return;
                   }
 
@@ -183,9 +534,12 @@ export const vuexPiniaSetupTransform: Transform = (
                   if (isArrowExpression) {
                     // Arrow function with expression body: (state) => state.count * 2
                     returnExpression = getterBody;
-                  } else if (getterBody.type === 'BlockStatement' && getterBody.body) {
+                  } else if (
+                    getterBody.type === "BlockStatement" &&
+                    getterBody.body
+                  ) {
                     const returnStmt = getterBody.body.find(
-                      (stmt: any) => stmt && stmt.type === 'ReturnStatement'
+                      (stmt: any) => stmt && stmt.type === "ReturnStatement",
                     );
                     if (returnStmt && returnStmt.argument) {
                       returnExpression = returnStmt.argument;
@@ -199,7 +553,9 @@ export const vuexPiniaSetupTransform: Transform = (
 
                     // Replace state references - handle nested properties first
                     // Process in order: longest matches first (nested properties), then simple properties
-                    const sortedProps = Array.from(stateProperties.entries()).sort((a, b) => {
+                    const sortedProps = Array.from(
+                      stateProperties.entries(),
+                    ).sort((a, b) => {
                       // Sort by depth (objects first, then refs)
                       if (a[1].isObject && !b[1].isObject) return -1;
                       if (!a[1].isObject && b[1].isObject) return 1;
@@ -208,7 +564,10 @@ export const vuexPiniaSetupTransform: Transform = (
 
                     sortedProps.forEach(([propName, info]) => {
                       // Escape propName for regex
-                      const escapedName = propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                      const escapedName = propName.replace(
+                        /[.*+?^${}()|[\]\\]/g,
+                        "\\$&",
+                      );
 
                       if (info.isObject) {
                         // For reactive objects: state.user.name → user.name, state.user.preferences.theme → user.preferences.theme
@@ -216,33 +575,33 @@ export const vuexPiniaSetupTransform: Transform = (
                         // Pattern: state.propName.anything (at least one dot after propName)
                         const nestedPattern = new RegExp(
                           `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
-                          'g'
+                          "g",
                         );
                         transformedCode = transformedCode.replace(
                           nestedPattern,
                           (match: string) => {
                             // Remove 'state.' prefix
-                            return match.replace(/^state\./, '');
-                          }
+                            return match.replace(/^state\./, "");
+                          },
                         );
                         // Also handle direct state.user → user (must come after nested to avoid double replacement)
                         // Match state.user not followed by a dot (end of property access)
                         transformedCode = transformedCode.replace(
-                          new RegExp(`state\\.${escapedName}(?!\\.)`, 'g'),
-                          propName
+                          new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
+                          propName,
                         );
                       } else {
                         // For refs: state.count → count.value, state.items → items.value
                         // Must match state.items.length, state.items.push, etc.
                         // Match state.items followed by a dot (method/property access)
                         transformedCode = transformedCode.replace(
-                          new RegExp(`state\\.${escapedName}\\.`, 'g'),
-                          `${propName}.value.`
+                          new RegExp(`state\\.${escapedName}\\.`, "g"),
+                          `${propName}.value.`,
                         );
                         // Also match state.items at end of expression
                         transformedCode = transformedCode.replace(
-                          new RegExp(`state\\.${escapedName}(?!\\.)`, 'g'),
-                          `${propName}.value`
+                          new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
+                          `${propName}.value`,
                         );
                       }
                     });
@@ -253,12 +612,16 @@ export const vuexPiniaSetupTransform: Transform = (
                       const wrappedCode = `(${transformedCode})`;
                       const exprRoot = j(wrappedCode);
                       const program = exprRoot.find(j.Program).paths()[0];
-                      if (program && program.value.body && program.value.body.length > 0) {
+                      if (
+                        program &&
+                        program.value.body &&
+                        program.value.body.length > 0
+                      ) {
                         const firstStmt = program.value.body[0];
-                        if (firstStmt.type === 'ExpressionStatement') {
+                        if (firstStmt.type === "ExpressionStatement") {
                           const expr = firstStmt.expression;
                           // Unwrap if it's a parenthesized expression
-                          if (expr.type === 'ParenthesizedExpression') {
+                          if (expr.type === "ParenthesizedExpression") {
                             returnExpression = expr.expression;
                           } else {
                             returnExpression = expr;
@@ -272,11 +635,15 @@ export const vuexPiniaSetupTransform: Transform = (
                       try {
                         const exprRoot = j(`(${transformedCode})`);
                         const program = exprRoot.find(j.Program).paths()[0];
-                        if (program && program.value.body && program.value.body.length > 0) {
+                        if (
+                          program &&
+                          program.value.body &&
+                          program.value.body.length > 0
+                        ) {
                           const firstStmt = program.value.body[0];
-                          if (firstStmt.type === 'ExpressionStatement') {
+                          if (firstStmt.type === "ExpressionStatement") {
                             const expr = firstStmt.expression;
-                            if (expr.type === 'ParenthesizedExpression') {
+                            if (expr.type === "ParenthesizedExpression") {
                               returnExpression = expr.expression;
                             } else {
                               returnExpression = expr;
@@ -290,26 +657,30 @@ export const vuexPiniaSetupTransform: Transform = (
                   }
 
                   // Always create computed - use transformed expression or fallback
-                  const finalExpression = returnExpression || j.identifier('undefined');
+                  const finalExpression =
+                    returnExpression || j.identifier("undefined");
 
                   // Infer return type for TypeScript
                   if (enableTypeScript && returnExpression) {
                     const returnType = inferTypeFromAST(returnExpression);
-                    if (returnType && returnType !== 'any') {
+                    if (returnType && returnType !== "any") {
                       computedReturnTypes.set(getterName, returnType);
                     }
                   }
 
-                  const arrowFn = j.arrowFunctionExpression([], finalExpression);
+                  const arrowFn = j.arrowFunctionExpression(
+                    [],
+                    finalExpression,
+                  );
                   setupStatements.push(
-                    j.variableDeclaration('const', [
+                    j.variableDeclaration("const", [
                       j.variableDeclarator(
                         j.identifier(getterName),
-                        j.callExpression(j.identifier('computed'), [arrowFn])
+                        j.callExpression(j.identifier("computed"), [arrowFn]),
                       ),
-                    ])
+                    ]),
                   );
-                  imports.add('computed');
+                  imports.add("computed");
                 }
               }
             });
@@ -318,11 +689,13 @@ export const vuexPiniaSetupTransform: Transform = (
         }
 
         // Step 3: Extract mutations and convert to functions
-        const mutationsProp = properties.find((p: any) => p.key && p.key.name === 'mutations');
+        const mutationsProp = properties.find(
+          (p: any) => p.key && p.key.name === "mutations",
+        );
         if (
           mutationsProp &&
           mutationsProp.value &&
-          mutationsProp.value.type === 'ObjectExpression'
+          mutationsProp.value.type === "ObjectExpression"
         ) {
           const mutProps = mutationsProp.value.properties || [];
           if (mutProps.length > 0) {
@@ -341,7 +714,7 @@ export const vuexPiniaSetupTransform: Transform = (
               let mutBody: any = null;
               let mutParams: any[] = [];
 
-              if (mutProp.type === 'ObjectMethod') {
+              if (mutProp.type === "ObjectMethod") {
                 // Shorthand method: INCREMENT(state) { ... }
                 mutValue = mutProp;
                 mutBody = mutProp.body;
@@ -350,12 +723,12 @@ export const vuexPiniaSetupTransform: Transform = (
                 // Property with value: INCREMENT: function(state) { ... }
                 mutValue = mutProp.value;
                 if (
-                  mutValue.type === 'FunctionExpression' ||
-                  mutValue.type === 'ArrowFunctionExpression'
+                  mutValue.type === "FunctionExpression" ||
+                  mutValue.type === "ArrowFunctionExpression"
                 ) {
                   mutBody = mutValue.body;
                   mutParams = mutValue.params || [];
-                } else if (mutValue.type === 'ObjectMethod') {
+                } else if (mutValue.type === "ObjectMethod") {
                   mutBody = mutValue.body;
                   mutParams = mutValue.params || [];
                 }
@@ -365,22 +738,28 @@ export const vuexPiniaSetupTransform: Transform = (
 
               // Remove state parameter (first param)
               const newParams =
-                mutParams.length > 0 && mutParams[0] && mutParams[0].name === 'state'
+                mutParams.length > 0 &&
+                mutParams[0] &&
+                mutParams[0].name === "state"
                   ? mutParams.slice(1)
                   : mutParams;
 
               // Transform body: state.xxx → variableName.value or variableName.xxx
               let transformedBody = mutBody;
-              if (mutBody && mutBody.type === 'BlockStatement') {
-                transformedBody = transformStateReferencesInBody(j, mutBody, stateProperties);
+              if (mutBody && mutBody.type === "BlockStatement") {
+                transformedBody = transformStateReferencesInBody(
+                  j,
+                  mutBody,
+                  stateProperties,
+                );
               }
 
               setupStatements.push(
                 j.functionDeclaration(
                   j.identifier(mutName),
                   newParams,
-                  transformedBody || j.blockStatement([])
-                )
+                  transformedBody || j.blockStatement([]),
+                ),
               );
             });
           }
@@ -388,8 +767,14 @@ export const vuexPiniaSetupTransform: Transform = (
         }
 
         // Step 4: Extract actions and convert to functions
-        const actionsProp = properties.find((p: any) => p.key && p.key.name === 'actions');
-        if (actionsProp && actionsProp.value && actionsProp.value.type === 'ObjectExpression') {
+        const actionsProp = properties.find(
+          (p: any) => p.key && p.key.name === "actions",
+        );
+        if (
+          actionsProp &&
+          actionsProp.value &&
+          actionsProp.value.type === "ObjectExpression"
+        ) {
           const actionProps = actionsProp.value.properties || [];
           if (actionProps.length > 0) {
             actionProps.forEach((actionProp: any) => {
@@ -407,7 +792,7 @@ export const vuexPiniaSetupTransform: Transform = (
               let actionBody: any = null;
               let actionParams: any[] = [];
 
-              if (actionProp.type === 'ObjectMethod') {
+              if (actionProp.type === "ObjectMethod") {
                 // Shorthand method: increment({ commit }) { ... }
                 actionValue = actionProp;
                 actionBody = actionProp.body;
@@ -416,12 +801,12 @@ export const vuexPiniaSetupTransform: Transform = (
                 // Property with value: increment: function({ commit }) { ... }
                 actionValue = actionProp.value;
                 if (
-                  actionValue.type === 'FunctionExpression' ||
-                  actionValue.type === 'ArrowFunctionExpression'
+                  actionValue.type === "FunctionExpression" ||
+                  actionValue.type === "ArrowFunctionExpression"
                 ) {
                   actionBody = actionValue.body;
                   actionParams = actionValue.params || [];
-                } else if (actionValue.type === 'ObjectMethod') {
+                } else if (actionValue.type === "ObjectMethod") {
                   actionBody = actionValue.body;
                   actionParams = actionValue.params || [];
                 }
@@ -433,16 +818,16 @@ export const vuexPiniaSetupTransform: Transform = (
               // In Pinia, actions don't receive context, so we remove destructured parameters
               const cleanedParams = actionParams.filter((param: any) => {
                 // Remove destructured parameters like { commit }, { commit, dispatch }, etc.
-                if (param.type === 'ObjectPattern') {
+                if (param.type === "ObjectPattern") {
                   // Check if it only contains commit/dispatch/state/getters (Vuex context)
                   const properties = param.properties || [];
                   const vuexContextProps = [
-                    'commit',
-                    'dispatch',
-                    'state',
-                    'getters',
-                    'rootState',
-                    'rootGetters',
+                    "commit",
+                    "dispatch",
+                    "state",
+                    "getters",
+                    "rootState",
+                    "rootGetters",
                   ];
                   const hasOnlyVuexProps = properties.every((p: any) => {
                     const keyName = p.key?.name || p.key?.value;
@@ -456,14 +841,18 @@ export const vuexPiniaSetupTransform: Transform = (
 
               // Transform commit() calls and state references
               let transformedBody = actionBody;
-              if (actionBody && actionBody.type === 'BlockStatement') {
+              if (actionBody && actionBody.type === "BlockStatement") {
                 // First transform commit() calls to direct function calls
-                transformedBody = transformCommitCalls(j, actionBody, localFunctionNames);
+                transformedBody = transformCommitCalls(
+                  j,
+                  actionBody,
+                  localFunctionNames,
+                );
                 // Then transform state references
                 transformedBody = transformStateReferencesInBody(
                   j,
                   transformedBody,
-                  stateProperties
+                  stateProperties,
                 );
               }
 
@@ -471,8 +860,8 @@ export const vuexPiniaSetupTransform: Transform = (
                 j.functionDeclaration(
                   j.identifier(actionName),
                   cleanedParams,
-                  transformedBody || j.blockStatement([])
-                )
+                  transformedBody || j.blockStatement([]),
+                ),
               );
             });
           }
@@ -481,14 +870,19 @@ export const vuexPiniaSetupTransform: Transform = (
 
         // Step 5: Create return statement
         const returnPropertiesAST = returnProperties.map((name) =>
-          j.property('init', j.identifier(name), j.identifier(name))
+          j.property("init", j.identifier(name), j.identifier(name)),
         );
-        setupStatements.push(j.returnStatement(j.objectExpression(returnPropertiesAST)));
+        setupStatements.push(
+          j.returnStatement(j.objectExpression(returnPropertiesAST)),
+        );
 
         // Step 6: Create setup function and defineStore call
-        const setupFunction = j.arrowFunctionExpression([], j.blockStatement(setupStatements));
+        const setupFunction = j.arrowFunctionExpression(
+          [],
+          j.blockStatement(setupStatements),
+        );
         const storeId = j.literal(storeName);
-        const defineStoreCall = j.callExpression(j.identifier('defineStore'), [
+        const defineStoreCall = j.callExpression(j.identifier("defineStore"), [
           storeId,
           setupFunction,
         ]);
@@ -506,14 +900,19 @@ export const vuexPiniaSetupTransform: Transform = (
 
   // Add imports for ref, reactive, computed
   if (hasChanges && imports.size > 0) {
-    const importSpecifiers = Array.from(imports).map((imp) => j.importSpecifier(j.identifier(imp)));
-    const importStatement = j.importDeclaration(importSpecifiers, j.literal('vue'));
+    const importSpecifiers = Array.from(imports).map((imp) =>
+      j.importSpecifier(j.identifier(imp)),
+    );
+    const importStatement = j.importDeclaration(
+      importSpecifiers,
+      j.literal("vue"),
+    );
 
     // Check if pinia import exists, add vue import before it
     const existingImports = root.find(j.ImportDeclaration);
     let inserted = false;
     existingImports.forEach((impPath: any) => {
-      if (impPath.value.source.value === 'pinia' && !inserted) {
+      if (impPath.value.source.value === "pinia" && !inserted) {
         j(impPath).insertBefore(importStatement);
         inserted = true;
       }
@@ -531,23 +930,23 @@ export const vuexPiniaSetupTransform: Transform = (
   root.find(j.CallExpression).forEach((path: any) => {
     if (
       path.value.callee &&
-      path.value.callee.type === 'MemberExpression' &&
+      path.value.callee.type === "MemberExpression" &&
       path.value.callee.object &&
-      path.value.callee.object.type === 'Identifier' &&
-      path.value.callee.object.name === 'Vue' &&
+      path.value.callee.object.type === "Identifier" &&
+      path.value.callee.object.name === "Vue" &&
       path.value.callee.property &&
-      path.value.callee.property.type === 'Identifier' &&
-      path.value.callee.property.name === 'use' &&
+      path.value.callee.property.type === "Identifier" &&
+      path.value.callee.property.name === "use" &&
       path.value.arguments &&
       path.value.arguments.length > 0 &&
       path.value.arguments[0] &&
-      path.value.arguments[0].type === 'Identifier' &&
-      path.value.arguments[0].name === 'Vuex'
+      path.value.arguments[0].type === "Identifier" &&
+      path.value.arguments[0].name === "Vuex"
     ) {
       let currentPath: any = path;
       while (currentPath && currentPath.parent) {
         const parentValue = currentPath.parent.value;
-        if (parentValue && parentValue.type === 'ExpressionStatement') {
+        if (parentValue && parentValue.type === "ExpressionStatement") {
           j(currentPath.parent).remove();
           hasChanges = true;
           break;
@@ -559,7 +958,7 @@ export const vuexPiniaSetupTransform: Transform = (
 
   // Remove Vuex import if present
   root.find(j.ImportDeclaration).forEach((path: any) => {
-    if (path.value && path.value.source && path.value.source.value === 'vuex') {
+    if (path.value && path.value.source && path.value.source.value === "vuex") {
       j(path).remove();
       hasChanges = true;
     }
@@ -571,14 +970,14 @@ export const vuexPiniaSetupTransform: Transform = (
     let hasPiniaImport = false;
 
     existingImports.forEach((path: any) => {
-      if (path.value.source && path.value.source.value === 'pinia') {
+      if (path.value.source && path.value.source.value === "pinia") {
         hasPiniaImport = true;
         const specifiers = path.value.specifiers || [];
         const hasDefineStore = specifiers.some(
-          (s: any) => s.imported && s.imported.name === 'defineStore'
+          (s: any) => s.imported && s.imported.name === "defineStore",
         );
         if (!hasDefineStore) {
-          specifiers.push(j.importSpecifier(j.identifier('defineStore')));
+          specifiers.push(j.importSpecifier(j.identifier("defineStore")));
           path.value.specifiers = specifiers;
         }
       }
@@ -586,8 +985,8 @@ export const vuexPiniaSetupTransform: Transform = (
 
     if (!hasPiniaImport) {
       const importStatement = j.importDeclaration(
-        [j.importSpecifier(j.identifier('defineStore'))],
-        j.literal('pinia')
+        [j.importSpecifier(j.identifier("defineStore"))],
+        j.literal("pinia"),
       );
       const program = root.get().node.program;
       if (program && program.body) {
@@ -635,9 +1034,9 @@ export const vuexPiniaSetupTransform: Transform = (
 function transformStateReferencesInBody(
   j: any,
   body: any,
-  stateProperties: Map<string, { isObject: boolean; value: any }>
+  stateProperties: Map<string, { isObject: boolean; value: any }>,
 ): any {
-  if (!body || body.type !== 'BlockStatement') return body;
+  if (!body || body.type !== "BlockStatement") return body;
 
   // Transform the entire body as a string, then parse back
   const bodyCode = j(body).toSource();
@@ -654,7 +1053,7 @@ function transformStateReferencesInBody(
 
   sortedProps.forEach(([propName, info]) => {
     // Escape propName for regex
-    const escapedName = propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedName = propName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     if (info.isObject) {
       // For reactive objects: state.user.name → user.name, state.user.preferences.theme → user.preferences.theme
@@ -662,30 +1061,33 @@ function transformStateReferencesInBody(
       // Pattern: state.propName.anything (at least one dot after propName)
       const nestedPattern = new RegExp(
         `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
-        'g'
+        "g",
       );
-      transformedCode = transformedCode.replace(nestedPattern, (match: string) => {
-        // Remove 'state.' prefix
-        return match.replace(/^state\./, '');
-      });
+      transformedCode = transformedCode.replace(
+        nestedPattern,
+        (match: string) => {
+          // Remove 'state.' prefix
+          return match.replace(/^state\./, "");
+        },
+      );
       // Also handle direct state.user → user (must come after nested to avoid double replacement)
       // Match state.user not followed by a dot (end of property access)
       transformedCode = transformedCode.replace(
-        new RegExp(`state\\.${escapedName}(?!\\.)`, 'g'),
-        propName
+        new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
+        propName,
       );
     } else {
       // For refs: state.count → count.value, state.items → items.value
       // Must match state.items.length, state.items.push, etc.
       // Match state.items followed by a dot (method/property access)
       transformedCode = transformedCode.replace(
-        new RegExp(`state\\.${escapedName}\\.`, 'g'),
-        `${propName}.value.`
+        new RegExp(`state\\.${escapedName}\\.`, "g"),
+        `${propName}.value.`,
       );
       // Also match state.items at end of expression
       transformedCode = transformedCode.replace(
-        new RegExp(`state\\.${escapedName}(?!\\.)`, 'g'),
-        `${propName}.value`
+        new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
+        `${propName}.value`,
       );
     }
   });
@@ -700,17 +1102,19 @@ function transformStateReferencesInBody(
       // Filter out empty block statements and unwrap single-statement blocks
       const cleanedStatements: any[] = [];
       statements.forEach((stmt: any) => {
-        if (stmt.type === 'BlockStatement' && stmt.body) {
+        if (stmt.type === "BlockStatement" && stmt.body) {
           // Unwrap block statements - add their contents directly
           stmt.body.forEach((innerStmt: any) => {
             cleanedStatements.push(innerStmt);
           });
-        } else if (stmt.type !== 'EmptyStatement') {
+        } else if (stmt.type !== "EmptyStatement") {
           // Skip empty statements
           cleanedStatements.push(stmt);
         }
       });
-      return j.blockStatement(cleanedStatements.length > 0 ? cleanedStatements : body.body);
+      return j.blockStatement(
+        cleanedStatements.length > 0 ? cleanedStatements : body.body,
+      );
     }
   } catch (e) {
     // If parsing fails, return original body
@@ -723,8 +1127,12 @@ function transformStateReferencesInBody(
 /**
  * Transform commit('MUTATION_NAME', payload) to direct function calls
  */
-function transformCommitCalls(j: any, body: any, functionNames: Set<string>): any {
-  if (!body || body.type !== 'BlockStatement') return body;
+function transformCommitCalls(
+  j: any,
+  body: any,
+  functionNames: Set<string>,
+): any {
+  if (!body || body.type !== "BlockStatement") return body;
 
   // Transform commit() calls using string replacement for better reliability
   const bodyCode = j(body).toSource();
@@ -733,22 +1141,25 @@ function transformCommitCalls(j: any, body: any, functionNames: Set<string>): an
   // Replace commit('FUNCTION_NAME', ...) with FUNCTION_NAME(...)
   functionNames.forEach((funcName) => {
     // Escape function name for regex
-    const escapedName = funcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedName = funcName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     // Match: commit('FUNC_NAME', payload) - with payload
     const commitWithPayload = new RegExp(
       `commit\\s*\\(\\s*['"]${escapedName}['"]\\s*,\\s*([^)]+)\\)`,
-      'g'
+      "g",
     );
     transformedCode = transformedCode.replace(
       commitWithPayload,
       (_match: string, payload: string) => {
         return `${funcName}(${payload.trim()})`;
-      }
+      },
     );
 
     // Match: commit('FUNC_NAME') - without payload
-    const commitWithoutPayload = new RegExp(`commit\\s*\\(\\s*['"]${escapedName}['"]\\s*\\)`, 'g');
+    const commitWithoutPayload = new RegExp(
+      `commit\\s*\\(\\s*['"]${escapedName}['"]\\s*\\)`,
+      "g",
+    );
     transformedCode = transformedCode.replace(commitWithoutPayload, () => {
       return `${funcName}()`;
     });
@@ -766,15 +1177,17 @@ function transformCommitCalls(j: any, body: any, functionNames: Set<string>): an
       // Filter out empty block statements and unwrap single-statement blocks
       const cleanedStatements: any[] = [];
       statements.forEach((stmt: any) => {
-        if (stmt.type === 'BlockStatement' && stmt.body) {
+        if (stmt.type === "BlockStatement" && stmt.body) {
           stmt.body.forEach((innerStmt: any) => {
             cleanedStatements.push(innerStmt);
           });
-        } else if (stmt.type !== 'EmptyStatement') {
+        } else if (stmt.type !== "EmptyStatement") {
           cleanedStatements.push(stmt);
         }
       });
-      return j.blockStatement(cleanedStatements.length > 0 ? cleanedStatements : body.body);
+      return j.blockStatement(
+        cleanedStatements.length > 0 ? cleanedStatements : body.body,
+      );
     }
   } catch (e) {
     // If parsing fails, return original body
@@ -796,7 +1209,7 @@ function addTypeScriptTypesToStore(
     statePropertyTypes?: Record<string, string>;
     computedReturnTypes?: Record<string, string>;
     objectPropertyDetails?: Record<string, any>;
-  }
+  },
 ): string {
   let result = code;
 
@@ -811,34 +1224,51 @@ function addTypeScriptTypesToStore(
 
   // Track interfaces to generate for arrays and objects
   const arrayInterfaces = new Map<string, string>(); // Interface name → property name
-  const objectInterfaces = new Map<string, { name: string; properties: string[] }>(); // Interface name → properties
+  const objectInterfaces = new Map<
+    string,
+    { name: string; properties: string[] }
+  >(); // Interface name → properties
 
   // Generate TypeScript interfaces for store state if we have state properties
-  if (context.statePropertyTypes && Object.keys(context.statePropertyTypes).length > 0) {
+  if (
+    context.statePropertyTypes &&
+    Object.keys(context.statePropertyTypes).length > 0
+  ) {
     const interfaceProps: string[] = [];
-    Object.entries(context.statePropertyTypes).forEach(([propName, propType]) => {
-      // Check if this is an array type that needs an interface
-      if (propType === 'any[]') {
-        // Generate interface name from property name (plural → singular, capitalized)
-        const interfaceName = pluralToSingularInterface(propName);
-        arrayInterfaces.set(interfaceName, propName);
-        interfaceProps.push(`  ${propName}: ${interfaceName}[];`);
-      } else if (propType === 'object') {
-        // Generate interface name from property name (capitalize first letter)
-        const interfaceName = propName.charAt(0).toUpperCase() + propName.slice(1);
+    Object.entries(context.statePropertyTypes).forEach(
+      ([propName, propType]) => {
+        // Check if this is an array type that needs an interface
+        if (propType === "any[]") {
+          // Generate interface name from property name (plural → singular, capitalized)
+          const interfaceName = pluralToSingularInterface(propName);
+          arrayInterfaces.set(interfaceName, propName);
+          interfaceProps.push(`  ${propName}: ${interfaceName}[];`);
+        } else if (propType === "object") {
+          // Generate interface name from property name (capitalize first letter)
+          const interfaceName =
+            propName.charAt(0).toUpperCase() + propName.slice(1);
 
-        // Extract properties from object AST if available
-        let objectProperties: string[] = [];
-        if (context.objectPropertyDetails && context.objectPropertyDetails[propName]) {
-          objectProperties = extractObjectProperties(context.objectPropertyDetails[propName]);
+          // Extract properties from object AST if available
+          let objectProperties: string[] = [];
+          if (
+            context.objectPropertyDetails &&
+            context.objectPropertyDetails[propName]
+          ) {
+            objectProperties = extractObjectProperties(
+              context.objectPropertyDetails[propName],
+            );
+          }
+
+          objectInterfaces.set(interfaceName, {
+            name: interfaceName,
+            properties: objectProperties,
+          });
+          interfaceProps.push(`  ${propName}: ${interfaceName};`);
+        } else {
+          interfaceProps.push(`  ${propName}: ${propType};`);
         }
-
-        objectInterfaces.set(interfaceName, { name: interfaceName, properties: objectProperties });
-        interfaceProps.push(`  ${propName}: ${interfaceName};`);
-      } else {
-        interfaceProps.push(`  ${propName}: ${propType};`);
-      }
-    });
+      },
+    );
 
     // Generate interfaces for arrays and objects
     const arrayInterfaceCodes: string[] = [];
@@ -851,7 +1281,7 @@ function addTypeScriptTypesToStore(
     objectInterfaces.forEach(({ name, properties }) => {
       if (properties.length > 0) {
         // Generate interface with properties
-        const props = properties.map((prop) => `  ${prop}`).join('\n');
+        const props = properties.map((prop) => `  ${prop}`).join("\n");
         objectInterfaceCodes.push(`interface ${name} {\n${props}\n}`);
       } else {
         // Empty interface if no properties found
@@ -862,7 +1292,9 @@ function addTypeScriptTypesToStore(
     // Combine StoreState interface, array interfaces, and object interfaces
     const allInterfaces: string[] = [];
     if (interfaceProps.length > 0) {
-      allInterfaces.push(`interface StoreState {\n${interfaceProps.join('\n')}\n}`);
+      allInterfaces.push(
+        `interface StoreState {\n${interfaceProps.join("\n")}\n}`,
+      );
     }
     if (arrayInterfaceCodes.length > 0) {
       allInterfaces.push(...arrayInterfaceCodes);
@@ -872,7 +1304,7 @@ function addTypeScriptTypesToStore(
     }
 
     if (allInterfaces.length > 0) {
-      const interfaceCode = allInterfaces.join('\n\n');
+      const interfaceCode = allInterfaces.join("\n\n");
 
       // Insert interfaces after the last import statement
       // Find all import statements
@@ -888,13 +1320,13 @@ function addTypeScriptTypesToStore(
         // Insert interfaces after the last import, with proper spacing
         result =
           result.slice(0, afterLastImport) +
-          '\n\n' +
+          "\n\n" +
           interfaceCode +
-          '\n' +
+          "\n" +
           result.slice(afterLastImport);
       } else {
         // No imports found, insert at the beginning
-        result = interfaceCode + '\n\n' + result;
+        result = interfaceCode + "\n\n" + result;
       }
     }
   }
@@ -903,65 +1335,74 @@ function addTypeScriptTypesToStore(
   context.refProperties.forEach((prop) => {
     // Match: const propName = ref(value)
     // Escape prop name for regex
-    const escapedProp = prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedProp = prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     // Pattern: const propName = ref(value) - capture everything before ref(, the value, and the closing )
     // Handle both single and double quotes in the code
-    const refPattern = new RegExp(`(const\\s+${escapedProp}\\s*=\\s*ref)(\\()([^)]+)(\\))`, 'g');
+    const refPattern = new RegExp(
+      `(const\\s+${escapedProp}\\s*=\\s*ref)(\\()([^)]+)(\\))`,
+      "g",
+    );
 
     // Use replace with a function to handle each match
-    result = result.replace(refPattern, (_match, before, openParen, value, closeParen) => {
-      // Infer type from value
-      let type = inferTypeFromValueString(value.trim());
+    result = result.replace(
+      refPattern,
+      (_match, before, openParen, value, closeParen) => {
+        // Infer type from value
+        let type = inferTypeFromValueString(value.trim());
 
-      // Check if we have a custom interface for this property
-      if (context.statePropertyTypes) {
-        const propType = context.statePropertyTypes[prop];
+        // Check if we have a custom interface for this property
+        if (context.statePropertyTypes) {
+          const propType = context.statePropertyTypes[prop];
 
-        // If it's an array (any[]), use the interface name
-        if (propType === 'any[]') {
-          const interfaceName = pluralToSingularInterface(prop);
-          type = `${interfaceName}[]`;
+          // If it's an array (any[]), use the interface name
+          if (propType === "any[]") {
+            const interfaceName = pluralToSingularInterface(prop);
+            type = `${interfaceName}[]`;
+          }
+          // If it's an object, use the interface name
+          else if (propType === "object") {
+            const interfaceName = prop.charAt(0).toUpperCase() + prop.slice(1);
+            type = interfaceName;
+          }
         }
-        // If it's an object, use the interface name
-        else if (propType === 'object') {
-          const interfaceName = prop.charAt(0).toUpperCase() + prop.slice(1);
-          type = interfaceName;
-        }
-      }
 
-      // Correct format: ref<number>(value) not ref(<number>value)
-      return `${before}<${type}>${openParen}${value}${closeParen}`;
-    });
+        // Correct format: ref<number>(value) not ref(<number>value)
+        return `${before}<${type}>${openParen}${value}${closeParen}`;
+      },
+    );
   });
 
   // Add types to computed() calls: computed(() => ...) → computed<string>(() => ...)
   context.computedProperties.forEach((prop) => {
     // Match: const propName = computed(() => ...)
     // Escape prop name for regex
-    const escapedProp = prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedProp = prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const computedPattern = new RegExp(
       `(const\\s+${escapedProp}\\s*=\\s*computed)(\\()([^)]+)(\\))`,
-      'g'
+      "g",
     );
-    result = result.replace(computedPattern, (_match, before, openParen, fn, closeParen) => {
-      // Use inferred return type if available, otherwise default to any
-      const returnType = context.computedReturnTypes?.[prop] || 'any';
-      // Correct format: computed<number>(() => ...) not computed(<number>() => ...)
-      return `${before}<${returnType}>${openParen}${fn}${closeParen}`;
-    });
+    result = result.replace(
+      computedPattern,
+      (_match, before, openParen, fn, closeParen) => {
+        // Use inferred return type if available, otherwise default to any
+        const returnType = context.computedReturnTypes?.[prop] || "any";
+        // Correct format: computed<number>(() => ...) not computed(<number>() => ...)
+        return `${before}<${returnType}>${openParen}${fn}${closeParen}`;
+      },
+    );
   });
 
   // Add return types to functions (mutations and actions)
   context.functionNames.forEach((funcName) => {
     // Escape function name for regex
-    const escapedFuncName = funcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedFuncName = funcName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     // Match: function functionName(param1, param2) {
     // Pattern needs to capture: function FUNC_NAME(params) {
     // Fix: capture the entire function declaration including the opening brace
     const functionPattern = new RegExp(
       `(function\\s+${escapedFuncName}\\s*\\(([^)]*)\\)\\s*\\{)`,
-      'g'
+      "g",
     );
 
     // Find and replace function declarations
@@ -969,13 +1410,13 @@ function addTypeScriptTypesToStore(
     let match;
     while ((match = functionPattern.exec(result)) !== null) {
       const fullMatch = match[0];
-      const paramList = match[2] || '';
+      const paramList = match[2] || "";
 
       // Add types to parameters
       let typedParams = paramList;
       if (paramList && paramList.trim()) {
         const paramNames = paramList
-          .split(',')
+          .split(",")
           .map((p: string) => p.trim())
           .filter(Boolean);
         typedParams = paramNames
@@ -983,7 +1424,7 @@ function addTypeScriptTypesToStore(
             const paramType = inferParameterType(paramName);
             return `${paramName}: ${paramType}`;
           })
-          .join(', ');
+          .join(", ");
       }
       // Add return type annotation
       const replacement = `function ${funcName}(${typedParams}): void {`;
@@ -995,13 +1436,13 @@ function addTypeScriptTypesToStore(
     // Match: const functionName = (param1, param2) => {
     const arrowPattern = new RegExp(
       `(const\\s+${escapedFuncName}\\s*=\\s*\\(([^)]*)\\)\\s*=>\\s*\\{)`,
-      'g'
+      "g",
     );
     result = result.replace(arrowPattern, (_match, paramList) => {
       let typedParams = paramList;
       if (paramList.trim()) {
         const paramNames = paramList
-          .split(',')
+          .split(",")
           .map((p: string) => p.trim())
           .filter(Boolean);
         typedParams = paramNames
@@ -1009,7 +1450,7 @@ function addTypeScriptTypesToStore(
             const paramType = inferParameterType(paramName);
             return `${paramName}: ${paramType}`;
           })
-          .join(', ');
+          .join(", ");
       }
       return `const ${funcName} = (${typedParams}): void => {`;
     });
@@ -1026,32 +1467,48 @@ function inferParameterType(paramName: string): string {
   const lowerName = paramName.toLowerCase();
 
   // Common patterns
-  if (lowerName.includes('id') || lowerName.includes('index') || lowerName.includes('count')) {
-    return 'number';
+  if (
+    lowerName.includes("id") ||
+    lowerName.includes("index") ||
+    lowerName.includes("count")
+  ) {
+    return "number";
   }
   if (
-    lowerName.includes('name') ||
-    lowerName.includes('text') ||
-    lowerName.includes('message') ||
-    lowerName.includes('title')
+    lowerName.includes("name") ||
+    lowerName.includes("text") ||
+    lowerName.includes("message") ||
+    lowerName.includes("title")
   ) {
-    return 'string';
+    return "string";
   }
-  if (lowerName.includes('is') || lowerName.includes('has') || lowerName.includes('should')) {
-    return 'boolean';
+  if (
+    lowerName.includes("is") ||
+    lowerName.includes("has") ||
+    lowerName.includes("should")
+  ) {
+    return "boolean";
   }
-  if (lowerName.includes('list') || lowerName.includes('items') || lowerName.includes('array')) {
-    return 'any[]';
+  if (
+    lowerName.includes("list") ||
+    lowerName.includes("items") ||
+    lowerName.includes("array")
+  ) {
+    return "any[]";
   }
-  if (lowerName.includes('obj') || lowerName.includes('data') || lowerName.includes('config')) {
-    return 'Record<string, any>';
+  if (
+    lowerName.includes("obj") ||
+    lowerName.includes("data") ||
+    lowerName.includes("config")
+  ) {
+    return "Record<string, any>";
   }
-  if (lowerName.includes('event') || lowerName.includes('e')) {
-    return 'Event';
+  if (lowerName.includes("event") || lowerName.includes("e")) {
+    return "Event";
   }
 
   // Default to any if we can't infer
-  return 'any';
+  return "any";
 }
 
 /**
@@ -1066,36 +1523,36 @@ function inferTypeFromValueString(value: string): string {
     (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
   ) {
-    return 'string';
+    return "string";
   }
 
   // Number literal
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
-    return 'number';
+    return "number";
   }
 
   // Boolean literal
-  if (trimmed === 'true' || trimmed === 'false') {
-    return 'boolean';
+  if (trimmed === "true" || trimmed === "false") {
+    return "boolean";
   }
 
   // Array literal
-  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-    return 'any[]';
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    return "any[]";
   }
 
   // Object literal
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
     // Return a special marker to indicate this is an object that needs an interface
-    return 'object';
+    return "object";
   }
 
   // null or undefined
-  if (trimmed === 'null' || trimmed === 'undefined') {
-    return 'null';
+  if (trimmed === "null" || trimmed === "undefined") {
+    return "null";
   }
 
-  return 'any';
+  return "any";
 }
 
 /**
@@ -1106,15 +1563,15 @@ function inferTypeFromValueString(value: string): string {
 function pluralToSingularInterface(pluralName: string): string {
   // Common irregular plurals
   const irregularPlurals: Record<string, string> = {
-    children: 'Child',
-    people: 'Person',
-    men: 'Man',
-    women: 'Woman',
-    feet: 'Foot',
-    teeth: 'Tooth',
-    mice: 'Mouse',
-    geese: 'Goose',
-    data: 'Datum', // Though 'Data' is often used as singular in programming
+    children: "Child",
+    people: "Person",
+    men: "Man",
+    women: "Woman",
+    feet: "Foot",
+    teeth: "Tooth",
+    mice: "Mouse",
+    geese: "Goose",
+    data: "Datum", // Though 'Data' is often used as singular in programming
   };
 
   const lowerName = pluralName.toLowerCase();
@@ -1133,7 +1590,7 @@ function pluralToSingularInterface(pluralName: string): string {
 
     // Remove trailing 's' if present (but preserve camelCase structure)
     // customItems → CustomItem (remove 's' at end)
-    if (result.endsWith('s') && result.length > 1) {
+    if (result.endsWith("s") && result.length > 1) {
       // Check if it's a simple 's' at the end or part of a word
       // If the second-to-last char is lowercase, it's likely a plural 's'
       const secondLast = result[result.length - 2];
@@ -1148,13 +1605,13 @@ function pluralToSingularInterface(pluralName: string): string {
   // Handle lowercase names: convert to lowercase first, then process
   // Handle common patterns: words ending in -ies, -es, -s
   // -ies → -y (cities → City)
-  if (lowerName.endsWith('ies') && lowerName.length > 3) {
+  if (lowerName.endsWith("ies") && lowerName.length > 3) {
     const base = lowerName.slice(0, -3);
-    return base.charAt(0).toUpperCase() + base.slice(1) + 'y';
+    return base.charAt(0).toUpperCase() + base.slice(1) + "y";
   }
 
   // -es → remove (boxes → Box, classes → Class)
-  if (lowerName.endsWith('es') && lowerName.length > 2) {
+  if (lowerName.endsWith("es") && lowerName.length > 2) {
     const base = lowerName.slice(0, -2);
     if (base.length > 0) {
       return base.charAt(0).toUpperCase() + base.slice(1);
@@ -1162,7 +1619,7 @@ function pluralToSingularInterface(pluralName: string): string {
   }
 
   // Simple plural: remove 's' at the end
-  if (lowerName.endsWith('s') && lowerName.length > 1) {
+  if (lowerName.endsWith("s") && lowerName.length > 1) {
     const singular = lowerName.slice(0, -1);
     // Capitalize first letter
     return singular.charAt(0).toUpperCase() + singular.slice(1);
@@ -1177,7 +1634,7 @@ function pluralToSingularInterface(pluralName: string): string {
  * Converts object properties to TypeScript interface properties
  */
 function extractObjectProperties(objectAST: any): string[] {
-  if (!objectAST || objectAST.type !== 'ObjectExpression') {
+  if (!objectAST || objectAST.type !== "ObjectExpression") {
     return [];
   }
 
@@ -1203,58 +1660,61 @@ function extractObjectProperties(objectAST: any): string[] {
  */
 function inferTypeFromASTValue(valueAST: any): string {
   if (!valueAST) {
-    return 'any';
+    return "any";
   }
 
   // String literal
   if (
-    valueAST.type === 'StringLiteral' ||
-    (valueAST.type === 'Literal' && typeof valueAST.value === 'string')
+    valueAST.type === "StringLiteral" ||
+    (valueAST.type === "Literal" && typeof valueAST.value === "string")
   ) {
-    return 'string';
+    return "string";
   }
 
   // Number literal
   if (
-    valueAST.type === 'NumericLiteral' ||
-    (valueAST.type === 'Literal' && typeof valueAST.value === 'number')
+    valueAST.type === "NumericLiteral" ||
+    (valueAST.type === "Literal" && typeof valueAST.value === "number")
   ) {
-    return 'number';
+    return "number";
   }
 
   // Boolean literal
   if (
-    valueAST.type === 'BooleanLiteral' ||
-    (valueAST.type === 'Literal' && typeof valueAST.value === 'boolean')
+    valueAST.type === "BooleanLiteral" ||
+    (valueAST.type === "Literal" && typeof valueAST.value === "boolean")
   ) {
-    return 'boolean';
+    return "boolean";
   }
 
   // Array literal
-  if (valueAST.type === 'ArrayExpression') {
-    return 'any[]';
+  if (valueAST.type === "ArrayExpression") {
+    return "any[]";
   }
 
   // Object literal - recursive
-  if (valueAST.type === 'ObjectExpression') {
+  if (valueAST.type === "ObjectExpression") {
     const props = extractObjectProperties(valueAST);
     if (props.length > 0) {
-      return `{\n    ${props.join('\n    ')}\n  }`;
+      return `{\n    ${props.join("\n    ")}\n  }`;
     }
-    return 'Record<string, any>';
+    return "Record<string, any>";
   }
 
   // Null or undefined
-  if (valueAST.type === 'NullLiteral' || (valueAST.type === 'Literal' && valueAST.value === null)) {
-    return 'null';
+  if (
+    valueAST.type === "NullLiteral" ||
+    (valueAST.type === "Literal" && valueAST.value === null)
+  ) {
+    return "null";
   }
 
   // Identifier (could be a variable reference)
-  if (valueAST.type === 'Identifier') {
-    return 'any'; // Can't infer from identifier alone
+  if (valueAST.type === "Identifier") {
+    return "any"; // Can't infer from identifier alone
   }
 
-  return 'any';
+  return "any";
 }
 
 /**
@@ -1262,49 +1722,49 @@ function inferTypeFromASTValue(valueAST: any): string {
  */
 function inferTypeFromAST(expressionAST: any): string {
   if (!expressionAST) {
-    return 'any';
+    return "any";
   }
 
   // Binary expressions: a + b, a * b, etc.
-  if (expressionAST.type === 'BinaryExpression') {
+  if (expressionAST.type === "BinaryExpression") {
     const operator = expressionAST.operator;
     // Arithmetic operations typically return number
-    if (['+', '-', '*', '/', '%'].includes(operator)) {
-      return 'number';
+    if (["+", "-", "*", "/", "%"].includes(operator)) {
+      return "number";
     }
     // Comparison operations return boolean
-    if (['==', '===', '!=', '!==', '<', '>', '<=', '>='].includes(operator)) {
-      return 'boolean';
+    if (["==", "===", "!=", "!==", "<", ">", "<=", ">="].includes(operator)) {
+      return "boolean";
     }
     // String concatenation
-    if (operator === '+') {
+    if (operator === "+") {
       // Could be string or number, check operands
       const leftType = inferTypeFromAST(expressionAST.left);
       const rightType = inferTypeFromAST(expressionAST.right);
-      if (leftType === 'string' || rightType === 'string') {
-        return 'string';
+      if (leftType === "string" || rightType === "string") {
+        return "string";
       }
-      return 'number';
+      return "number";
     }
   }
 
   // Unary expressions: !a, -a, etc.
-  if (expressionAST.type === 'UnaryExpression') {
-    if (expressionAST.operator === '!') {
-      return 'boolean';
+  if (expressionAST.type === "UnaryExpression") {
+    if (expressionAST.operator === "!") {
+      return "boolean";
     }
-    if (expressionAST.operator === '-' || expressionAST.operator === '+') {
-      return 'number';
+    if (expressionAST.operator === "-" || expressionAST.operator === "+") {
+      return "number";
     }
   }
 
   // Member expressions: state.count, items.length, user.name, etc.
-  if (expressionAST.type === 'MemberExpression') {
+  if (expressionAST.type === "MemberExpression") {
     const property = expressionAST.property;
 
     // Check for .length property (arrays)
-    if (property && property.name === 'length') {
-      return 'number';
+    if (property && property.name === "length") {
+      return "number";
     }
 
     // Check for property access on objects (e.g., user.name, user.age)
@@ -1314,67 +1774,67 @@ function inferTypeFromAST(expressionAST: any): string {
 
       // Common property names that suggest types
       if (
-        propName === 'name' ||
-        propName === 'email' ||
-        propName === 'title' ||
-        propName === 'description' ||
-        propName === 'message'
+        propName === "name" ||
+        propName === "email" ||
+        propName === "title" ||
+        propName === "description" ||
+        propName === "message"
       ) {
-        return 'string';
+        return "string";
       }
       if (
-        propName === 'age' ||
-        propName === 'count' ||
-        propName === 'id' ||
-        propName === 'price' ||
-        propName === 'index'
+        propName === "age" ||
+        propName === "count" ||
+        propName === "id" ||
+        propName === "price" ||
+        propName === "index"
       ) {
-        return 'number';
+        return "number";
       }
       if (
-        propName === 'isActive' ||
-        propName === 'enabled' ||
-        propName === 'visible' ||
-        propName === 'isAuthenticated'
+        propName === "isActive" ||
+        propName === "enabled" ||
+        propName === "visible" ||
+        propName === "isAuthenticated"
       ) {
-        return 'boolean';
+        return "boolean";
       }
     }
 
     // For other member expressions, try to infer from the object if possible
     // This is a simple heuristic - could be improved with more context
-    return 'any';
+    return "any";
   }
 
   // Call expressions: Math.max(), etc.
-  if (expressionAST.type === 'CallExpression') {
+  if (expressionAST.type === "CallExpression") {
     const callee = expressionAST.callee;
-    if (callee && callee.type === 'MemberExpression') {
+    if (callee && callee.type === "MemberExpression") {
       const object = callee.object;
       const property = callee.property;
-      if (object && object.name === 'Math' && property) {
+      if (object && object.name === "Math" && property) {
         // Math functions typically return numbers
-        return 'number';
+        return "number";
       }
-      if (property && (property.name === 'map' || property.name === 'filter')) {
-        return 'any[]';
+      if (property && (property.name === "map" || property.name === "filter")) {
+        return "any[]";
       }
-      if (property && property.name === 'toString') {
-        return 'string';
+      if (property && property.name === "toString") {
+        return "string";
       }
     }
     // Function calls without context default to any
-    return 'any';
+    return "any";
   }
 
   // Conditional expressions: a ? b : c
-  if (expressionAST.type === 'ConditionalExpression') {
+  if (expressionAST.type === "ConditionalExpression") {
     // Infer from both branches - take the first non-any type
     const consequentType = inferTypeFromAST(expressionAST.consequent);
     const alternateType = inferTypeFromAST(expressionAST.alternate);
-    if (consequentType !== 'any') return consequentType;
-    if (alternateType !== 'any') return alternateType;
-    return 'any';
+    if (consequentType !== "any") return consequentType;
+    if (alternateType !== "any") return alternateType;
+    return "any";
   }
 
   // Literal values
