@@ -79,9 +79,9 @@ graph TD
     A[Vue 2 Project] --> B[Analyze Project]
     B --> C[Classify Files]
     C --> D{Complexity?}
-    D -->|🟢 Simple| E[AST Transform]
-    D -->|🟡 Medium| F[AST + Validation]
-    D -->|🔴 Complex| G[AI Agent]
+    D -->|Simple| E[AST Transform]
+    D -->|Medium| F[AST + Validation]
+    D -->|Complex| G[AI Agent]
     E --> H[Generate Vue 3 Code]
     F --> H
     G --> H
@@ -97,6 +97,8 @@ graph TD
     style N fill:#42B883,stroke:#333,stroke-width:2px,color:#fff
     style G fill:#3B82F6,stroke:#333,stroke-width:2px,color:#fff
     style D fill:#FBBF24,stroke:#333,stroke-width:2px
+    style E fill:#10B981,stroke:#333,stroke-width:2px,color:#fff
+    style F fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 ### Hybrid Approach: AST + AI
@@ -241,7 +243,7 @@ vue-ai-migrator migrate ./src/store --transformations "vuex-pinia"
 export default {
   data() {
     return {
-      message: 'hello vue',
+      message: "hello vue",
     };
   },
   filters: {
@@ -261,9 +263,9 @@ export default {
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref } from "vue";
 
-const message = ref('hello vue');
+const message = ref("hello vue");
 
 function capitalize(value: string) {
   return value.toUpperCase();
@@ -422,22 +424,22 @@ vue-ai-migrator rollback ./my-project --file src/components/MyComponent.vue
 ### Programmatic API
 
 ```typescript
-import { migrate, UnifiedAIService } from 'vue-ai-migrator';
+import { migrate, UnifiedAIService } from "vue-ai-migrator";
 
 // Basic usage with environment variable
 await migrate({
-  projectPath: './my-project',
+  projectPath: "./my-project",
   aiApiKey: process.env.OPENAI_API_KEY,
-  aiProvider: 'openai',
+  aiProvider: "openai",
   dryRun: false,
   enableTypeScript: true, // Enable TypeScript type annotations
 });
 
 // Advanced usage with custom AI service
 const aiService = new UnifiedAIService({
-  provider: 'openai',
-  apiKey: process.env.OPENAI_API_KEY || 'sk-your-key',
-  model: 'gpt-4-turbo-preview',
+  provider: "openai",
+  apiKey: process.env.OPENAI_API_KEY || "sk-your-key",
+  model: "gpt-4-turbo-preview",
   temperature: 0.3,
 });
 ```
@@ -468,21 +470,21 @@ Create a `vue-migrator.config.js` file at the root of your project:
 ```javascript
 module.exports = {
   // Paths to ignore
-  ignore: ['node_modules', 'dist'],
+  ignore: ["node_modules", "dist"],
 
   // Use AI for complex cases
   useAI: true,
 
   // AI Configuration
   ai: {
-    provider: 'openai', // 'openai' | 'mistral' | 'claude' | 'anthropic'
+    provider: "openai", // 'openai' | 'mistral' | 'claude' | 'anthropic'
     apiKey: process.env.OPENAI_API_KEY,
-    model: 'gpt-4-turbo-preview', // Optional
+    model: "gpt-4-turbo-preview", // Optional
     temperature: 0.3, // Optional
   },
 
   // Transformations to apply
-  transformations: ['composition-api', 'global-api', 'router', 'vuex-pinia'],
+  transformations: ["composition-api", "global-api", "router", "vuex-pinia"],
 };
 ```
 
@@ -592,7 +594,7 @@ export default {
 
 ```vue
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed } from "vue";
 
 interface Props {
   count: number;
@@ -635,8 +637,8 @@ vue-ai-migrator automatically migrates Vuex stores to Pinia Setup Stores.
 **Before (Vuex):**
 
 ```javascript
-import Vue from 'vue';
-import Vuex from 'vuex';
+import Vue from "vue";
+import Vuex from "vuex";
 
 Vue.use(Vuex);
 
@@ -644,8 +646,8 @@ export default new Vuex.Store({
   state: {
     count: 0,
     user: {
-      name: 'John',
-      email: 'john@example.com',
+      name: "John",
+      email: "john@example.com",
     },
   },
   getters: {
@@ -662,11 +664,11 @@ export default new Vuex.Store({
   },
   actions: {
     increment({ commit }) {
-      commit('INCREMENT');
+      commit("INCREMENT");
     },
     async fetchUser({ commit }, userId) {
       const user = await api.getUser(userId);
-      commit('SET_USER', user);
+      commit("SET_USER", user);
       return user;
     },
   },
@@ -676,15 +678,15 @@ export default new Vuex.Store({
 **After (Pinia Setup Store):**
 
 ```typescript
-import { defineStore } from 'pinia';
-import { ref, computed } from 'vue';
+import { defineStore } from "pinia";
+import { ref, computed } from "vue";
 
-export const useStore = defineStore('store', () => {
+export const useStore = defineStore("store", () => {
   // State
   const count = ref(0);
   const user = ref({
-    name: 'John',
-    email: 'john@example.com',
+    name: "John",
+    email: "john@example.com",
   });
 
   // Getters
@@ -797,7 +799,7 @@ graph LR
     style A fill:#EF4444,stroke:#333,stroke-width:2px,color:#fff
     style C fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
     style D fill:#10B981,stroke:#333,stroke-width:2px,color:#fff
-````
+```
 
 See [PERFORMANCE.md](./PERFORMANCE.md) for detailed performance analysis and comparison with competitors.
 
@@ -977,3 +979,4 @@ Built with ❤️ by the Vue community. Special thanks to:
 - Vue.js team for the excellent migration guide
 - jscodeshift for AST transformations
 - OpenAI for AI capabilities
+````
