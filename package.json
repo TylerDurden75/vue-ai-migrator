@@ -1,6 +1,6 @@
 {
   "name": "vue-ai-migrator",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Automatic Vue 2 → Vue 3 migration with codemods + AI combination",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
