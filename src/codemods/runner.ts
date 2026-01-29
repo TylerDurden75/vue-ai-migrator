@@ -1,42 +1,34 @@
-import * as jscodeshift from 'jscodeshift';
-import { Transform, API } from 'jscodeshift';
-import { compositionApiTransform } from './transforms/composition-api';
-import { scriptSetupTransform } from './transforms/script-setup';
-import { globalApiTransform } from './transforms/global-api';
-import { filtersTransform } from './transforms/filters';
-import { vModelTransform } from './transforms/v-model';
-import { eventApiTransform } from './transforms/event-api';
-import { routerTransform } from './transforms/router';
-import { vuexPiniaSetupTransform } from './transforms/vuex-pinia-setup';
-import { mixinsTransform } from './transforms/mixins';
-import { pluginsTransform } from './transforms/plugins';
-import { directivesTransform } from './transforms/directives';
-import { provideInjectTransform } from './transforms/provide-inject';
-import { asyncComponentsTransform } from './transforms/async-components';
-import { renderFunctionsTransform } from './transforms/render-functions';
+import * as jscodeshift from "jscodeshift";
+import { Transform, API } from "jscodeshift";
+import { compositionApiTransform } from "./transforms/composition-api";
+import { scriptSetupTransform } from "./transforms/script-setup";
+import { routerTransform } from "./transforms/router";
+import { vuexPiniaSetupTransform } from "./transforms/vuex-pinia-setup";
+import { mixinsTransform } from "./transforms/mixins";
+import { pluginsTransform } from "./transforms/plugins";
+import { directivesTransform } from "./transforms/directives";
+import { provideInjectTransform } from "./transforms/provide-inject";
+import { asyncComponentsTransform } from "./transforms/async-components";
+import { renderFunctionsTransform } from "./transforms/render-functions";
 import {
   parseVueFile,
   reconstructVueFile,
   isVueFile,
   transformVueFileParts,
-} from '../utils/codegen';
+} from "../utils/codegen";
 
 // Available transformations registry
 const AVAILABLE_TRANSFORMS: Record<string, Transform> = {
-  'composition-api': compositionApiTransform,
-  'script-setup': scriptSetupTransform,
-  'global-api': globalApiTransform,
-  filters: filtersTransform,
-  'v-model': vModelTransform,
-  'event-api': eventApiTransform,
+  "composition-api": compositionApiTransform,
+  "script-setup": scriptSetupTransform,
   router: routerTransform,
-  'vuex-pinia': vuexPiniaSetupTransform,
+  "vuex-pinia": vuexPiniaSetupTransform,
   mixins: mixinsTransform,
   plugins: pluginsTransform,
   directives: directivesTransform,
-  'provide-inject': provideInjectTransform,
-  'async-components': asyncComponentsTransform,
-  'render-functions': renderFunctionsTransform,
+  "provide-inject": provideInjectTransform,
+  "async-components": asyncComponentsTransform,
+  "render-functions": renderFunctionsTransform,
 };
 
 export interface TransformOptions {
@@ -54,12 +46,12 @@ export interface TransformResult {
 
 export class CodemodRunner {
   static readonly AVAILABLE_TRANSFORMS = AVAILABLE_TRANSFORMS;
-  private jscodeshift = jscodeshift.withParser('tsx');
+  private jscodeshift = jscodeshift.withParser("tsx");
 
   async transform(
     filePath: string,
     source: string,
-    options: TransformOptions = {}
+    options: TransformOptions = {},
   ): Promise<TransformResult> {
     const result: TransformResult = {
       code: source,
@@ -74,7 +66,8 @@ export class CodemodRunner {
     let vueParts = isVue ? parseVueFile(source) : null;
 
     // Determine which transformations to apply
-    const transformationsToApply = options.transformations || Object.keys(AVAILABLE_TRANSFORMS);
+    const transformationsToApply =
+      options.transformations || Object.keys(AVAILABLE_TRANSFORMS);
 
     try {
       let currentCode = source;
@@ -103,18 +96,24 @@ export class CodemodRunner {
               report: () => {},
             };
 
-            const transformResult = transform({ path: filePath, source: transformedScript }, api, {
-              enableTypeScript: options.enableTypeScript || false,
-            });
+            const transformResult = transform(
+              { path: filePath, source: transformedScript },
+              api,
+              {
+                enableTypeScript: options.enableTypeScript || false,
+              },
+            );
 
             // Handle both sync and async results
             const resultCode =
-              typeof transformResult === 'string' ? transformResult : await transformResult;
+              typeof transformResult === "string"
+                ? transformResult
+                : await transformResult;
 
             // Always use the result if it's different, or if it's script-setup transform
             // script-setup may return the same code but with extracted statements structure
             if (resultCode) {
-              const isScriptSetup = transformName === 'script-setup';
+              const isScriptSetup = transformName === "script-setup";
 
               // For script-setup, always update transformedScript to use the result
               // script-setup extracts statements and may return the same code but properly formatted
@@ -135,7 +134,8 @@ export class CodemodRunner {
 
             if (
               !hasModifications &&
-              (transformName === 'composition-api' || transformName === 'script-setup')
+              (transformName === "composition-api" ||
+                transformName === "script-setup")
             ) {
               // If transformation didn't modify but component was detected, mark for AI
               // But exclude empty data() functions and components with only lifecycle hooks
@@ -152,49 +152,49 @@ export class CodemodRunner {
 
               // Check if component has only lifecycle hooks (no data, computed, methods, etc.)
               const hasOnlyLifecycleHooks =
-                transformedScript.includes('export default') &&
+                transformedScript.includes("export default") &&
                 !transformedScript.match(/data\s*\(/) &&
-                !transformedScript.includes('computed') &&
-                !transformedScript.includes('methods') &&
-                !transformedScript.includes('props') &&
-                !transformedScript.includes('emits') &&
-                !transformedScript.includes('watch') &&
-                (transformedScript.includes('mounted') ||
-                  transformedScript.includes('created') ||
-                  transformedScript.includes('beforeDestroy') ||
-                  transformedScript.includes('destroyed') ||
-                  transformedScript.includes('beforeMount') ||
-                  transformedScript.includes('updated') ||
-                  transformedScript.includes('beforeUpdate') ||
-                  transformedScript.includes('beforeCreate'));
+                !transformedScript.includes("computed") &&
+                !transformedScript.includes("methods") &&
+                !transformedScript.includes("props") &&
+                !transformedScript.includes("emits") &&
+                !transformedScript.includes("watch") &&
+                (transformedScript.includes("mounted") ||
+                  transformedScript.includes("created") ||
+                  transformedScript.includes("beforeDestroy") ||
+                  transformedScript.includes("destroyed") ||
+                  transformedScript.includes("beforeMount") ||
+                  transformedScript.includes("updated") ||
+                  transformedScript.includes("beforeUpdate") ||
+                  transformedScript.includes("beforeCreate"));
 
               // Don't mark empty data() or lifecycle-only components for AI
               if (
-                transformedScript.includes('export default') &&
-                (transformedScript.includes('data()') ||
-                  transformedScript.includes('computed') ||
-                  transformedScript.includes('methods') ||
-                  transformedScript.includes('props') ||
-                  transformedScript.includes('emits') ||
-                  transformedScript.includes('watch')) &&
+                transformedScript.includes("export default") &&
+                (transformedScript.includes("data()") ||
+                  transformedScript.includes("computed") ||
+                  transformedScript.includes("methods") ||
+                  transformedScript.includes("props") ||
+                  transformedScript.includes("emits") ||
+                  transformedScript.includes("watch")) &&
                 !hasEmptyData &&
                 !hasOnlyLifecycleHooks
               ) {
                 result.needsAI = true;
                 result.issues.push(
-                  'Component detected but transformation incomplete - may need AI processing'
+                  "Component detected but transformation incomplete - may need AI processing",
                 );
               } else if (hasOnlyLifecycleHooks && !hasModifications) {
                 // Mark lifecycle-only components for AI if not transformed
                 result.needsAI = true;
                 result.issues.push(
-                  'Component with lifecycle hooks detected - may need AI processing for complete transformation'
+                  "Component with lifecycle hooks detected - may need AI processing for complete transformation",
                 );
               }
             }
           } catch (error) {
             result.issues.push(
-              `Error during transformation ${transformName}: ${error instanceof Error ? error.message : String(error)}`
+              `Error during transformation ${transformName}: ${error instanceof Error ? error.message : String(error)}`,
             );
             result.needsAI = true;
           }
@@ -204,12 +204,15 @@ export class CodemodRunner {
         // CRITICAL: Always update vueParts.script.content with transformedScript
         // even if hasModifications is false, because script-setup may return the same code
         // but we still need to ensure it's properly assigned
-        if (hasModifications || transformationsToApply.includes('script-setup')) {
+        if (
+          hasModifications ||
+          transformationsToApply.includes("script-setup")
+        ) {
           // If script-setup transform was applied, convert to <script setup lang="ts">
-          if (transformationsToApply.includes('script-setup')) {
+          if (transformationsToApply.includes("script-setup")) {
             vueParts.script.setup = true;
             if (options.enableTypeScript) {
-              vueParts.script.lang = 'ts';
+              vueParts.script.lang = "ts";
             }
             // script-setup transform already returns clean code without export default
             // Use the transformed script as-is - it contains all the extracted statements
@@ -226,20 +229,20 @@ export class CodemodRunner {
 
         // If composition-api transform was applied (without script-setup), check if we should convert to script setup
         if (
-          !transformationsToApply.includes('script-setup') &&
-          transformationsToApply.includes('composition-api')
+          !transformationsToApply.includes("script-setup") &&
+          transformationsToApply.includes("composition-api")
         ) {
           // If composition-api transform was applied, check if we should convert to script setup
           // Check if the transformed script is Composition API code (has imports from 'vue')
           if (
-            transformedScript.includes('import {') &&
+            transformedScript.includes("import {") &&
             transformedScript.includes("from 'vue'") &&
-            !transformedScript.includes('export default')
+            !transformedScript.includes("export default")
           ) {
             // Convert to <script setup lang="ts">
             vueParts.script.setup = true;
             if (options.enableTypeScript) {
-              vueParts.script.lang = 'ts';
+              vueParts.script.lang = "ts";
             }
           }
         }
@@ -256,7 +259,10 @@ export class CodemodRunner {
         // Reconstruct Vue file
         // Always reconstruct if script-setup was applied, even if hasModifications is false
         // because script-setup may return the same code but we still need to update the structure
-        if (hasModifications || transformationsToApply.includes('script-setup')) {
+        if (
+          hasModifications ||
+          transformationsToApply.includes("script-setup")
+        ) {
           currentCode = reconstructVueFile(vueParts);
         }
       } else {
@@ -278,20 +284,27 @@ export class CodemodRunner {
               report: () => {},
             };
 
-            const transformResult = transform({ path: filePath, source: currentCode }, api, {
-              enableTypeScript: options.enableTypeScript || false,
-            });
+            const transformResult = transform(
+              { path: filePath, source: currentCode },
+              api,
+              {
+                enableTypeScript: options.enableTypeScript || false,
+              },
+            );
 
             // Handle both sync and async results
             const resultCode =
-              typeof transformResult === 'string' ? transformResult : await transformResult;
+              typeof transformResult === "string"
+                ? transformResult
+                : await transformResult;
 
             if (resultCode && resultCode !== currentCode) {
               currentCode = resultCode;
               hasModifications = true;
               result.transformationsApplied++;
             } else if (
-              (transformName === 'composition-api' || transformName === 'script-setup') &&
+              (transformName === "composition-api" ||
+                transformName === "script-setup") &&
               !hasModifications
             ) {
               // If transformation didn't modify but component was detected, mark for AI
@@ -303,53 +316,54 @@ export class CodemodRunner {
               const hasNonEmptyDataPattern =
                 /data\s*\(\s*\)\s*\{[\s\S]*?return\s*\{[^}]+[\s\S]*?\}/;
               const hasEmptyData =
-                hasEmptyDataPattern.test(currentCode) && !hasNonEmptyDataPattern.test(currentCode);
+                hasEmptyDataPattern.test(currentCode) &&
+                !hasNonEmptyDataPattern.test(currentCode);
 
               // Check if component has only lifecycle hooks (no data, computed, methods, etc.)
               const hasOnlyLifecycleHooks =
-                currentCode.includes('export default') &&
+                currentCode.includes("export default") &&
                 !currentCode.match(/data\s*\(/) &&
-                !currentCode.includes('computed') &&
-                !currentCode.includes('methods') &&
-                !currentCode.includes('props') &&
-                !currentCode.includes('emits') &&
-                !currentCode.includes('watch') &&
-                (currentCode.includes('mounted') ||
-                  currentCode.includes('created') ||
-                  currentCode.includes('beforeDestroy') ||
-                  currentCode.includes('destroyed') ||
-                  currentCode.includes('beforeMount') ||
-                  currentCode.includes('updated') ||
-                  currentCode.includes('beforeUpdate') ||
-                  currentCode.includes('beforeCreate'));
+                !currentCode.includes("computed") &&
+                !currentCode.includes("methods") &&
+                !currentCode.includes("props") &&
+                !currentCode.includes("emits") &&
+                !currentCode.includes("watch") &&
+                (currentCode.includes("mounted") ||
+                  currentCode.includes("created") ||
+                  currentCode.includes("beforeDestroy") ||
+                  currentCode.includes("destroyed") ||
+                  currentCode.includes("beforeMount") ||
+                  currentCode.includes("updated") ||
+                  currentCode.includes("beforeUpdate") ||
+                  currentCode.includes("beforeCreate"));
 
               // Don't mark empty data() or lifecycle-only components for AI
               if (
-                currentCode.includes('export default') &&
-                (currentCode.includes('data()') ||
-                  currentCode.includes('computed') ||
-                  currentCode.includes('methods') ||
-                  currentCode.includes('props') ||
-                  currentCode.includes('emits') ||
-                  currentCode.includes('watch')) &&
+                currentCode.includes("export default") &&
+                (currentCode.includes("data()") ||
+                  currentCode.includes("computed") ||
+                  currentCode.includes("methods") ||
+                  currentCode.includes("props") ||
+                  currentCode.includes("emits") ||
+                  currentCode.includes("watch")) &&
                 !hasEmptyData &&
                 !hasOnlyLifecycleHooks
               ) {
                 result.needsAI = true;
                 result.issues.push(
-                  'Component detected but transformation incomplete - may need AI processing'
+                  "Component detected but transformation incomplete - may need AI processing",
                 );
               } else if (hasOnlyLifecycleHooks && !hasModifications) {
                 // Mark lifecycle-only components for AI if not transformed
                 result.needsAI = true;
                 result.issues.push(
-                  'Component with lifecycle hooks detected - may need AI processing for complete transformation'
+                  "Component with lifecycle hooks detected - may need AI processing for complete transformation",
                 );
               }
             }
           } catch (error) {
             result.issues.push(
-              `Error during transformation ${transformName}: ${error instanceof Error ? error.message : String(error)}`
+              `Error during transformation ${transformName}: ${error instanceof Error ? error.message : String(error)}`,
             );
             result.needsAI = true;
           }
@@ -367,7 +381,7 @@ export class CodemodRunner {
       return result;
     } catch (error) {
       result.issues.push(
-        `Error during analysis: ${error instanceof Error ? error.message : String(error)}`
+        `Error during analysis: ${error instanceof Error ? error.message : String(error)}`,
       );
       result.needsAI = true;
       return result;

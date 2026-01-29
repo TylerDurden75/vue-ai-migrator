@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && node -e \"const fs=require('fs');const f='dist/cli.js';const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!/usr/bin/env node'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\"",
+    "build": "npx tsc && node -e \"const fs=require('fs');const f='dist/cli.js';const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!/usr/bin/env node'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\"",
     "dev": "tsc --watch",
     "test": "jest",
     "test:watch": "jest --watch",
