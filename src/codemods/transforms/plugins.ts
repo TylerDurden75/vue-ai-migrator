@@ -14,9 +14,10 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
   let hasChanges = false;
   let needsAppContext = false;
   let appVariableName = "app"; // Default app variable name
-  
+
   // Check if this is a main.js/main.ts entry point file
-  const isMainFile = fileInfo.path.includes('main.js') || fileInfo.path.includes('main.ts');
+  const isMainFile =
+    fileInfo.path.includes("main.js") || fileInfo.path.includes("main.ts");
 
   // Transform new Vue() → createApp()
   root.find(j.NewExpression).forEach((path: any) => {
