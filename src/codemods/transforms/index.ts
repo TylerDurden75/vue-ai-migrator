@@ -1,0 +1,10 @@
+export { compositionApiTransform } from './composition-api';
+export { scriptSetupTransform } from './script-setup';
+export { globalApiTransform } from './global-api';
+export { filtersTransform } from './filters';
+export { vModelTransform } from './v-model';
+export { eventApiTransform } from './event-api';
+export { routerTransform } from './router';
+export { vuexPiniaSetupTransform } from './vuex-pinia-setup';
+export { asyncComponentsTransform } from './async-components';
+export { renderFunctionsTransform } from './render-functions';

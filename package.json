@@ -1,0 +1,76 @@
+{
+  "name": "vue-ai-migrator",
+  "version": "0.5.0",
+  "description": "Automatic Vue 2 → Vue 3 migration with codemods + AI combination",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "vue-ai-migrator": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"const fs=require('fs');const f='dist/cli.js';const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!/usr/bin/env node'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\"",
+    "dev": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage --coverageReporters=text --coverageReporters=lcov --coverageReporters=html",
+    "test:e2e": "node test-e2e/test-all-features.js",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "check": "npm run lint && npm test && npm run build",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "vue",
+    "vue2",
+    "vue3",
+    "migration",
+    "codemod",
+    "ai",
+    "refactoring",
+    "automation"
+  ],
+  "author": "Thib <raytibo.j@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TylerDurden75/vue-ai-migrator.git"
+  },
+  "homepage": "https://github.com/TylerDurden75/vue-ai-migrator#readme",
+  "bugs": {
+    "url": "https://github.com/TylerDurden75/vue-ai-migrator/issues"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "diff": "^5.2.2",
+    "glob": "^10.3.10",
+    "jscodeshift": "^0.15.1",
+    "openai": "^4.20.1",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/jest": "^29.5.11",
+    "@types/jscodeshift": "^17.3.0",
+    "@types/node": "^20.10.5",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.1.1",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.3"
+  },
+  "peerDependencies": {
+    "vue": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

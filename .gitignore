@@ -1,0 +1,77 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+
+# Migration artifacts (created by vue-ai-migrator)
+.vue-migrator-backup/
+.vue-migrator-cache/
+migration-report.json
+*.migration-report.json
+migration-report.md
+test-report.json
+test-report.md
+*.report.json
+*.report.md
+
+# Internal documentation (development notes - not needed in repo)
+ANALYSIS_PRIORITY.md
+TRANSFORMATIONS_PRIORITY.md
+CHANGELOG_NEW_TRANSFORMATIONS.md
+EXAMPLE-README.md
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+
+# Test project (for local testing only)
+test-project/
+
+# Internal documentation (development notes - not needed in repo)
+PREPUBLISH_CHECKLIST.md
+VALIDATION_RESULTS.md
+test-report.md
+cleanup-analysis.md
+GITHUB_SETUP.md
+PROJECT_REVIEW.md
+OPTIMIZATION_REPORT.md
+PROJECT_STRUCTURE.md
+COHERENCE_CHECK.md
+VISION_CHECKLIST.md
+COMPETITIVE_ANALYSIS.md
+VISUAL_IMPROVEMENTS.md
+IMPROVEMENTS.md
+
+# Test e2e (keep for development but don't publish)
+test-e2e/

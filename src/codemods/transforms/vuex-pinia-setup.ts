@@ -1,0 +1,1382 @@
+import { Transform, FileInfo, API } from 'jscodeshift';
+
+/**
+ * Transforms Vuex stores to Pinia Setup Stores
+ * Key changes:
+ * - new Vuex.Store() → defineStore('name', () => { ... })
+ * - state → ref()/reactive() declarations
+ * - getters → computed() declarations
+ * - mutations → functions (direct state mutation)
+ * - actions → functions
+ * - return { ... } with all properties and methods
+ */
+export const vuexPiniaSetupTransform: Transform = (
+  fileInfo: FileInfo,
+  api: API,
+  options: any = {}
+) => {
+  const j = api.jscodeshift;
+  const root = j(fileInfo.source);
+  const enableTypeScript = options?.enableTypeScript || false;
+
+  let hasChanges = false;
+  const imports = new Set<string>();
+
+  // Track properties for TypeScript type annotation
+  const refProperties = new Set<string>(); // Properties converted to ref()
+  const computedProperties = new Set<string>(); // Properties converted to computed()
+  const functionNames = new Set<string>(); // Functions (mutations/actions)
+  const statePropertyTypes = new Map<string, string>(); // Property name → inferred type for interfaces
+  const objectPropertyDetails = new Map<string, any>(); // Property name → object AST for interface generation
+  const computedReturnTypes = new Map<string, string>(); // Computed name → inferred return type
+
+  // Transform new Vuex.Store({ ... }) to defineStore('name', () => { ... })
+  root.find(j.NewExpression).forEach((path: any) => {
+    if (
+      path.value.callee &&
+      path.value.callee.type === 'MemberExpression' &&
+      path.value.callee.object &&
+      path.value.callee.object.type === 'Identifier' &&
+      path.value.callee.object.name === 'Vuex' &&
+      path.value.callee.property &&
+      path.value.callee.property.type === 'Identifier' &&
+      path.value.callee.property.name === 'Store'
+    ) {
+      const args = path.value.arguments || [];
+
+      if (args.length > 0 && args[0] && args[0].type === 'ObjectExpression') {
+        const config = args[0];
+        const properties = config.properties || [];
+
+        // Extract store name from filename
+        const fileName = fileInfo.path || 'store';
+        const storeName =
+          fileName
+            .replace(/\.(js|ts)$/, '')
+            .split('/')
+            .pop() || 'main';
+
+        // Build Setup Store function body
+        const setupStatements: any[] = [];
+        const stateProperties = new Map<string, { isObject: boolean; value: any }>();
+        const localComputedProperties = new Set<string>();
+        const localFunctionNames = new Set<string>();
+        const returnProperties: string[] = [];
+
+        // Step 1: Extract state properties and convert to ref()/reactive()
+        const stateProp = properties.find((p: any) => p.key && p.key.name === 'state');
+        if (stateProp && stateProp.value && stateProp.value.type === 'ObjectExpression') {
+          const stateProps = stateProp.value.properties || [];
+          stateProps.forEach((prop: any) => {
+            if (prop && prop.key) {
+              const propName = prop.key.name || prop.key.value;
+              if (propName) {
+                const isObject = prop.value && prop.value.type === 'ObjectExpression';
+                stateProperties.set(propName, { isObject, value: prop.value });
+                returnProperties.push(propName);
+
+                // Convert to ref() or reactive()
+                if (isObject) {
+                  setupStatements.push(
+                    j.variableDeclaration('const', [
+                      j.variableDeclarator(
+                        j.identifier(propName),
+                        j.callExpression(j.identifier('reactive'), [prop.value])
+                      ),
+                    ])
+                  );
+                  imports.add('reactive');
+
+                  // Track property types for interface generation (objects)
+                  if (enableTypeScript) {
+                    statePropertyTypes.set(propName, 'object');
+                    // Store object AST for interface property generation
+                    objectPropertyDetails.set(propName, prop.value);
+                  }
+                } else {
+                  setupStatements.push(
+                    j.variableDeclaration('const', [
+                      j.variableDeclarator(
+                        j.identifier(propName),
+                        j.callExpression(j.identifier('ref'), [prop.value || j.literal(null)])
+                      ),
+                    ])
+                  );
+                  imports.add('ref');
+                  // Track ref properties for TypeScript typing
+                  refProperties.add(propName);
+
+                  // Track property types for interface generation
+                  if (enableTypeScript) {
+                    const propCode = j(prop.value || j.literal(null)).toSource();
+                    const inferredType = inferTypeFromValueString(propCode.trim());
+                    statePropertyTypes.set(propName, inferredType);
+                  }
+                }
+              }
+            }
+          });
+          hasChanges = true;
+        }
+
+        // Step 2: Extract getters and convert to computed()
+        const gettersProp = properties.find((p: any) => p.key && p.key.name === 'getters');
+        if (gettersProp && gettersProp.value && gettersProp.value.type === 'ObjectExpression') {
+          const getterProps = gettersProp.value.properties || [];
+          if (getterProps.length > 0) {
+            getterProps.forEach((getterProp: any) => {
+              if (getterProp && getterProp.key) {
+                const getterName = getterProp.key.name || getterProp.key.value;
+                if (getterName) {
+                  localComputedProperties.add(getterName);
+                  computedProperties.add(getterName);
+                  returnProperties.push(getterName);
+
+                  // Handle both ObjectMethod (shorthand) and ObjectProperty (with value)
+                  let getterValue: any = null;
+                  let getterBody: any = null;
+                  let isArrowExpression = false;
+
+                  if (getterProp.type === 'ObjectMethod') {
+                    // Shorthand method: doubleCount(state) { ... }
+                    getterValue = getterProp;
+                    getterBody = getterProp.body;
+                  } else if (getterProp.value) {
+                    // Property with value: doubleCount: function(state) { ... } or (state) => state.count * 2
+                    getterValue = getterProp.value;
+                    if (
+                      getterValue.type === 'FunctionExpression' ||
+                      getterValue.type === 'ArrowFunctionExpression'
+                    ) {
+                      getterBody = getterValue.body;
+                      // Check if it's an arrow function with expression body (not block)
+                      if (
+                        getterValue.type === 'ArrowFunctionExpression' &&
+                        getterBody.type !== 'BlockStatement'
+                      ) {
+                        isArrowExpression = true;
+                      }
+                    } else if (getterValue.type === 'ObjectMethod') {
+                      getterBody = getterValue.body;
+                    }
+                  }
+
+                  if (!getterBody) {
+                    // Create a placeholder computed if body is missing
+                    setupStatements.push(
+                      j.variableDeclaration('const', [
+                        j.variableDeclarator(
+                          j.identifier(getterName),
+                          j.callExpression(j.identifier('computed'), [
+                            j.arrowFunctionExpression([], j.identifier('undefined')),
+                          ])
+                        ),
+                      ])
+                    );
+                    imports.add('computed');
+                    return;
+                  }
+
+                  // Extract return statement from getter body
+                  let returnExpression: any = null;
+
+                  if (isArrowExpression) {
+                    // Arrow function with expression body: (state) => state.count * 2
+                    returnExpression = getterBody;
+                  } else if (getterBody.type === 'BlockStatement' && getterBody.body) {
+                    const returnStmt = getterBody.body.find(
+                      (stmt: any) => stmt && stmt.type === 'ReturnStatement'
+                    );
+                    if (returnStmt && returnStmt.argument) {
+                      returnExpression = returnStmt.argument;
+                    }
+                  }
+
+                  // Transform state references in the return expression
+                  if (returnExpression) {
+                    const returnCode = j(returnExpression).toSource();
+                    let transformedCode = returnCode;
+
+                    // Replace state references - handle nested properties first
+                    // Process in order: longest matches first (nested properties), then simple properties
+                    const sortedProps = Array.from(stateProperties.entries()).sort((a, b) => {
+                      // Sort by depth (objects first, then refs)
+                      if (a[1].isObject && !b[1].isObject) return -1;
+                      if (!a[1].isObject && b[1].isObject) return 1;
+                      return 0;
+                    });
+
+                    sortedProps.forEach(([propName, info]) => {
+                      // Escape propName for regex
+                      const escapedName = propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                      if (info.isObject) {
+                        // For reactive objects: state.user.name → user.name, state.user.preferences.theme → user.preferences.theme
+                        // Match state.propName.anything (including deeply nested) - match the longest path first
+                        // Pattern: state.propName.anything (at least one dot after propName)
+                        const nestedPattern = new RegExp(
+                          `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
+                          'g'
+                        );
+                        transformedCode = transformedCode.replace(
+                          nestedPattern,
+                          (match: string) => {
+                            // Remove 'state.' prefix
+                            return match.replace(/^state\./, '');
+                          }
+                        );
+                        // Also handle direct state.user → user (must come after nested to avoid double replacement)
+                        // Match state.user not followed by a dot (end of property access)
+                        transformedCode = transformedCode.replace(
+                          new RegExp(`state\\.${escapedName}(?!\\.)`, 'g'),
+                          propName
+                        );
+                      } else {
+                        // For refs: state.count → count.value, state.items → items.value
+                        // Must match state.items.length, state.items.push, etc.
+                        // Match state.items followed by a dot (method/property access)
+                        transformedCode = transformedCode.replace(
+                          new RegExp(`state\\.${escapedName}\\.`, 'g'),
+                          `${propName}.value.`
+                        );
+                        // Also match state.items at end of expression
+                        transformedCode = transformedCode.replace(
+                          new RegExp(`state\\.${escapedName}(?!\\.)`, 'g'),
+                          `${propName}.value`
+                        );
+                      }
+                    });
+
+                    // Parse back to AST
+                    try {
+                      // Wrap in parentheses to ensure it's parsed as an expression
+                      const wrappedCode = `(${transformedCode})`;
+                      const exprRoot = j(wrappedCode);
+                      const program = exprRoot.find(j.Program).paths()[0];
+                      if (program && program.value.body && program.value.body.length > 0) {
+                        const firstStmt = program.value.body[0];
+                        if (firstStmt.type === 'ExpressionStatement') {
+                          const expr = firstStmt.expression;
+                          // Unwrap if it's a parenthesized expression
+                          if (expr.type === 'ParenthesizedExpression') {
+                            returnExpression = expr.expression;
+                          } else {
+                            returnExpression = expr;
+                          }
+                        } else {
+                          returnExpression = firstStmt;
+                        }
+                      }
+                    } catch (e) {
+                      // If parsing fails, try parsing the transformed code directly as an expression
+                      try {
+                        const exprRoot = j(`(${transformedCode})`);
+                        const program = exprRoot.find(j.Program).paths()[0];
+                        if (program && program.value.body && program.value.body.length > 0) {
+                          const firstStmt = program.value.body[0];
+                          if (firstStmt.type === 'ExpressionStatement') {
+                            const expr = firstStmt.expression;
+                            if (expr.type === 'ParenthesizedExpression') {
+                              returnExpression = expr.expression;
+                            } else {
+                              returnExpression = expr;
+                            }
+                          }
+                        }
+                      } catch (e2) {
+                        // Keep original if parsing fails
+                      }
+                    }
+                  }
+
+                  // Always create computed - use transformed expression or fallback
+                  const finalExpression = returnExpression || j.identifier('undefined');
+
+                  // Infer return type for TypeScript
+                  if (enableTypeScript && returnExpression) {
+                    const returnType = inferTypeFromAST(returnExpression);
+                    if (returnType && returnType !== 'any') {
+                      computedReturnTypes.set(getterName, returnType);
+                    }
+                  }
+
+                  const arrowFn = j.arrowFunctionExpression([], finalExpression);
+                  setupStatements.push(
+                    j.variableDeclaration('const', [
+                      j.variableDeclarator(
+                        j.identifier(getterName),
+                        j.callExpression(j.identifier('computed'), [arrowFn])
+                      ),
+                    ])
+                  );
+                  imports.add('computed');
+                }
+              }
+            });
+          }
+          hasChanges = true;
+        }
+
+        // Step 3: Extract mutations and convert to functions
+        const mutationsProp = properties.find((p: any) => p.key && p.key.name === 'mutations');
+        if (
+          mutationsProp &&
+          mutationsProp.value &&
+          mutationsProp.value.type === 'ObjectExpression'
+        ) {
+          const mutProps = mutationsProp.value.properties || [];
+          if (mutProps.length > 0) {
+            mutProps.forEach((mutProp: any) => {
+              if (!mutProp || !mutProp.key) return;
+
+              const mutName = mutProp.key.name || mutProp.key.value;
+              if (!mutName) return;
+
+              localFunctionNames.add(mutName);
+              functionNames.add(mutName);
+              returnProperties.push(mutName);
+
+              // Handle both ObjectMethod (shorthand) and ObjectProperty (with value)
+              let mutValue: any = null;
+              let mutBody: any = null;
+              let mutParams: any[] = [];
+
+              if (mutProp.type === 'ObjectMethod') {
+                // Shorthand method: INCREMENT(state) { ... }
+                mutValue = mutProp;
+                mutBody = mutProp.body;
+                mutParams = mutProp.params || [];
+              } else if (mutProp.value) {
+                // Property with value: INCREMENT: function(state) { ... }
+                mutValue = mutProp.value;
+                if (
+                  mutValue.type === 'FunctionExpression' ||
+                  mutValue.type === 'ArrowFunctionExpression'
+                ) {
+                  mutBody = mutValue.body;
+                  mutParams = mutValue.params || [];
+                } else if (mutValue.type === 'ObjectMethod') {
+                  mutBody = mutValue.body;
+                  mutParams = mutValue.params || [];
+                }
+              }
+
+              if (!mutBody) return;
+
+              // Remove state parameter (first param)
+              const newParams =
+                mutParams.length > 0 && mutParams[0] && mutParams[0].name === 'state'
+                  ? mutParams.slice(1)
+                  : mutParams;
+
+              // Transform body: state.xxx → variableName.value or variableName.xxx
+              let transformedBody = mutBody;
+              if (mutBody && mutBody.type === 'BlockStatement') {
+                transformedBody = transformStateReferencesInBody(j, mutBody, stateProperties);
+              }
+
+              setupStatements.push(
+                j.functionDeclaration(
+                  j.identifier(mutName),
+                  newParams,
+                  transformedBody || j.blockStatement([])
+                )
+              );
+            });
+          }
+          hasChanges = true;
+        }
+
+        // Step 4: Extract actions and convert to functions
+        const actionsProp = properties.find((p: any) => p.key && p.key.name === 'actions');
+        if (actionsProp && actionsProp.value && actionsProp.value.type === 'ObjectExpression') {
+          const actionProps = actionsProp.value.properties || [];
+          if (actionProps.length > 0) {
+            actionProps.forEach((actionProp: any) => {
+              if (!actionProp || !actionProp.key) return;
+
+              const actionName = actionProp.key.name || actionProp.key.value;
+              if (!actionName || localFunctionNames.has(actionName)) return;
+
+              localFunctionNames.add(actionName);
+              functionNames.add(actionName);
+              returnProperties.push(actionName);
+
+              // Handle both ObjectMethod (shorthand) and ObjectProperty (with value)
+              let actionValue: any = null;
+              let actionBody: any = null;
+              let actionParams: any[] = [];
+
+              if (actionProp.type === 'ObjectMethod') {
+                // Shorthand method: increment({ commit }) { ... }
+                actionValue = actionProp;
+                actionBody = actionProp.body;
+                actionParams = actionProp.params || [];
+              } else if (actionProp.value) {
+                // Property with value: increment: function({ commit }) { ... }
+                actionValue = actionProp.value;
+                if (
+                  actionValue.type === 'FunctionExpression' ||
+                  actionValue.type === 'ArrowFunctionExpression'
+                ) {
+                  actionBody = actionValue.body;
+                  actionParams = actionValue.params || [];
+                } else if (actionValue.type === 'ObjectMethod') {
+                  actionBody = actionValue.body;
+                  actionParams = actionValue.params || [];
+                }
+              }
+
+              if (!actionBody) return;
+
+              // Remove { commit } or commit from parameters
+              // In Pinia, actions don't receive context, so we remove destructured parameters
+              const cleanedParams = actionParams.filter((param: any) => {
+                // Remove destructured parameters like { commit }, { commit, dispatch }, etc.
+                if (param.type === 'ObjectPattern') {
+                  // Check if it only contains commit/dispatch/state/getters (Vuex context)
+                  const properties = param.properties || [];
+                  const vuexContextProps = [
+                    'commit',
+                    'dispatch',
+                    'state',
+                    'getters',
+                    'rootState',
+                    'rootGetters',
+                  ];
+                  const hasOnlyVuexProps = properties.every((p: any) => {
+                    const keyName = p.key?.name || p.key?.value;
+                    return vuexContextProps.includes(keyName);
+                  });
+                  return !hasOnlyVuexProps; // Keep if it has non-Vuex properties
+                }
+                // Keep non-destructured parameters
+                return true;
+              });
+
+              // Transform commit() calls and state references
+              let transformedBody = actionBody;
+              if (actionBody && actionBody.type === 'BlockStatement') {
+                // First transform commit() calls to direct function calls
+                transformedBody = transformCommitCalls(j, actionBody, localFunctionNames);
+                // Then transform state references
+                transformedBody = transformStateReferencesInBody(
+                  j,
+                  transformedBody,
+                  stateProperties
+                );
+              }
+
+              setupStatements.push(
+                j.functionDeclaration(
+                  j.identifier(actionName),
+                  cleanedParams,
+                  transformedBody || j.blockStatement([])
+                )
+              );
+            });
+          }
+          hasChanges = true;
+        }
+
+        // Step 5: Create return statement
+        const returnPropertiesAST = returnProperties.map((name) =>
+          j.property('init', j.identifier(name), j.identifier(name))
+        );
+        setupStatements.push(j.returnStatement(j.objectExpression(returnPropertiesAST)));
+
+        // Step 6: Create setup function and defineStore call
+        const setupFunction = j.arrowFunctionExpression([], j.blockStatement(setupStatements));
+        const storeId = j.literal(storeName);
+        const defineStoreCall = j.callExpression(j.identifier('defineStore'), [
+          storeId,
+          setupFunction,
+        ]);
+
+        // Replace new Vuex.Store() with defineStore()
+        if (path.parent && path.parent.value) {
+          j(path).replaceWith(defineStoreCall);
+        } else {
+          path.value = defineStoreCall;
+        }
+        hasChanges = true;
+      }
+    }
+  });
+
+  // Add imports for ref, reactive, computed
+  if (hasChanges && imports.size > 0) {
+    const importSpecifiers = Array.from(imports).map((imp) => j.importSpecifier(j.identifier(imp)));
+    const importStatement = j.importDeclaration(importSpecifiers, j.literal('vue'));
+
+    // Check if pinia import exists, add vue import before it
+    const existingImports = root.find(j.ImportDeclaration);
+    let inserted = false;
+    existingImports.forEach((impPath: any) => {
+      if (impPath.value.source.value === 'pinia' && !inserted) {
+        j(impPath).insertBefore(importStatement);
+        inserted = true;
+      }
+    });
+
+    if (!inserted) {
+      const program = root.get().node.program;
+      if (program && program.body) {
+        program.body.unshift(importStatement);
+      }
+    }
+  }
+
+  // Remove Vue.use(Vuex) if present
+  root.find(j.CallExpression).forEach((path: any) => {
+    if (
+      path.value.callee &&
+      path.value.callee.type === 'MemberExpression' &&
+      path.value.callee.object &&
+      path.value.callee.object.type === 'Identifier' &&
+      path.value.callee.object.name === 'Vue' &&
+      path.value.callee.property &&
+      path.value.callee.property.type === 'Identifier' &&
+      path.value.callee.property.name === 'use' &&
+      path.value.arguments &&
+      path.value.arguments.length > 0 &&
+      path.value.arguments[0] &&
+      path.value.arguments[0].type === 'Identifier' &&
+      path.value.arguments[0].name === 'Vuex'
+    ) {
+      let currentPath: any = path;
+      while (currentPath && currentPath.parent) {
+        const parentValue = currentPath.parent.value;
+        if (parentValue && parentValue.type === 'ExpressionStatement') {
+          j(currentPath.parent).remove();
+          hasChanges = true;
+          break;
+        }
+        currentPath = currentPath.parent;
+      }
+    }
+  });
+
+  // Remove Vuex import if present
+  root.find(j.ImportDeclaration).forEach((path: any) => {
+    if (path.value && path.value.source && path.value.source.value === 'vuex') {
+      j(path).remove();
+      hasChanges = true;
+    }
+  });
+
+  // Add import for defineStore if needed
+  if (hasChanges) {
+    const existingImports = root.find(j.ImportDeclaration);
+    let hasPiniaImport = false;
+
+    existingImports.forEach((path: any) => {
+      if (path.value.source && path.value.source.value === 'pinia') {
+        hasPiniaImport = true;
+        const specifiers = path.value.specifiers || [];
+        const hasDefineStore = specifiers.some(
+          (s: any) => s.imported && s.imported.name === 'defineStore'
+        );
+        if (!hasDefineStore) {
+          specifiers.push(j.importSpecifier(j.identifier('defineStore')));
+          path.value.specifiers = specifiers;
+        }
+      }
+    });
+
+    if (!hasPiniaImport) {
+      const importStatement = j.importDeclaration(
+        [j.importSpecifier(j.identifier('defineStore'))],
+        j.literal('pinia')
+      );
+      const program = root.get().node.program;
+      if (program && program.body) {
+        program.body.unshift(importStatement);
+      }
+    }
+  }
+
+  let resultCode = hasChanges ? root.toSource() : fileInfo.source;
+
+  // Add TypeScript types if enabled
+  if (enableTypeScript && hasChanges) {
+    const refProps = Array.from(refProperties);
+    const computedProps = Array.from(computedProperties);
+    const funcNames = Array.from(functionNames);
+    const stateTypes = Object.fromEntries(statePropertyTypes);
+
+    // Always call addTypeScriptTypesToStore if we have any properties or state types
+    if (
+      refProps.length > 0 ||
+      computedProps.length > 0 ||
+      funcNames.length > 0 ||
+      Object.keys(stateTypes).length > 0
+    ) {
+      const computedTypes = Object.fromEntries(computedReturnTypes);
+      const objectDetails = Object.fromEntries(objectPropertyDetails);
+
+      resultCode = addTypeScriptTypesToStore(resultCode, {
+        refProperties: refProps,
+        computedProperties: computedProps,
+        functionNames: funcNames,
+        statePropertyTypes: stateTypes,
+        computedReturnTypes: computedTypes,
+        objectPropertyDetails: objectDetails,
+      });
+    }
+  }
+
+  return resultCode;
+};
+
+/**
+ * Transform state references in a BlockStatement body
+ */
+function transformStateReferencesInBody(
+  j: any,
+  body: any,
+  stateProperties: Map<string, { isObject: boolean; value: any }>
+): any {
+  if (!body || body.type !== 'BlockStatement') return body;
+
+  // Transform the entire body as a string, then parse back
+  const bodyCode = j(body).toSource();
+  let transformedCode = bodyCode;
+
+  // Replace state references - handle nested properties first
+  // Process in order: longest matches first (nested properties), then simple properties
+  const sortedProps = Array.from(stateProperties.entries()).sort((a, b) => {
+    // Sort by depth (objects first, then refs)
+    if (a[1].isObject && !b[1].isObject) return -1;
+    if (!a[1].isObject && b[1].isObject) return 1;
+    return 0;
+  });
+
+  sortedProps.forEach(([propName, info]) => {
+    // Escape propName for regex
+    const escapedName = propName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    if (info.isObject) {
+      // For reactive objects: state.user.name → user.name, state.user.preferences.theme → user.preferences.theme
+      // Match state.propName.anything (including deeply nested) - match the longest path first
+      // Pattern: state.propName.anything (at least one dot after propName)
+      const nestedPattern = new RegExp(
+        `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
+        'g'
+      );
+      transformedCode = transformedCode.replace(nestedPattern, (match: string) => {
+        // Remove 'state.' prefix
+        return match.replace(/^state\./, '');
+      });
+      // Also handle direct state.user → user (must come after nested to avoid double replacement)
+      // Match state.user not followed by a dot (end of property access)
+      transformedCode = transformedCode.replace(
+        new RegExp(`state\\.${escapedName}(?!\\.)`, 'g'),
+        propName
+      );
+    } else {
+      // For refs: state.count → count.value, state.items → items.value
+      // Must match state.items.length, state.items.push, etc.
+      // Match state.items followed by a dot (method/property access)
+      transformedCode = transformedCode.replace(
+        new RegExp(`state\\.${escapedName}\\.`, 'g'),
+        `${propName}.value.`
+      );
+      // Also match state.items at end of expression
+      transformedCode = transformedCode.replace(
+        new RegExp(`state\\.${escapedName}(?!\\.)`, 'g'),
+        `${propName}.value`
+      );
+    }
+  });
+
+  // Parse back to BlockStatement
+  try {
+    const newRoot = j(transformedCode);
+    const program = newRoot.find(j.Program).paths()[0];
+    if (program && program.value.body && program.value.body.length > 0) {
+      // Extract statements from program body
+      const statements = program.value.body;
+      // Filter out empty block statements and unwrap single-statement blocks
+      const cleanedStatements: any[] = [];
+      statements.forEach((stmt: any) => {
+        if (stmt.type === 'BlockStatement' && stmt.body) {
+          // Unwrap block statements - add their contents directly
+          stmt.body.forEach((innerStmt: any) => {
+            cleanedStatements.push(innerStmt);
+          });
+        } else if (stmt.type !== 'EmptyStatement') {
+          // Skip empty statements
+          cleanedStatements.push(stmt);
+        }
+      });
+      return j.blockStatement(cleanedStatements.length > 0 ? cleanedStatements : body.body);
+    }
+  } catch (e) {
+    // If parsing fails, return original body
+    return body;
+  }
+
+  return body;
+}
+
+/**
+ * Transform commit('MUTATION_NAME', payload) to direct function calls
+ */
+function transformCommitCalls(j: any, body: any, functionNames: Set<string>): any {
+  if (!body || body.type !== 'BlockStatement') return body;
+
+  // Transform commit() calls using string replacement for better reliability
+  const bodyCode = j(body).toSource();
+  let transformedCode = bodyCode;
+
+  // Replace commit('FUNCTION_NAME', ...) with FUNCTION_NAME(...)
+  functionNames.forEach((funcName) => {
+    // Escape function name for regex
+    const escapedName = funcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // Match: commit('FUNC_NAME', payload) - with payload
+    const commitWithPayload = new RegExp(
+      `commit\\s*\\(\\s*['"]${escapedName}['"]\\s*,\\s*([^)]+)\\)`,
+      'g'
+    );
+    transformedCode = transformedCode.replace(
+      commitWithPayload,
+      (_match: string, payload: string) => {
+        return `${funcName}(${payload.trim()})`;
+      }
+    );
+
+    // Match: commit('FUNC_NAME') - without payload
+    const commitWithoutPayload = new RegExp(`commit\\s*\\(\\s*['"]${escapedName}['"]\\s*\\)`, 'g');
+    transformedCode = transformedCode.replace(commitWithoutPayload, () => {
+      return `${funcName}()`;
+    });
+  });
+
+  // Also handle destructured commit: { commit } → direct calls
+  // This is handled by the above patterns
+
+  // Parse back to BlockStatement
+  try {
+    const newRoot = j(transformedCode);
+    const program = newRoot.find(j.Program).paths()[0];
+    if (program && program.value.body && program.value.body.length > 0) {
+      const statements = program.value.body;
+      // Filter out empty block statements and unwrap single-statement blocks
+      const cleanedStatements: any[] = [];
+      statements.forEach((stmt: any) => {
+        if (stmt.type === 'BlockStatement' && stmt.body) {
+          stmt.body.forEach((innerStmt: any) => {
+            cleanedStatements.push(innerStmt);
+          });
+        } else if (stmt.type !== 'EmptyStatement') {
+          cleanedStatements.push(stmt);
+        }
+      });
+      return j.blockStatement(cleanedStatements.length > 0 ? cleanedStatements : body.body);
+    }
+  } catch (e) {
+    // If parsing fails, return original body
+    return body;
+  }
+
+  return body;
+}
+
+/**
+ * Post-process generated Pinia store code to add TypeScript type annotations
+ */
+function addTypeScriptTypesToStore(
+  code: string,
+  context: {
+    refProperties: string[];
+    computedProperties: string[];
+    functionNames: string[];
+    statePropertyTypes?: Record<string, string>;
+    computedReturnTypes?: Record<string, string>;
+    objectPropertyDetails?: Record<string, any>;
+  }
+): string {
+  let result = code;
+
+  // Early return if no properties to type
+  if (
+    context.refProperties.length === 0 &&
+    context.computedProperties.length === 0 &&
+    context.functionNames.length === 0
+  ) {
+    return result;
+  }
+
+  // Track interfaces to generate for arrays and objects
+  const arrayInterfaces = new Map<string, string>(); // Interface name → property name
+  const objectInterfaces = new Map<string, { name: string; properties: string[] }>(); // Interface name → properties
+
+  // Generate TypeScript interfaces for store state if we have state properties
+  if (context.statePropertyTypes && Object.keys(context.statePropertyTypes).length > 0) {
+    const interfaceProps: string[] = [];
+    Object.entries(context.statePropertyTypes).forEach(([propName, propType]) => {
+      // Check if this is an array type that needs an interface
+      if (propType === 'any[]') {
+        // Generate interface name from property name (plural → singular, capitalized)
+        const interfaceName = pluralToSingularInterface(propName);
+        arrayInterfaces.set(interfaceName, propName);
+        interfaceProps.push(`  ${propName}: ${interfaceName}[];`);
+      } else if (propType === 'object') {
+        // Generate interface name from property name (capitalize first letter)
+        const interfaceName = propName.charAt(0).toUpperCase() + propName.slice(1);
+
+        // Extract properties from object AST if available
+        let objectProperties: string[] = [];
+        if (context.objectPropertyDetails && context.objectPropertyDetails[propName]) {
+          objectProperties = extractObjectProperties(context.objectPropertyDetails[propName]);
+        }
+
+        objectInterfaces.set(interfaceName, { name: interfaceName, properties: objectProperties });
+        interfaceProps.push(`  ${propName}: ${interfaceName};`);
+      } else {
+        interfaceProps.push(`  ${propName}: ${propType};`);
+      }
+    });
+
+    // Generate interfaces for arrays and objects
+    const arrayInterfaceCodes: string[] = [];
+    arrayInterfaces.forEach((_propName, interfaceName) => {
+      arrayInterfaceCodes.push(`interface ${interfaceName} {}`);
+    });
+
+    // Generate interfaces for objects with properties
+    const objectInterfaceCodes: string[] = [];
+    objectInterfaces.forEach(({ name, properties }) => {
+      if (properties.length > 0) {
+        // Generate interface with properties
+        const props = properties.map((prop) => `  ${prop}`).join('\n');
+        objectInterfaceCodes.push(`interface ${name} {\n${props}\n}`);
+      } else {
+        // Empty interface if no properties found
+        objectInterfaceCodes.push(`interface ${name} {}`);
+      }
+    });
+
+    // Combine StoreState interface, array interfaces, and object interfaces
+    const allInterfaces: string[] = [];
+    if (interfaceProps.length > 0) {
+      allInterfaces.push(`interface StoreState {\n${interfaceProps.join('\n')}\n}`);
+    }
+    if (arrayInterfaceCodes.length > 0) {
+      allInterfaces.push(...arrayInterfaceCodes);
+    }
+    if (objectInterfaceCodes.length > 0) {
+      allInterfaces.push(...objectInterfaceCodes);
+    }
+
+    if (allInterfaces.length > 0) {
+      const interfaceCode = allInterfaces.join('\n\n');
+
+      // Insert interfaces after the last import statement
+      // Find all import statements
+      const importRegex = /^import\s+.*$/gm;
+      const imports = result.match(importRegex);
+
+      if (imports && imports.length > 0) {
+        // Find the last import statement
+        const lastImport = imports[imports.length - 1];
+        const lastImportIndex = result.lastIndexOf(lastImport);
+        const afterLastImport = lastImportIndex + lastImport.length;
+
+        // Insert interfaces after the last import, with proper spacing
+        result =
+          result.slice(0, afterLastImport) +
+          '\n\n' +
+          interfaceCode +
+          '\n' +
+          result.slice(afterLastImport);
+      } else {
+        // No imports found, insert at the beginning
+        result = interfaceCode + '\n\n' + result;
+      }
+    }
+  }
+
+  // Add types to ref() calls: ref(0) → ref<number>(0)
+  context.refProperties.forEach((prop) => {
+    // Match: const propName = ref(value)
+    // Escape prop name for regex
+    const escapedProp = prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Pattern: const propName = ref(value) - capture everything before ref(, the value, and the closing )
+    // Handle both single and double quotes in the code
+    const refPattern = new RegExp(`(const\\s+${escapedProp}\\s*=\\s*ref)(\\()([^)]+)(\\))`, 'g');
+
+    // Use replace with a function to handle each match
+    result = result.replace(refPattern, (_match, before, openParen, value, closeParen) => {
+      // Infer type from value
+      let type = inferTypeFromValueString(value.trim());
+
+      // Check if we have a custom interface for this property
+      if (context.statePropertyTypes) {
+        const propType = context.statePropertyTypes[prop];
+
+        // If it's an array (any[]), use the interface name
+        if (propType === 'any[]') {
+          const interfaceName = pluralToSingularInterface(prop);
+          type = `${interfaceName}[]`;
+        }
+        // If it's an object, use the interface name
+        else if (propType === 'object') {
+          const interfaceName = prop.charAt(0).toUpperCase() + prop.slice(1);
+          type = interfaceName;
+        }
+      }
+
+      // Correct format: ref<number>(value) not ref(<number>value)
+      return `${before}<${type}>${openParen}${value}${closeParen}`;
+    });
+  });
+
+  // Add types to computed() calls: computed(() => ...) → computed<string>(() => ...)
+  context.computedProperties.forEach((prop) => {
+    // Match: const propName = computed(() => ...)
+    // Escape prop name for regex
+    const escapedProp = prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const computedPattern = new RegExp(
+      `(const\\s+${escapedProp}\\s*=\\s*computed)(\\()([^)]+)(\\))`,
+      'g'
+    );
+    result = result.replace(computedPattern, (_match, before, openParen, fn, closeParen) => {
+      // Use inferred return type if available, otherwise default to any
+      const returnType = context.computedReturnTypes?.[prop] || 'any';
+      // Correct format: computed<number>(() => ...) not computed(<number>() => ...)
+      return `${before}<${returnType}>${openParen}${fn}${closeParen}`;
+    });
+  });
+
+  // Add return types to functions (mutations and actions)
+  context.functionNames.forEach((funcName) => {
+    // Escape function name for regex
+    const escapedFuncName = funcName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // Match: function functionName(param1, param2) {
+    // Pattern needs to capture: function FUNC_NAME(params) {
+    // Fix: capture the entire function declaration including the opening brace
+    const functionPattern = new RegExp(
+      `(function\\s+${escapedFuncName}\\s*\\(([^)]*)\\)\\s*\\{)`,
+      'g'
+    );
+
+    // Find and replace function declarations
+    // Use exec to find the first match and replace it
+    let match;
+    while ((match = functionPattern.exec(result)) !== null) {
+      const fullMatch = match[0];
+      const paramList = match[2] || '';
+
+      // Add types to parameters
+      let typedParams = paramList;
+      if (paramList && paramList.trim()) {
+        const paramNames = paramList
+          .split(',')
+          .map((p: string) => p.trim())
+          .filter(Boolean);
+        typedParams = paramNames
+          .map((paramName: string) => {
+            const paramType = inferParameterType(paramName);
+            return `${paramName}: ${paramType}`;
+          })
+          .join(', ');
+      }
+      // Add return type annotation
+      const replacement = `function ${funcName}(${typedParams}): void {`;
+      result = result.replace(fullMatch, replacement);
+      // Only replace once per function name
+      break;
+    }
+
+    // Match: const functionName = (param1, param2) => {
+    const arrowPattern = new RegExp(
+      `(const\\s+${escapedFuncName}\\s*=\\s*\\(([^)]*)\\)\\s*=>\\s*\\{)`,
+      'g'
+    );
+    result = result.replace(arrowPattern, (_match, paramList) => {
+      let typedParams = paramList;
+      if (paramList.trim()) {
+        const paramNames = paramList
+          .split(',')
+          .map((p: string) => p.trim())
+          .filter(Boolean);
+        typedParams = paramNames
+          .map((paramName: string) => {
+            const paramType = inferParameterType(paramName);
+            return `${paramName}: ${paramType}`;
+          })
+          .join(', ');
+      }
+      return `const ${funcName} = (${typedParams}): void => {`;
+    });
+  });
+
+  return result;
+}
+
+/**
+ * Infer TypeScript type for a function parameter based on its name
+ */
+function inferParameterType(paramName: string): string {
+  // Remove common prefixes/suffixes and infer type from name
+  const lowerName = paramName.toLowerCase();
+
+  // Common patterns
+  if (lowerName.includes('id') || lowerName.includes('index') || lowerName.includes('count')) {
+    return 'number';
+  }
+  if (
+    lowerName.includes('name') ||
+    lowerName.includes('text') ||
+    lowerName.includes('message') ||
+    lowerName.includes('title')
+  ) {
+    return 'string';
+  }
+  if (lowerName.includes('is') || lowerName.includes('has') || lowerName.includes('should')) {
+    return 'boolean';
+  }
+  if (lowerName.includes('list') || lowerName.includes('items') || lowerName.includes('array')) {
+    return 'any[]';
+  }
+  if (lowerName.includes('obj') || lowerName.includes('data') || lowerName.includes('config')) {
+    return 'Record<string, any>';
+  }
+  if (lowerName.includes('event') || lowerName.includes('e')) {
+    return 'Event';
+  }
+
+  // Default to any if we can't infer
+  return 'any';
+}
+
+/**
+ * Infer TypeScript type from a JavaScript value string
+ */
+function inferTypeFromValueString(value: string): string {
+  // Remove quotes to check type
+  const trimmed = value.trim();
+
+  // String literal
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return 'string';
+  }
+
+  // Number literal
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return 'number';
+  }
+
+  // Boolean literal
+  if (trimmed === 'true' || trimmed === 'false') {
+    return 'boolean';
+  }
+
+  // Array literal
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    return 'any[]';
+  }
+
+  // Object literal
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    // Return a special marker to indicate this is an object that needs an interface
+    return 'object';
+  }
+
+  // null or undefined
+  if (trimmed === 'null' || trimmed === 'undefined') {
+    return 'null';
+  }
+
+  return 'any';
+}
+
+/**
+ * Convert plural property name to singular interface name
+ * Examples: items → Item, users → User, products → Product, customItems → CustomItem
+ * Handles various plural forms and naming conventions (camelCase, PascalCase, etc.)
+ */
+function pluralToSingularInterface(pluralName: string): string {
+  // Common irregular plurals
+  const irregularPlurals: Record<string, string> = {
+    children: 'Child',
+    people: 'Person',
+    men: 'Man',
+    women: 'Woman',
+    feet: 'Foot',
+    teeth: 'Tooth',
+    mice: 'Mouse',
+    geese: 'Goose',
+    data: 'Datum', // Though 'Data' is often used as singular in programming
+  };
+
+  const lowerName = pluralName.toLowerCase();
+
+  // Check irregular plurals first
+  if (irregularPlurals[lowerName]) {
+    return irregularPlurals[lowerName];
+  }
+
+  // Handle camelCase/PascalCase: preserve case structure
+  // e.g., customItems → CustomItem, userList → UserListItem
+  if (/([a-z])([A-Z])/.test(pluralName)) {
+    // Has camelCase pattern - preserve the structure
+    // Capitalize first letter, keep rest as is
+    let result = pluralName.charAt(0).toUpperCase() + pluralName.slice(1);
+
+    // Remove trailing 's' if present (but preserve camelCase structure)
+    // customItems → CustomItem (remove 's' at end)
+    if (result.endsWith('s') && result.length > 1) {
+      // Check if it's a simple 's' at the end or part of a word
+      // If the second-to-last char is lowercase, it's likely a plural 's'
+      const secondLast = result[result.length - 2];
+      if (secondLast && secondLast === secondLast.toLowerCase()) {
+        result = result.slice(0, -1);
+      }
+    }
+
+    return result;
+  }
+
+  // Handle lowercase names: convert to lowercase first, then process
+  // Handle common patterns: words ending in -ies, -es, -s
+  // -ies → -y (cities → City)
+  if (lowerName.endsWith('ies') && lowerName.length > 3) {
+    const base = lowerName.slice(0, -3);
+    return base.charAt(0).toUpperCase() + base.slice(1) + 'y';
+  }
+
+  // -es → remove (boxes → Box, classes → Class)
+  if (lowerName.endsWith('es') && lowerName.length > 2) {
+    const base = lowerName.slice(0, -2);
+    if (base.length > 0) {
+      return base.charAt(0).toUpperCase() + base.slice(1);
+    }
+  }
+
+  // Simple plural: remove 's' at the end
+  if (lowerName.endsWith('s') && lowerName.length > 1) {
+    const singular = lowerName.slice(0, -1);
+    // Capitalize first letter
+    return singular.charAt(0).toUpperCase() + singular.slice(1);
+  }
+
+  // Default: capitalize first letter
+  return pluralName.charAt(0).toUpperCase() + pluralName.slice(1);
+}
+
+/**
+ * Extract TypeScript properties from an object AST
+ * Converts object properties to TypeScript interface properties
+ */
+function extractObjectProperties(objectAST: any): string[] {
+  if (!objectAST || objectAST.type !== 'ObjectExpression') {
+    return [];
+  }
+
+  const properties: string[] = [];
+  const props = objectAST.properties || [];
+
+  props.forEach((prop: any) => {
+    if (prop && prop.key) {
+      const propName = prop.key.name || prop.key.value;
+      if (propName) {
+        // Infer type from property value
+        const propType = inferTypeFromASTValue(prop.value);
+        properties.push(`${propName}: ${propType};`);
+      }
+    }
+  });
+
+  return properties;
+}
+
+/**
+ * Infer TypeScript type from an AST node value
+ */
+function inferTypeFromASTValue(valueAST: any): string {
+  if (!valueAST) {
+    return 'any';
+  }
+
+  // String literal
+  if (
+    valueAST.type === 'StringLiteral' ||
+    (valueAST.type === 'Literal' && typeof valueAST.value === 'string')
+  ) {
+    return 'string';
+  }
+
+  // Number literal
+  if (
+    valueAST.type === 'NumericLiteral' ||
+    (valueAST.type === 'Literal' && typeof valueAST.value === 'number')
+  ) {
+    return 'number';
+  }
+
+  // Boolean literal
+  if (
+    valueAST.type === 'BooleanLiteral' ||
+    (valueAST.type === 'Literal' && typeof valueAST.value === 'boolean')
+  ) {
+    return 'boolean';
+  }
+
+  // Array literal
+  if (valueAST.type === 'ArrayExpression') {
+    return 'any[]';
+  }
+
+  // Object literal - recursive
+  if (valueAST.type === 'ObjectExpression') {
+    const props = extractObjectProperties(valueAST);
+    if (props.length > 0) {
+      return `{\n    ${props.join('\n    ')}\n  }`;
+    }
+    return 'Record<string, any>';
+  }
+
+  // Null or undefined
+  if (valueAST.type === 'NullLiteral' || (valueAST.type === 'Literal' && valueAST.value === null)) {
+    return 'null';
+  }
+
+  // Identifier (could be a variable reference)
+  if (valueAST.type === 'Identifier') {
+    return 'any'; // Can't infer from identifier alone
+  }
+
+  return 'any';
+}
+
+/**
+ * Infer TypeScript type from an AST expression (for computed return types)
+ */
+function inferTypeFromAST(expressionAST: any): string {
+  if (!expressionAST) {
+    return 'any';
+  }
+
+  // Binary expressions: a + b, a * b, etc.
+  if (expressionAST.type === 'BinaryExpression') {
+    const operator = expressionAST.operator;
+    // Arithmetic operations typically return number
+    if (['+', '-', '*', '/', '%'].includes(operator)) {
+      return 'number';
+    }
+    // Comparison operations return boolean
+    if (['==', '===', '!=', '!==', '<', '>', '<=', '>='].includes(operator)) {
+      return 'boolean';
+    }
+    // String concatenation
+    if (operator === '+') {
+      // Could be string or number, check operands
+      const leftType = inferTypeFromAST(expressionAST.left);
+      const rightType = inferTypeFromAST(expressionAST.right);
+      if (leftType === 'string' || rightType === 'string') {
+        return 'string';
+      }
+      return 'number';
+    }
+  }
+
+  // Unary expressions: !a, -a, etc.
+  if (expressionAST.type === 'UnaryExpression') {
+    if (expressionAST.operator === '!') {
+      return 'boolean';
+    }
+    if (expressionAST.operator === '-' || expressionAST.operator === '+') {
+      return 'number';
+    }
+  }
+
+  // Member expressions: state.count, items.length, user.name, etc.
+  if (expressionAST.type === 'MemberExpression') {
+    const property = expressionAST.property;
+
+    // Check for .length property (arrays)
+    if (property && property.name === 'length') {
+      return 'number';
+    }
+
+    // Check for property access on objects (e.g., user.name, user.age)
+    // If the property is a string literal or identifier, try to infer type
+    if (property) {
+      const propName = property.name || property.value;
+
+      // Common property names that suggest types
+      if (
+        propName === 'name' ||
+        propName === 'email' ||
+        propName === 'title' ||
+        propName === 'description' ||
+        propName === 'message'
+      ) {
+        return 'string';
+      }
+      if (
+        propName === 'age' ||
+        propName === 'count' ||
+        propName === 'id' ||
+        propName === 'price' ||
+        propName === 'index'
+      ) {
+        return 'number';
+      }
+      if (
+        propName === 'isActive' ||
+        propName === 'enabled' ||
+        propName === 'visible' ||
+        propName === 'isAuthenticated'
+      ) {
+        return 'boolean';
+      }
+    }
+
+    // For other member expressions, try to infer from the object if possible
+    // This is a simple heuristic - could be improved with more context
+    return 'any';
+  }
+
+  // Call expressions: Math.max(), etc.
+  if (expressionAST.type === 'CallExpression') {
+    const callee = expressionAST.callee;
+    if (callee && callee.type === 'MemberExpression') {
+      const object = callee.object;
+      const property = callee.property;
+      if (object && object.name === 'Math' && property) {
+        // Math functions typically return numbers
+        return 'number';
+      }
+      if (property && (property.name === 'map' || property.name === 'filter')) {
+        return 'any[]';
+      }
+      if (property && property.name === 'toString') {
+        return 'string';
+      }
+    }
+    // Function calls without context default to any
+    return 'any';
+  }
+
+  // Conditional expressions: a ? b : c
+  if (expressionAST.type === 'ConditionalExpression') {
+    // Infer from both branches - take the first non-any type
+    const consequentType = inferTypeFromAST(expressionAST.consequent);
+    const alternateType = inferTypeFromAST(expressionAST.alternate);
+    if (consequentType !== 'any') return consequentType;
+    if (alternateType !== 'any') return alternateType;
+    return 'any';
+  }
+
+  // Literal values
+  return inferTypeFromASTValue(expressionAST);
+}

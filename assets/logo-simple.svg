@@ -1,0 +1,27 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <!-- Vue 2 to Vue 3 Arrow -->
+  <g transform="translate(20, 60)">
+    <!-- Vue 2 Circle -->
+    <circle cx="0" cy="0" r="18" fill="#4FC08D" opacity="0.9"/>
+    <text x="0" y="6" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="white" text-anchor="middle">2</text>
+    
+    <!-- Arrow -->
+    <path d="M 22 0 L 38 0 L 33 -5 M 38 0 L 33 5" stroke="#4FC08D" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    
+    <!-- Vue 3 Circle -->
+    <circle cx="60" cy="0" r="18" fill="#42B883"/>
+    <text x="60" y="6" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="white" text-anchor="middle">3</text>
+  </g>
+  
+  <!-- AI Symbol (Neural network) -->
+  <g transform="translate(60, 25)">
+    <circle cx="-8" cy="0" r="3" fill="#3B82F6"/>
+    <circle cx="0" cy="-6" r="3" fill="#3B82F6"/>
+    <circle cx="8" cy="0" r="3" fill="#3B82F6"/>
+    <circle cx="0" cy="6" r="3" fill="#3B82F6"/>
+    <line x1="-8" y1="0" x2="0" y2="-6" stroke="#3B82F6" stroke-width="1" opacity="0.7"/>
+    <line x1="0" y1="-6" x2="8" y2="0" stroke="#3B82F6" stroke-width="1" opacity="0.7"/>
+    <line x1="8" y1="0" x2="0" y2="6" stroke="#3B82F6" stroke-width="1" opacity="0.7"/>
+    <line x1="0" y1="6" x2="-8" y2="0" stroke="#3B82F6" stroke-width="1" opacity="0.7"/>
+  </g>
+</svg>
