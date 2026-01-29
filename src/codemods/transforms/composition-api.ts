@@ -1,4 +1,4 @@
-import { Transform, FileInfo, API } from 'jscodeshift';
+import { Transform, FileInfo, API } from "jscodeshift";
 
 /**
  * Comprehensive transformation from Options API to Composition API with <script setup>
@@ -17,7 +17,7 @@ import { Transform, FileInfo, API } from 'jscodeshift';
 export const compositionApiTransform: Transform = (
   fileInfo: FileInfo,
   api: API,
-  options: any = {}
+  options: any = {},
 ) => {
   const j = api.jscodeshift;
   const root = j(fileInfo.source);
@@ -34,7 +34,10 @@ export const compositionApiTransform: Transform = (
   const computedProperties = new Set<string>(); // Properties from computed → computed()
   const computedReturnTypes = new Map<string, string>(); // Computed property name → return type
   const methodNames = new Set<string>(); // Methods → functions
-  const methodSignatures = new Map<string, { params: string[]; returnType: string }>(); // Method name → signature
+  const methodSignatures = new Map<
+    string,
+    { params: string[]; returnType: string }
+  >(); // Method name → signature
   const propNames = new Set<string>(); // Props → props.xxx
   const propInterfaces: string[] = []; // Generated TypeScript interfaces for props
 
@@ -45,25 +48,25 @@ export const compositionApiTransform: Transform = (
 
     // Handle both ObjectExpression and other types
     let componentObj = declaration;
-    if (declaration && declaration.type === 'ObjectExpression') {
+    if (declaration && declaration.type === "ObjectExpression") {
       componentObj = declaration;
     } else if (
       declaration &&
-      declaration.type === 'CallExpression' &&
+      declaration.type === "CallExpression" &&
       declaration.callee &&
-      declaration.callee.name === 'defineComponent'
+      declaration.callee.name === "defineComponent"
     ) {
       // Handle defineComponent({ ... })
       if (
         declaration.arguments &&
         declaration.arguments[0] &&
-        declaration.arguments[0].type === 'ObjectExpression'
+        declaration.arguments[0].type === "ObjectExpression"
       ) {
         componentObj = declaration.arguments[0];
       }
     }
 
-    if (componentObj && componentObj.type === 'ObjectExpression') {
+    if (componentObj && componentObj.type === "ObjectExpression") {
       // Check if it's a Vue component - be more permissive
       const properties = componentObj.properties || [];
       // If it's an export default object, assume it's a Vue component
@@ -73,14 +76,14 @@ export const compositionApiTransform: Transform = (
         componentFound = true;
 
         // Transform props using AST
-        const propsProp = findProperty(properties, 'props');
+        const propsProp = findProperty(properties, "props");
         if (propsProp && propsProp.value) {
           const propsResult = transformPropsAST(
             j,
             propsProp.value,
             propNames,
             enableTypeScript,
-            propInterfaces
+            propInterfaces,
           );
           if (propsResult) {
             statements.push(propsResult);
@@ -89,9 +92,13 @@ export const compositionApiTransform: Transform = (
         }
 
         // Transform emits using AST
-        const emitsProp = findProperty(properties, 'emits');
+        const emitsProp = findProperty(properties, "emits");
         if (emitsProp && emitsProp.value) {
-          const emitsAst = transformEmitsAST(j, emitsProp.value, enableTypeScript);
+          const emitsAst = transformEmitsAST(
+            j,
+            emitsProp.value,
+            enableTypeScript,
+          );
           if (emitsAst) {
             statements.push(emitsAst);
             hasChanges = true;
@@ -99,18 +106,19 @@ export const compositionApiTransform: Transform = (
         }
 
         // Transform data() to ref/reactive using AST
-        const dataProp = findProperty(properties, 'data');
+        const dataProp = findProperty(properties, "data");
         // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
         // In jscodeshift AST, ObjectProperty has 'value', ObjectMethod has the function directly
         const dataValue =
-          dataProp?.value || ((dataProp as any)?.kind === 'method' ? dataProp : null);
+          dataProp?.value ||
+          ((dataProp as any)?.kind === "method" ? dataProp : null);
         if (dataProp && dataValue) {
           const dataStatements = transformDataAST(
             j,
             dataValue,
             imports,
             dataProperties,
-            enableTypeScript
+            enableTypeScript,
           );
           if (dataStatements.length > 0) {
             statements.push(...dataStatements);
@@ -119,10 +127,11 @@ export const compositionApiTransform: Transform = (
         }
 
         // Transform computed using AST
-        const computedProp = findProperty(properties, 'computed');
+        const computedProp = findProperty(properties, "computed");
         // Handle both ObjectProperty (has 'value') and ObjectMethod
         const computedValue =
-          computedProp?.value || ((computedProp as any)?.kind === 'method' ? computedProp : null);
+          computedProp?.value ||
+          ((computedProp as any)?.kind === "method" ? computedProp : null);
         if (computedProp && computedValue) {
           const computedStatements = transformComputedAST(
             j,
@@ -130,7 +139,7 @@ export const compositionApiTransform: Transform = (
             imports,
             computedProperties,
             computedReturnTypes,
-            enableTypeScript
+            enableTypeScript,
           );
           if (computedStatements.length > 0) {
             statements.push(...computedStatements);
@@ -139,16 +148,17 @@ export const compositionApiTransform: Transform = (
         }
 
         // Transform methods to functions using AST
-        const methodsProp = findProperty(properties, 'methods');
+        const methodsProp = findProperty(properties, "methods");
         // Handle both ObjectProperty (has 'value') and ObjectMethod
         const methodsValue =
-          methodsProp?.value || ((methodsProp as any)?.kind === 'method' ? methodsProp : null);
+          methodsProp?.value ||
+          ((methodsProp as any)?.kind === "method" ? methodsProp : null);
         if (methodsProp && methodsValue) {
           const methodStatements = transformMethodsAST(
             j,
             methodsValue,
             methodNames,
-            enableTypeScript
+            enableTypeScript,
           );
           if (methodStatements.length > 0) {
             statements.push(...methodStatements);
@@ -157,12 +167,18 @@ export const compositionApiTransform: Transform = (
         }
 
         // Transform watch using AST
-        const watchProp = findProperty(properties, 'watch');
+        const watchProp = findProperty(properties, "watch");
         // Handle both ObjectProperty (has 'value') and ObjectMethod
         const watchValue =
-          watchProp?.value || ((watchProp as any)?.kind === 'method' ? watchProp : null);
+          watchProp?.value ||
+          ((watchProp as any)?.kind === "method" ? watchProp : null);
         if (watchProp && watchValue) {
-          const watchStatements = transformWatchAST(j, watchValue, imports, enableTypeScript);
+          const watchStatements = transformWatchAST(
+            j,
+            watchValue,
+            imports,
+            enableTypeScript,
+          );
           if (watchStatements.length > 0) {
             statements.push(...watchStatements);
             hasChanges = true;
@@ -172,7 +188,11 @@ export const compositionApiTransform: Transform = (
         // Transform lifecycle hooks using AST
         const lifecycleHooks = findLifecycleHooks(properties);
         if (lifecycleHooks.length > 0) {
-          const hooksStatements = transformLifecycleHooksAST(j, lifecycleHooks, imports);
+          const hooksStatements = transformLifecycleHooksAST(
+            j,
+            lifecycleHooks,
+            imports,
+          );
           if (hooksStatements.length > 0) {
             statements.push(...hooksStatements);
             hasChanges = true;
@@ -189,11 +209,11 @@ export const compositionApiTransform: Transform = (
   // Transform this.$listeners (removed in Vue 3)
   root.find(j.MemberExpression).forEach((path: any) => {
     if (
-      path.value.object.type === 'ThisExpression' &&
-      path.value.property.type === 'Identifier' &&
-      path.value.property.name === '$listeners'
+      path.value.object.type === "ThisExpression" &&
+      path.value.property.type === "Identifier" &&
+      path.value.property.name === "$listeners"
     ) {
-      path.value.property.name = '$attrs';
+      path.value.property.name = "$attrs";
       hasChanges = true;
     }
   });
@@ -207,7 +227,9 @@ export const compositionApiTransform: Transform = (
     const body = program.body;
 
     // Find the export default index
-    const exportIndex = body.findIndex((node: any) => node.type === 'ExportDefaultDeclaration');
+    const exportIndex = body.findIndex(
+      (node: any) => node.type === "ExportDefaultDeclaration",
+    );
 
     if (exportIndex !== -1) {
       if (statements.length > 0) {
@@ -222,7 +244,9 @@ export const compositionApiTransform: Transform = (
           // Check if import from 'vue' already exists
           const existingVueImport = body.findIndex(
             (node: any) =>
-              node.type === 'ImportDeclaration' && node.source && node.source.value === 'vue'
+              node.type === "ImportDeclaration" &&
+              node.source &&
+              node.source.value === "vue",
           );
 
           if (existingVueImport !== -1) {
@@ -236,7 +260,10 @@ export const compositionApiTransform: Transform = (
               const mergedSpecifiers = [...existingSpecifiers];
               newSpecifiers.forEach((spec: any) => {
                 const exists = mergedSpecifiers.some(
-                  (s: any) => s.imported && spec.imported && s.imported.name === spec.imported.name
+                  (s: any) =>
+                    s.imported &&
+                    spec.imported &&
+                    s.imported.name === spec.imported.name,
                 );
                 if (!exists) {
                   mergedSpecifiers.push(spec);
@@ -260,7 +287,7 @@ export const compositionApiTransform: Transform = (
           dataProperties,
           computedProperties,
           methodNames,
-          propNames
+          propNames,
         );
 
         hasChanges = true;
@@ -268,22 +295,26 @@ export const compositionApiTransform: Transform = (
         // Component found but no statements generated
         // Check if it's a lifecycle-only component - if so, transform hooks
         const declaration = exportDefaultPath.value.declaration;
-        if (declaration && declaration.type === 'ObjectExpression') {
+        if (declaration && declaration.type === "ObjectExpression") {
           const properties = declaration.properties || [];
           const lifecycleHooks = findLifecycleHooks(properties);
 
           // Check if component has only lifecycle hooks (no data, computed, methods, etc.)
           const hasOnlyHooks =
             lifecycleHooks.length > 0 &&
-            !findProperty(properties, 'data') &&
-            !findProperty(properties, 'computed') &&
-            !findProperty(properties, 'methods') &&
-            !findProperty(properties, 'props') &&
-            !findProperty(properties, 'emits') &&
-            !findProperty(properties, 'watch');
+            !findProperty(properties, "data") &&
+            !findProperty(properties, "computed") &&
+            !findProperty(properties, "methods") &&
+            !findProperty(properties, "props") &&
+            !findProperty(properties, "emits") &&
+            !findProperty(properties, "watch");
 
           if (hasOnlyHooks && lifecycleHooks.length > 0) {
-            const hooksStatements = transformLifecycleHooksAST(j, lifecycleHooks, imports);
+            const hooksStatements = transformLifecycleHooksAST(
+              j,
+              lifecycleHooks,
+              imports,
+            );
             if (hooksStatements.length > 0) {
               const importStatements = generateImportStatements(j, imports);
 
@@ -339,28 +370,36 @@ function addTypeScriptTypes(
     methodSignatures?: Record<string, { params: string[]; returnType: string }>;
     propNames: string[];
     propInterfaces?: string[];
-  }
+  },
 ): string {
   let result = code;
 
   // Add types to ref() calls: ref(0) → ref<number>(0)
   context.dataProperties.forEach((prop) => {
-    // Match: const propName = ref(value)
-    const refPattern = new RegExp(`(const\\s+${prop}\\s*=\\s*ref\\()([^)]+)(\\))`, 'g');
-    result = result.replace(refPattern, (_match, before, value, after) => {
-      // Infer type from value
+    // Match: const propName = ref(value) - but avoid matching if already has type
+    // Use a simpler pattern that works for most cases
+    // Match ref( but not ref<type>( to avoid duplicates
+    const refPattern = new RegExp(
+      `(const\\s+${prop}\\s*=\\s*ref)(?!<[^>]+>)\\(([^)]+)\\)`,
+      "g",
+    );
+    result = result.replace(refPattern, (match, before, value) => {
+      // Infer type from value - handle strings properly
       const type = inferTypeFromValueString(value.trim());
-      return `${before}<${type}>${value}${after}`;
+      return `${before}<${type}>(${value})`;
     });
   });
 
   // Add types to computed() calls: computed(() => ...) → computed<string>(() => ...)
   context.computedProperties.forEach((prop) => {
     // Match: const propName = computed(() => ...)
-    const computedPattern = new RegExp(`(const\\s+${prop}\\s*=\\s*computed\\()([^)]+)(\\))`, 'g');
+    const computedPattern = new RegExp(
+      `(const\\s+${prop}\\s*=\\s*computed\\()([^)]+)(\\))`,
+      "g",
+    );
     result = result.replace(computedPattern, (_match, before, fn, after) => {
       // Use inferred return type if available
-      const type = context.computedReturnTypes?.[prop] || 'any';
+      const type = context.computedReturnTypes?.[prop] || "any";
       return `${before}<${type}>${fn}${after}`;
     });
   });
@@ -368,65 +407,113 @@ function addTypeScriptTypes(
   // Add return types and parameter types to functions
   context.methodNames.forEach((method) => {
     const signature = context.methodSignatures?.[method];
-    const returnType = signature?.returnType || 'void';
+    const returnType = signature?.returnType || "void";
     const params = signature?.params || [];
 
-    // Match: function methodName(param1, param2) {
-    const functionPattern = new RegExp(`(function\\s+${method}\\s*\\(([^)]*)\\)\\s*\\{)`, 'g');
-    result = result.replace(functionPattern, (_match, paramList) => {
+    // Match: function methodName(param1, param2) { - but avoid matching if already has types
+    // Use a more specific pattern to avoid duplicates and nested function matches
+    const functionPattern = new RegExp(
+      `(^|\\n|;|\\s)(function\\s+${method}\\s*\\(([^)]*)\\)\\s*\\{)`,
+      "gm",
+    );
+    result = result.replace(functionPattern, (match, prefix, paramList) => {
+      // Skip if already has return type annotation (check for ): pattern)
+      if (match.includes("):")) {
+        return match;
+      }
+      // Skip if this looks like a nested function declaration (duplicate)
+      // This prevents matching "function increment(function increment() {"
+      if (match.includes(`function ${method}(function`)) {
+        return match;
+      }
+      // Skip if paramList already contains a function declaration (another duplicate check)
+      if (paramList && paramList.includes(`function ${method}`)) {
+        return match;
+      }
       // Add types to parameters
-      let typedParams = paramList;
-      if (params.length > 0 && paramList.trim()) {
-        const paramNames = paramList.split(',').map((p: string) => p.trim());
+      let typedParams = paramList || "";
+      if (params.length > 0 && paramList && paramList.trim()) {
+        const paramNames = paramList
+          .split(",")
+          .map((p: string) => p.trim())
+          .filter((p: string) => p);
         typedParams = paramNames
           .map((paramName: string) => {
+            // Skip if already has type annotation
+            if (paramName.includes(":")) {
+              return paramName;
+            }
             // Try to infer type from parameter name or use any
             const paramType = inferParameterType(paramName);
             return `${paramName}: ${paramType}`;
           })
-          .join(', ');
+          .join(", ");
       }
       // Add return type annotation
-      return `function ${method}(${typedParams}): ${returnType} {`;
+      return `${prefix}function ${method}(${typedParams}): ${returnType} {`;
     });
 
     // Match: const methodName = function(param1, param2) {
     const functionExprPattern = new RegExp(
-      `(const\\s+${method}\\s*=\\s*function\\s*\\(([^)]*)\\)\\s*\\{)`,
-      'g'
+      `(const\\s+${method}\\s*=\\s*function)\\s*\\(([^)]*)\\)\\s*(?::\\s*[^\\s{]+)?\\s*\\{`,
+      "g",
     );
-    result = result.replace(functionExprPattern, (_match, paramList) => {
-      let typedParams = paramList;
-      if (params.length > 0 && paramList.trim()) {
-        const paramNames = paramList.split(',').map((p: string) => p.trim());
+    result = result.replace(functionExprPattern, (match, before, paramList) => {
+      // Skip if already has return type annotation
+      if (match.includes("):")) {
+        return match;
+      }
+      let typedParams = paramList || "";
+      if (params.length > 0 && paramList && paramList.trim()) {
+        const paramNames = paramList
+          .split(",")
+          .map((p: string) => p.trim())
+          .filter((p: string) => p);
         typedParams = paramNames
           .map((paramName: string) => {
+            if (paramName.includes(":")) {
+              return paramName;
+            }
             const paramType = inferParameterType(paramName);
             return `${paramName}: ${paramType}`;
           })
-          .join(', ');
+          .join(", ");
       }
-      return `const ${method} = function(${typedParams}): ${returnType} {`;
+      return `${before}(${typedParams}): ${returnType} {`;
     });
 
     // Match: const methodName = (param1, param2) => {
-    const arrowPattern = new RegExp(`(const\\s+${method}\\s*=\\s*\\(([^)]*)\\)\\s*=>\\s*\\{)`, 'g');
-    result = result.replace(arrowPattern, (_match, paramList) => {
-      let typedParams = paramList;
-      if (params.length > 0 && paramList.trim()) {
-        const paramNames = paramList.split(',').map((p: string) => p.trim());
+    // This is now the primary pattern since we generate arrow functions
+    const arrowPattern = new RegExp(
+      `(const\\s+${method}\\s*=\\s*\\()([^)]*)(\\)\\s*(?::\\s*[^\\s=>]+)?\\s*=>\\s*\\{)`,
+      "g",
+    );
+    result = result.replace(arrowPattern, (match, before, paramList, after) => {
+      // Skip if already has return type annotation
+      if (match.includes("):")) {
+        return match;
+      }
+      let typedParams = paramList || "";
+      if (params.length > 0 && paramList && paramList.trim()) {
+        const paramNames = paramList
+          .split(",")
+          .map((p: string) => p.trim())
+          .filter((p: string) => p);
         typedParams = paramNames
           .map((paramName: string) => {
+            if (paramName.includes(":")) {
+              return paramName;
+            }
             const paramType = inferParameterType(paramName);
             return `${paramName}: ${paramType}`;
           })
-          .join(', ');
+          .join(", ");
       }
       // For arrow functions, add return type before =>
-      if (returnType !== 'void') {
-        return `const ${method} = (${typedParams}): ${returnType} => {`;
+      if (returnType !== "void") {
+        return `${before}${typedParams}): ${returnType} => {`;
       }
-      return `const ${method} = (${typedParams}) => {`;
+      return `${before}${typedParams}${after}`;
     });
   });
 
@@ -441,32 +528,48 @@ function inferParameterType(paramName: string): string {
   const lowerName = paramName.toLowerCase();
 
   // Common patterns
-  if (lowerName.includes('id') || lowerName.includes('index') || lowerName.includes('count')) {
-    return 'number';
+  if (
+    lowerName.includes("id") ||
+    lowerName.includes("index") ||
+    lowerName.includes("count")
+  ) {
+    return "number";
   }
   if (
-    lowerName.includes('name') ||
-    lowerName.includes('text') ||
-    lowerName.includes('message') ||
-    lowerName.includes('title')
+    lowerName.includes("name") ||
+    lowerName.includes("text") ||
+    lowerName.includes("message") ||
+    lowerName.includes("title")
   ) {
-    return 'string';
+    return "string";
   }
-  if (lowerName.includes('is') || lowerName.includes('has') || lowerName.includes('should')) {
-    return 'boolean';
+  if (
+    lowerName.includes("is") ||
+    lowerName.includes("has") ||
+    lowerName.includes("should")
+  ) {
+    return "boolean";
   }
-  if (lowerName.includes('list') || lowerName.includes('items') || lowerName.includes('array')) {
-    return 'any[]';
+  if (
+    lowerName.includes("list") ||
+    lowerName.includes("items") ||
+    lowerName.includes("array")
+  ) {
+    return "any[]";
   }
-  if (lowerName.includes('obj') || lowerName.includes('data') || lowerName.includes('config')) {
-    return 'Record<string, any>';
+  if (
+    lowerName.includes("obj") ||
+    lowerName.includes("data") ||
+    lowerName.includes("config")
+  ) {
+    return "Record<string, any>";
   }
-  if (lowerName.includes('event') || lowerName.includes('e')) {
-    return 'Event';
+  if (lowerName.includes("event") || lowerName.includes("e")) {
+    return "Event";
   }
 
   // Default to any if we can't infer
-  return 'any';
+  return "any";
 }
 
 /**
@@ -481,35 +584,35 @@ function inferTypeFromValueString(value: string): string {
     (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
   ) {
-    return 'string';
+    return "string";
   }
 
   // Number literal
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
-    return 'number';
+    return "number";
   }
 
   // Boolean literal
-  if (trimmed === 'true' || trimmed === 'false') {
-    return 'boolean';
+  if (trimmed === "true" || trimmed === "false") {
+    return "boolean";
   }
 
   // Array literal
-  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-    return 'any[]';
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    return "any[]";
   }
 
   // Object literal
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    return 'Record<string, any>';
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return "Record<string, any>";
   }
 
   // null or undefined
-  if (trimmed === 'null' || trimmed === 'undefined') {
-    return 'null';
+  if (trimmed === "null" || trimmed === "undefined") {
+    return "null";
   }
 
-  return 'any';
+  return "any";
 }
 
 // TypeScript type inference utilities
@@ -527,21 +630,21 @@ function inferTypeFromValueString(value: string): string {
  */
 function inferTypeFromPropDefinition(propValue: any): string {
   if (!propValue) {
-    return 'any';
+    return "any";
   }
 
   // Handle runtime prop definition: { type: String, required: true, default: ... }
-  if (propValue.type === 'ObjectExpression' && propValue.properties) {
+  if (propValue.type === "ObjectExpression" && propValue.properties) {
     let typeNode: any = null;
     let required = false;
     let hasDefault = false;
 
     propValue.properties.forEach((prop: any) => {
-      if (prop.key && prop.key.name === 'type') {
+      if (prop.key && prop.key.name === "type") {
         typeNode = prop.value;
-      } else if (prop.key && prop.key.name === 'required') {
-        required = prop.value.value === true || prop.value.value === 'true';
-      } else if (prop.key && prop.key.name === 'default') {
+      } else if (prop.key && prop.key.name === "required") {
+        required = prop.value.value === true || prop.value.value === "true";
+      } else if (prop.key && prop.key.name === "default") {
         hasDefault = true;
       }
     });
@@ -565,27 +668,27 @@ function inferTypeFromPropDefinition(propValue: any): string {
  */
 function inferTypeFromConstructor(constructor: any): string {
   if (!constructor) {
-    return 'any';
+    return "any";
   }
 
   // Handle Identifier (e.g., String, Number, Boolean)
-  if (constructor.type === 'Identifier') {
+  if (constructor.type === "Identifier") {
     const name = constructor.name;
     switch (name) {
-      case 'String':
-        return 'string';
-      case 'Number':
-        return 'number';
-      case 'Boolean':
-        return 'boolean';
-      case 'Array':
-        return 'any[]';
-      case 'Object':
-        return 'Record<string, any>';
-      case 'Function':
-        return '(...args: any[]) => any';
-      case 'Date':
-        return 'Date';
+      case "String":
+        return "string";
+      case "Number":
+        return "number";
+      case "Boolean":
+        return "boolean";
+      case "Array":
+        return "any[]";
+      case "Object":
+        return "Record<string, any>";
+      case "Function":
+        return "(...args: any[]) => any";
+      case "Date":
+        return "Date";
       default:
         return name; // Custom type, keep as is
     }
@@ -593,7 +696,7 @@ function inferTypeFromConstructor(constructor: any): string {
 
   // Handle ArrayExpression: [String] → string[]
   if (
-    constructor.type === 'ArrayExpression' &&
+    constructor.type === "ArrayExpression" &&
     constructor.elements &&
     constructor.elements.length > 0
   ) {
@@ -602,19 +705,19 @@ function inferTypeFromConstructor(constructor: any): string {
   }
 
   // Handle Literal values
-  if (constructor.type === 'StringLiteral' || constructor.type === 'Literal') {
+  if (constructor.type === "StringLiteral" || constructor.type === "Literal") {
     const value = constructor.value;
-    if (typeof value === 'string') return 'string';
-    if (typeof value === 'number') return 'number';
-    if (typeof value === 'boolean') return 'boolean';
+    if (typeof value === "string") return "string";
+    if (typeof value === "number") return "number";
+    if (typeof value === "boolean") return "boolean";
   }
 
   // Handle ObjectExpression: { ... } → Record<string, any>
-  if (constructor.type === 'ObjectExpression') {
-    return 'Record<string, any>';
+  if (constructor.type === "ObjectExpression") {
+    return "Record<string, any>";
   }
 
-  return 'any';
+  return "any";
 }
 
 /**
@@ -622,45 +725,48 @@ function inferTypeFromConstructor(constructor: any): string {
  */
 function inferTypeFromValue(value: any): string {
   if (!value) {
-    return 'any';
+    return "any";
   }
 
   // Handle Literal values
   if (
-    value.type === 'StringLiteral' ||
-    (value.type === 'Literal' && typeof value.value === 'string')
+    value.type === "StringLiteral" ||
+    (value.type === "Literal" && typeof value.value === "string")
   ) {
-    return 'string';
+    return "string";
   }
   if (
-    value.type === 'NumericLiteral' ||
-    (value.type === 'Literal' && typeof value.value === 'number')
+    value.type === "NumericLiteral" ||
+    (value.type === "Literal" && typeof value.value === "number")
   ) {
-    return 'number';
+    return "number";
   }
   if (
-    value.type === 'BooleanLiteral' ||
-    (value.type === 'Literal' && typeof value.value === 'boolean')
+    value.type === "BooleanLiteral" ||
+    (value.type === "Literal" && typeof value.value === "boolean")
   ) {
-    return 'boolean';
+    return "boolean";
   }
 
   // Handle ArrayExpression
-  if (value.type === 'ArrayExpression') {
-    return 'any[]';
+  if (value.type === "ArrayExpression") {
+    return "any[]";
   }
 
   // Handle ObjectExpression
-  if (value.type === 'ObjectExpression') {
-    return 'Record<string, any>';
+  if (value.type === "ObjectExpression") {
+    return "Record<string, any>";
   }
 
   // Handle null/undefined
-  if (value.type === 'NullLiteral' || (value.type === 'Literal' && value.value === null)) {
-    return 'null';
+  if (
+    value.type === "NullLiteral" ||
+    (value.type === "Literal" && value.value === null)
+  ) {
+    return "null";
   }
 
-  return 'any';
+  return "any";
 }
 
 /**
@@ -670,13 +776,13 @@ function inferTypeFromValue(value: any): string {
 // Reserved for future use when implementing advanced TypeScript typing
 function inferComputedReturnType(computedBody: any): string {
   if (!computedBody) {
-    return 'any';
+    return "any";
   }
 
   // Try to find return statement
-  if (computedBody.type === 'BlockStatement' && computedBody.body) {
+  if (computedBody.type === "BlockStatement" && computedBody.body) {
     const returnStmt = computedBody.body.find(
-      (stmt: any) => stmt && stmt.type === 'ReturnStatement'
+      (stmt: any) => stmt && stmt.type === "ReturnStatement",
     );
     if (returnStmt && returnStmt.argument) {
       return inferTypeFromValue(returnStmt.argument);
@@ -684,11 +790,11 @@ function inferComputedReturnType(computedBody: any): string {
   }
 
   // If it's an expression (arrow function), infer from the expression
-  if (computedBody.type !== 'BlockStatement') {
+  if (computedBody.type !== "BlockStatement") {
     return inferTypeFromValue(computedBody);
   }
 
-  return 'any';
+  return "any";
 }
 
 /**
@@ -711,16 +817,16 @@ function transformPropsAST(
   propsValue: any,
   propNames?: Set<string>,
   enableTypeScript: boolean = false,
-  propInterfaces?: string[]
+  propInterfaces?: string[],
 ): any {
   if (!propsValue || !propsValue.type) {
     return null;
   }
 
-  if (propsValue.type === 'ArrayExpression') {
+  if (propsValue.type === "ArrayExpression") {
     // Array of prop names: ['prop1', 'prop2']
     propsValue.elements?.forEach((elem: any) => {
-      if (elem.type === 'StringLiteral' || elem.type === 'Literal') {
+      if (elem.type === "StringLiteral" || elem.type === "Literal") {
         propNames?.add(elem.value || elem.name);
       }
     });
@@ -729,14 +835,14 @@ function transformPropsAST(
       // For array props, generate: defineProps<{ prop1?: any; prop2?: any }>()
       const propTypes: string[] = [];
       propsValue.elements?.forEach((elem: any) => {
-        if (elem.type === 'StringLiteral' || elem.type === 'Literal') {
+        if (elem.type === "StringLiteral" || elem.type === "Literal") {
           const propName = elem.value || elem.name;
           propTypes.push(`${propName}?: any`);
         }
       });
 
       if (propTypes.length > 0) {
-        const interfaceType = `{ ${propTypes.join('; ')} }`;
+        const interfaceType = `{ ${propTypes.join("; ")} }`;
         // Generate TypeScript code as string: const props = defineProps<{ prop1?: any; prop2?: any }>()
         const tsCode = `const props = defineProps<${interfaceType}>()`;
         // Try to parse and return as AST, fallback to runtime if parsing fails
@@ -745,16 +851,16 @@ function transformPropsAST(
       }
     }
 
-    return j.variableDeclaration('const', [
+    return j.variableDeclaration("const", [
       j.variableDeclarator(
-        j.identifier('props'),
-        j.callExpression(j.identifier('defineProps'), [propsValue])
+        j.identifier("props"),
+        j.callExpression(j.identifier("defineProps"), [propsValue]),
       ),
     ]);
-  } else if (propsValue.type === 'ObjectExpression') {
+  } else if (propsValue.type === "ObjectExpression") {
     // Object with prop definitions: { prop1: String, prop2: Number }
     propsValue.properties?.forEach((prop: any) => {
-      if (prop.key && prop.key.type === 'Identifier') {
+      if (prop.key && prop.key.type === "Identifier") {
         propNames?.add(prop.key.name);
       }
     });
@@ -765,21 +871,27 @@ function transformPropsAST(
       let hasComplexTypes = false;
 
       propsValue.properties?.forEach((prop: any) => {
-        if (prop.key && prop.key.type === 'Identifier') {
+        if (prop.key && prop.key.type === "Identifier") {
           const propName = prop.key.name;
           const propType = inferTypeFromPropDefinition(prop.value);
           // Check if required (for runtime props: { type: String, required: true })
           let required = true;
-          if (prop.value && prop.value.type === 'ObjectExpression' && prop.value.properties) {
+          if (
+            prop.value &&
+            prop.value.type === "ObjectExpression" &&
+            prop.value.properties
+          ) {
             const requiredProp = prop.value.properties.find(
-              (p: any) => p.key && p.key.name === 'required'
+              (p: any) => p.key && p.key.name === "required",
             );
             if (requiredProp) {
-              required = requiredProp.value.value === true || requiredProp.value.value === 'true';
+              required =
+                requiredProp.value.value === true ||
+                requiredProp.value.value === "true";
             }
             // If there's a default, it's optional
             const hasDefault = prop.value.properties.some(
-              (p: any) => p.key && p.key.name === 'default'
+              (p: any) => p.key && p.key.name === "default",
             );
             if (hasDefault) {
               required = false;
@@ -787,11 +899,15 @@ function transformPropsAST(
           }
 
           // Check if type is complex (not primitive)
-          if (propType.includes('Record') || propType.includes('[]') || propType.includes('=>')) {
+          if (
+            propType.includes("Record") ||
+            propType.includes("[]") ||
+            propType.includes("=>")
+          ) {
             hasComplexTypes = true;
           }
 
-          interfaceProps.push(`${propName}${required ? '' : '?'}: ${propType}`);
+          interfaceProps.push(`${propName}${required ? "" : "?"}: ${propType}`);
         }
       });
 
@@ -799,12 +915,12 @@ function transformPropsAST(
         const shouldGenerateInterface =
           interfaceProps.length > 2 || // More than 2 props
           hasComplexTypes || // Has complex types
-          interfaceProps.some((p) => p.includes('Record') || p.includes('[]')); // Has arrays or objects
+          interfaceProps.some((p) => p.includes("Record") || p.includes("[]")); // Has arrays or objects
 
         if (shouldGenerateInterface && propInterfaces) {
           // Generate separate interface
-          const interfaceName = 'Props';
-          const interfaceCode = `interface ${interfaceName} {\n  ${interfaceProps.join(';\n  ')};\n}`;
+          const interfaceName = "Props";
+          const interfaceCode = `interface ${interfaceName} {\n  ${interfaceProps.join(";\n  ")};\n}`;
           propInterfaces.push(interfaceCode);
 
           // Use interface name in defineProps
@@ -813,7 +929,7 @@ function transformPropsAST(
           if (parsed) return parsed;
         } else {
           // Use inline type for simple cases
-          const interfaceType = `{ ${interfaceProps.join('; ')} }`;
+          const interfaceType = `{ ${interfaceProps.join("; ")} }`;
           const tsCode = `const props = defineProps<${interfaceType}>()`;
           const parsed = generateTypeScriptCode(tsCode, j);
           if (parsed) return parsed;
@@ -821,35 +937,42 @@ function transformPropsAST(
       }
     }
 
-    return j.variableDeclaration('const', [
+    return j.variableDeclaration("const", [
       j.variableDeclarator(
-        j.identifier('props'),
-        j.callExpression(j.identifier('defineProps'), [propsValue])
+        j.identifier("props"),
+        j.callExpression(j.identifier("defineProps"), [propsValue]),
       ),
     ]);
   }
   return null;
 }
 
-function transformEmitsAST(j: any, emitsValue: any, enableTypeScript: boolean = false): any {
+function transformEmitsAST(
+  j: any,
+  emitsValue: any,
+  enableTypeScript: boolean = false,
+): any {
   if (!emitsValue || !emitsValue.type) {
     return null;
   }
 
-  if (emitsValue.type === 'ArrayExpression' || emitsValue.type === 'ObjectExpression') {
+  if (
+    emitsValue.type === "ArrayExpression" ||
+    emitsValue.type === "ObjectExpression"
+  ) {
     if (enableTypeScript) {
       // Generate typed defineEmits
       const emitTypes: string[] = [];
-      if (emitsValue.type === 'ArrayExpression') {
+      if (emitsValue.type === "ArrayExpression") {
         emitsValue.elements?.forEach((elem: any) => {
-          if (elem.type === 'StringLiteral' || elem.type === 'Literal') {
+          if (elem.type === "StringLiteral" || elem.type === "Literal") {
             const eventName = elem.value || elem.name;
             emitTypes.push(`${eventName}: [payload?: any]`);
           }
         });
-      } else if (emitsValue.type === 'ObjectExpression') {
+      } else if (emitsValue.type === "ObjectExpression") {
         emitsValue.properties?.forEach((prop: any) => {
-          if (prop.key && prop.key.type === 'Identifier') {
+          if (prop.key && prop.key.type === "Identifier") {
             const eventName = prop.key.name;
             emitTypes.push(`${eventName}: [payload?: any]`);
           }
@@ -857,7 +980,7 @@ function transformEmitsAST(j: any, emitsValue: any, enableTypeScript: boolean = 
       }
 
       if (emitTypes.length > 0) {
-        const emitType = `{ ${emitTypes.join('; ')} }`;
+        const emitType = `{ ${emitTypes.join("; ")} }`;
         // Generate: const emit = defineEmits<{ event1: [payload?: any]; event2: [payload?: any] }>()
         const tsCode = `const emit = defineEmits<${emitType}>()`;
         const parsed = generateTypeScriptCode(tsCode, j);
@@ -865,10 +988,10 @@ function transformEmitsAST(j: any, emitsValue: any, enableTypeScript: boolean = 
       }
     }
 
-    return j.variableDeclaration('const', [
+    return j.variableDeclaration("const", [
       j.variableDeclarator(
-        j.identifier('emit'),
-        j.callExpression(j.identifier('defineEmits'), [emitsValue])
+        j.identifier("emit"),
+        j.callExpression(j.identifier("defineEmits"), [emitsValue]),
       ),
     ]);
   }
@@ -882,7 +1005,7 @@ function transformDataAST(
   dataProperties?: Set<string>,
   // Reserved for future TypeScript support
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _enableTypeScript?: boolean
+  _enableTypeScript?: boolean,
 ): any[] {
   const statements: any[] = [];
 
@@ -895,14 +1018,16 @@ function transformDataAST(
 
   // Handle ObjectMethod (shorthand method syntax: data() { ... })
   // ObjectMethod has 'body' directly, not 'value.body'
-  if (dataValue.type === 'ObjectMethod') {
+  if (dataValue.type === "ObjectMethod") {
     const body = dataValue.body;
 
-    if (body && body.type === 'BlockStatement' && body.body) {
-      const returnStmt = body.body.find((stmt: any) => stmt && stmt.type === 'ReturnStatement');
+    if (body && body.type === "BlockStatement" && body.body) {
+      const returnStmt = body.body.find(
+        (stmt: any) => stmt && stmt.type === "ReturnStatement",
+      );
 
       if (returnStmt && returnStmt.argument) {
-        if (returnStmt.argument.type === 'ObjectExpression') {
+        if (returnStmt.argument.type === "ObjectExpression") {
           const objProps = returnStmt.argument.properties || [];
 
           // Handle empty object - no transformation needed
@@ -915,23 +1040,23 @@ function transformDataAST(
             if (prop && prop.key) {
               let propName: any;
               let propNameStr: string;
-              if (prop.key.type === 'Identifier') {
+              if (prop.key.type === "Identifier") {
                 propName = j.identifier(prop.key.name);
                 propNameStr = prop.key.name;
               } else {
                 propName = prop.key;
-                propNameStr = prop.key.name || '';
+                propNameStr = prop.key.name || "";
               }
 
               statements.push(
-                j.variableDeclaration('const', [
+                j.variableDeclaration("const", [
                   j.variableDeclarator(
                     propName,
-                    j.callExpression(j.identifier('ref'), [prop.value])
+                    j.callExpression(j.identifier("ref"), [prop.value]),
                   ),
-                ])
+                ]),
               );
-              imports.add('ref');
+              imports.add("ref");
               if (propNameStr) {
                 dataProperties?.add(propNameStr);
               }
@@ -940,29 +1065,33 @@ function transformDataAST(
         } else if (returnStmt.argument) {
           // Complex return - use reactive
           statements.push(
-            j.variableDeclaration('const', [
+            j.variableDeclaration("const", [
               j.variableDeclarator(
-                j.identifier('state'),
-                j.callExpression(j.identifier('reactive'), [returnStmt.argument])
+                j.identifier("state"),
+                j.callExpression(j.identifier("reactive"), [
+                  returnStmt.argument,
+                ]),
               ),
-            ])
+            ]),
           );
-          imports.add('reactive');
+          imports.add("reactive");
         }
       }
     }
   } else if (
-    dataValue.type === 'FunctionExpression' ||
-    dataValue.type === 'ArrowFunctionExpression'
+    dataValue.type === "FunctionExpression" ||
+    dataValue.type === "ArrowFunctionExpression"
   ) {
     // Handle FunctionExpression and ArrowFunctionExpression (from ObjectProperty.value)
     const body = dataValue.body;
 
-    if (body && body.type === 'BlockStatement' && body.body) {
-      const returnStmt = body.body.find((stmt: any) => stmt && stmt.type === 'ReturnStatement');
+    if (body && body.type === "BlockStatement" && body.body) {
+      const returnStmt = body.body.find(
+        (stmt: any) => stmt && stmt.type === "ReturnStatement",
+      );
 
       if (returnStmt && returnStmt.argument) {
-        if (returnStmt.argument.type === 'ObjectExpression') {
+        if (returnStmt.argument.type === "ObjectExpression") {
           const objProps = returnStmt.argument.properties || [];
 
           // Handle empty object - no transformation needed
@@ -975,23 +1104,23 @@ function transformDataAST(
             if (prop && prop.key) {
               let propName: any;
               let propNameStr: string;
-              if (prop.key.type === 'Identifier') {
+              if (prop.key.type === "Identifier") {
                 propName = j.identifier(prop.key.name);
                 propNameStr = prop.key.name;
               } else {
                 propName = prop.key;
-                propNameStr = prop.key.name || '';
+                propNameStr = prop.key.name || "";
               }
 
               statements.push(
-                j.variableDeclaration('const', [
+                j.variableDeclaration("const", [
                   j.variableDeclarator(
                     propName,
-                    j.callExpression(j.identifier('ref'), [prop.value])
+                    j.callExpression(j.identifier("ref"), [prop.value]),
                   ),
-                ])
+                ]),
               );
-              imports.add('ref');
+              imports.add("ref");
               if (propNameStr) {
                 dataProperties?.add(propNameStr);
               }
@@ -1000,31 +1129,42 @@ function transformDataAST(
         } else if (returnStmt.argument) {
           // Complex return - use reactive
           statements.push(
-            j.variableDeclaration('const', [
+            j.variableDeclaration("const", [
               j.variableDeclarator(
-                j.identifier('state'),
-                j.callExpression(j.identifier('reactive'), [returnStmt.argument])
+                j.identifier("state"),
+                j.callExpression(j.identifier("reactive"), [
+                  returnStmt.argument,
+                ]),
               ),
-            ])
+            ]),
           );
-          imports.add('reactive');
+          imports.add("reactive");
         }
       }
     }
-  } else if (dataValue.type === 'ObjectExpression') {
+  } else if (dataValue.type === "ObjectExpression") {
     // data: { ... } → convert each property to ref
     const objProps = dataValue.properties || [];
     if (objProps.length > 0) {
       objProps.forEach((prop: any) => {
         if (prop && prop.key) {
-          const propName = prop.key.type === 'Identifier' ? j.identifier(prop.key.name) : prop.key;
-          const propNameStr = prop.key.type === 'Identifier' ? prop.key.name : prop.key.name || '';
+          const propName =
+            prop.key.type === "Identifier"
+              ? j.identifier(prop.key.name)
+              : prop.key;
+          const propNameStr =
+            prop.key.type === "Identifier"
+              ? prop.key.name
+              : prop.key.name || "";
           statements.push(
-            j.variableDeclaration('const', [
-              j.variableDeclarator(propName, j.callExpression(j.identifier('ref'), [prop.value])),
-            ])
+            j.variableDeclaration("const", [
+              j.variableDeclarator(
+                propName,
+                j.callExpression(j.identifier("ref"), [prop.value]),
+              ),
+            ]),
           );
-          imports.add('ref');
+          imports.add("ref");
           if (propNameStr) {
             dataProperties?.add(propNameStr);
           }
@@ -1045,29 +1185,36 @@ function transformComputedAST(
   imports: Set<string>,
   computedProperties?: Set<string>,
   computedReturnTypes?: Map<string, string>,
-  enableTypeScript: boolean = false
+  enableTypeScript: boolean = false,
 ): any[] {
   const statements: any[] = [];
 
-  if (!computedValue || computedValue.type !== 'ObjectExpression' || !computedValue.properties) {
+  if (
+    !computedValue ||
+    computedValue.type !== "ObjectExpression" ||
+    !computedValue.properties
+  ) {
     return statements;
   }
 
   computedValue.properties.forEach((compProp: any) => {
     // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
-    const compValue = compProp.value || (compProp.type === 'ObjectMethod' ? compProp : null);
+    const compValue =
+      compProp.value || (compProp.type === "ObjectMethod" ? compProp : null);
 
     if (
       compProp &&
       compValue &&
       compValue.type &&
-      (compValue.type === 'FunctionExpression' ||
-        compValue.type === 'ArrowFunctionExpression' ||
-        compValue.type === 'ObjectMethod')
+      (compValue.type === "FunctionExpression" ||
+        compValue.type === "ArrowFunctionExpression" ||
+        compValue.type === "ObjectMethod")
     ) {
-      const compName = compProp.key && compProp.key.name ? compProp.key.name : 'computed';
+      const compName =
+        compProp.key && compProp.key.name ? compProp.key.name : "computed";
       // For ObjectMethod, body is directly on compValue; for ObjectProperty, it's on compValue.body
-      const compBody = compValue.type === 'ObjectMethod' ? compValue.body : compValue.body;
+      const compBody =
+        compValue.type === "ObjectMethod" ? compValue.body : compValue.body;
 
       // Track computed property name
       if (compProp.key && compProp.key.name) {
@@ -1082,9 +1229,9 @@ function transformComputedAST(
 
       let computedBody: any = null;
 
-      if (compBody && compBody.type === 'BlockStatement' && compBody.body) {
+      if (compBody && compBody.type === "BlockStatement" && compBody.body) {
         const returnStmt = compBody.body.find(
-          (stmt: any) => stmt && stmt.type === 'ReturnStatement'
+          (stmt: any) => stmt && stmt.type === "ReturnStatement",
         );
         if (returnStmt && returnStmt.argument) {
           computedBody = j.arrowFunctionExpression([], returnStmt.argument);
@@ -1100,14 +1247,14 @@ function transformComputedAST(
       }
 
       statements.push(
-        j.variableDeclaration('const', [
+        j.variableDeclaration("const", [
           j.variableDeclarator(
             j.identifier(compName),
-            j.callExpression(j.identifier('computed'), [computedBody])
+            j.callExpression(j.identifier("computed"), [computedBody]),
           ),
-        ])
+        ]),
       );
-      imports.add('computed');
+      imports.add("computed");
     }
   });
 
@@ -1119,33 +1266,41 @@ function transformMethodsAST(
   methodsValue: any,
   methodNames?: Set<string>,
   methodSignatures?: Map<string, { params: string[]; returnType: string }>,
-  enableTypeScript: boolean = false
+  enableTypeScript: boolean = false,
 ): any[] {
   const statements: any[] = [];
 
-  if (!methodsValue || methodsValue.type !== 'ObjectExpression' || !methodsValue.properties) {
+  if (
+    !methodsValue ||
+    methodsValue.type !== "ObjectExpression" ||
+    !methodsValue.properties
+  ) {
     return statements;
   }
 
   methodsValue.properties.forEach((methodProp: any) => {
     // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
     const methodValue =
-      methodProp.value || (methodProp.type === 'ObjectMethod' ? methodProp : null);
+      methodProp.value ||
+      (methodProp.type === "ObjectMethod" ? methodProp : null);
 
     if (
       methodProp &&
       methodValue &&
       methodValue.type &&
-      (methodValue.type === 'FunctionExpression' ||
-        methodValue.type === 'ArrowFunctionExpression' ||
-        methodValue.type === 'ObjectMethod')
+      (methodValue.type === "FunctionExpression" ||
+        methodValue.type === "ArrowFunctionExpression" ||
+        methodValue.type === "ObjectMethod")
     ) {
-      const methodName = methodProp.key && methodProp.key.name ? methodProp.key.name : 'method';
+      const methodName =
+        methodProp.key && methodProp.key.name ? methodProp.key.name : "method";
       // For ObjectMethod, params and body are directly on methodValue; for ObjectProperty, they're on methodValue.params/body
       const methodParams =
-        methodValue.type === 'ObjectMethod' ? methodValue.params : methodValue.params || [];
+        methodValue.type === "ObjectMethod"
+          ? methodValue.params
+          : methodValue.params || [];
       const methodBody =
-        methodValue.type === 'ObjectMethod'
+        methodValue.type === "ObjectMethod"
           ? methodValue.body
           : methodValue.body || j.blockStatement([]);
 
@@ -1153,7 +1308,7 @@ function transformMethodsAST(
       if (enableTypeScript && methodSignatures) {
         const paramNames: string[] = [];
         methodParams.forEach((param: any) => {
-          if (param.type === 'Identifier') {
+          if (param.type === "Identifier") {
             paramNames.push(param.name);
           }
         });
@@ -1163,7 +1318,16 @@ function transformMethodsAST(
         methodSignatures.set(methodName, { params: paramNames, returnType });
       }
 
-      statements.push(j.functionDeclaration(j.identifier(methodName), methodParams, methodBody));
+      // Transform to arrow function: const methodName = (params) => { ... }
+      // This is more idiomatic for <script setup> in Vue 3
+      statements.push(
+        j.variableDeclaration("const", [
+          j.variableDeclarator(
+            j.identifier(methodName),
+            j.arrowFunctionExpression(methodParams, methodBody),
+          ),
+        ]),
+      );
       // Track method name
       if (methodProp.key && methodProp.key.name) {
         methodNames?.add(methodProp.key.name);
@@ -1179,25 +1343,27 @@ function transformMethodsAST(
  */
 function inferMethodReturnType(methodBody: any): string {
   if (!methodBody) {
-    return 'void';
+    return "void";
   }
 
   // Check if method has a return statement
-  if (methodBody.type === 'BlockStatement' && methodBody.body) {
-    const returnStmt = methodBody.body.find((stmt: any) => stmt && stmt.type === 'ReturnStatement');
+  if (methodBody.type === "BlockStatement" && methodBody.body) {
+    const returnStmt = methodBody.body.find(
+      (stmt: any) => stmt && stmt.type === "ReturnStatement",
+    );
     if (returnStmt && returnStmt.argument) {
       return inferTypeFromValue(returnStmt.argument);
     }
     // No return statement or return without value → void
-    return 'void';
+    return "void";
   }
 
   // Expression body (arrow function) → infer from expression
-  if (methodBody.type !== 'BlockStatement') {
+  if (methodBody.type !== "BlockStatement") {
     return inferTypeFromValue(methodBody);
   }
 
-  return 'void';
+  return "void";
 }
 
 function transformWatchAST(
@@ -1206,95 +1372,116 @@ function transformWatchAST(
   imports: Set<string>,
   // Reserved for future TypeScript support
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _enableTypeScript?: boolean
+  _enableTypeScript?: boolean,
 ): any[] {
   const statements: any[] = [];
 
-  if (!watchValue || watchValue.type !== 'ObjectExpression' || !watchValue.properties) {
+  if (
+    !watchValue ||
+    watchValue.type !== "ObjectExpression" ||
+    !watchValue.properties
+  ) {
     return statements;
   }
 
   watchValue.properties.forEach((watchProp: any) => {
-    const watchKey = watchProp.key && watchProp.key.name ? watchProp.key.name : null;
+    const watchKey =
+      watchProp.key && watchProp.key.name ? watchProp.key.name : null;
     // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
-    const watchHandler = watchProp.value || (watchProp.type === 'ObjectMethod' ? watchProp : null);
+    const watchHandler =
+      watchProp.value || (watchProp.type === "ObjectMethod" ? watchProp : null);
 
     if (!watchKey) return;
 
     if (
       watchHandler &&
       watchHandler.type &&
-      (watchHandler.type === 'FunctionExpression' ||
-        watchHandler.type === 'ArrowFunctionExpression' ||
-        watchHandler.type === 'ObjectMethod')
+      (watchHandler.type === "FunctionExpression" ||
+        watchHandler.type === "ArrowFunctionExpression" ||
+        watchHandler.type === "ObjectMethod")
     ) {
       // For watch, we need to watch the ref value, not the ref itself
       // So we use () => watchKey.value instead of () => watchKey
       const getter = j.arrowFunctionExpression(
         [],
-        j.memberExpression(j.identifier(watchKey), j.identifier('value'))
+        j.memberExpression(j.identifier(watchKey), j.identifier("value")),
       );
       // For ObjectMethod, params and body are directly on watchHandler; for ObjectProperty, they're on watchHandler.params/body
       const handlerParams =
-        watchHandler.type === 'ObjectMethod' ? watchHandler.params : watchHandler.params || [];
+        watchHandler.type === "ObjectMethod"
+          ? watchHandler.params
+          : watchHandler.params || [];
       const handlerBody =
-        watchHandler.type === 'ObjectMethod'
+        watchHandler.type === "ObjectMethod"
           ? watchHandler.body
           : watchHandler.body || j.blockStatement([]);
       const callback = j.arrowFunctionExpression(handlerParams, handlerBody);
 
       statements.push(
-        j.expressionStatement(j.callExpression(j.identifier('watch'), [getter, callback]))
+        j.expressionStatement(
+          j.callExpression(j.identifier("watch"), [getter, callback]),
+        ),
       );
-      imports.add('watch');
-    } else if (watchHandler && watchHandler.type === 'ObjectExpression') {
+      imports.add("watch");
+    } else if (watchHandler && watchHandler.type === "ObjectExpression") {
       // Watch options object: { handler: fn, immediate: true, deep: true }
       const handlerProp = watchHandler.properties.find(
-        (p: any) => p.key && p.key.name === 'handler'
+        (p: any) => p.key && p.key.name === "handler",
       );
       const immediateProp = watchHandler.properties.find(
-        (p: any) => p.key && p.key.name === 'immediate'
+        (p: any) => p.key && p.key.name === "immediate",
       );
-      const deepProp = watchHandler.properties.find((p: any) => p.key && p.key.name === 'deep');
+      const deepProp = watchHandler.properties.find(
+        (p: any) => p.key && p.key.name === "deep",
+      );
 
       // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
       const handler =
-        handlerProp?.value || (handlerProp?.type === 'ObjectMethod' ? handlerProp : null);
+        handlerProp?.value ||
+        (handlerProp?.type === "ObjectMethod" ? handlerProp : null);
 
       if (handler) {
         // For watch, we need to watch the ref value, not the ref itself
         // So we use () => watchKey.value instead of () => watchKey
         const getter = j.arrowFunctionExpression(
           [],
-          j.memberExpression(j.identifier(watchKey), j.identifier('value'))
+          j.memberExpression(j.identifier(watchKey), j.identifier("value")),
         );
 
         // For ObjectMethod, params and body are directly on handler; for ObjectProperty, they're on handler.params/body
         const handlerParams =
-          handler.type === 'ObjectMethod' ? handler.params : handler.params || [];
+          handler.type === "ObjectMethod"
+            ? handler.params
+            : handler.params || [];
         const handlerBody =
-          handler.type === 'ObjectMethod' ? handler.body : handler.body || j.blockStatement([]);
+          handler.type === "ObjectMethod"
+            ? handler.body
+            : handler.body || j.blockStatement([]);
         const callback = j.arrowFunctionExpression(handlerParams, handlerBody);
 
         const options: any[] = [];
         if (immediateProp && immediateProp.value) {
-          options.push(j.property('init', j.identifier('immediate'), immediateProp.value));
+          options.push(
+            j.property("init", j.identifier("immediate"), immediateProp.value),
+          );
         }
         if (deepProp && deepProp.value) {
-          options.push(j.property('init', j.identifier('deep'), deepProp.value));
+          options.push(
+            j.property("init", j.identifier("deep"), deepProp.value),
+          );
         }
 
         const watchCall =
           options.length > 0
-            ? j.callExpression(j.identifier('watch'), [
+            ? j.callExpression(j.identifier("watch"), [
                 getter,
                 callback,
                 j.objectExpression(options),
               ])
-            : j.callExpression(j.identifier('watch'), [getter, callback]);
+            : j.callExpression(j.identifier("watch"), [getter, callback]);
 
         statements.push(j.expressionStatement(watchCall));
-        imports.add('watch');
+        imports.add("watch");
       }
     }
   });
@@ -1302,54 +1489,62 @@ function transformWatchAST(
   return statements;
 }
 
-function transformLifecycleHooksAST(j: any, hooks: any[], imports: Set<string>): any[] {
+function transformLifecycleHooksAST(
+  j: any,
+  hooks: any[],
+  imports: Set<string>,
+): any[] {
   const statements: any[] = [];
 
   const hookMap: Record<string, string> = {
-    beforeCreate: 'onBeforeMount',
-    created: 'onMounted',
-    beforeMount: 'onBeforeMount',
-    mounted: 'onMounted',
-    beforeUpdate: 'onBeforeUpdate',
-    updated: 'onUpdated',
-    beforeDestroy: 'onBeforeUnmount',
-    destroyed: 'onUnmounted',
-    beforeUnmount: 'onBeforeUnmount',
-    unmounted: 'onUnmounted',
-    activated: 'onActivated',
-    deactivated: 'onDeactivated',
-    errorCaptured: 'onErrorCaptured',
+    beforeCreate: "onBeforeMount",
+    created: "onMounted",
+    beforeMount: "onBeforeMount",
+    mounted: "onMounted",
+    beforeUpdate: "onBeforeUpdate",
+    updated: "onUpdated",
+    beforeDestroy: "onBeforeUnmount",
+    destroyed: "onUnmounted",
+    beforeUnmount: "onBeforeUnmount",
+    unmounted: "onUnmounted",
+    activated: "onActivated",
+    deactivated: "onDeactivated",
+    errorCaptured: "onErrorCaptured",
   };
 
   hooks.forEach((hook: any) => {
     const hookName = hook.key.name;
     const vue3Hook = hookMap[hookName] || hookName;
     // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
-    const hookBody = hook.value || (hook.type === 'ObjectMethod' ? hook : null);
+    const hookBody = hook.value || (hook.type === "ObjectMethod" ? hook : null);
 
     if (
       hookBody &&
       hookBody.type &&
-      (hookBody.type === 'FunctionExpression' ||
-        hookBody.type === 'ArrowFunctionExpression' ||
-        hookBody.type === 'ObjectMethod')
+      (hookBody.type === "FunctionExpression" ||
+        hookBody.type === "ArrowFunctionExpression" ||
+        hookBody.type === "ObjectMethod")
     ) {
       // Create callback function with the hook body
       let callback;
-      if (hookBody.body && hookBody.body.type === 'BlockStatement') {
+      if (hookBody.body && hookBody.body.type === "BlockStatement") {
         // Use the block statement directly
         callback = j.arrowFunctionExpression([], hookBody.body);
       } else if (hookBody.body) {
         // Wrap in block statement if needed
         callback = j.arrowFunctionExpression(
           [],
-          j.blockStatement([j.returnStatement(hookBody.body)])
+          j.blockStatement([j.returnStatement(hookBody.body)]),
         );
       } else {
         callback = j.arrowFunctionExpression([], j.blockStatement([]));
       }
 
-      statements.push(j.expressionStatement(j.callExpression(j.identifier(vue3Hook), [callback])));
+      statements.push(
+        j.expressionStatement(
+          j.callExpression(j.identifier(vue3Hook), [callback]),
+        ),
+      );
       imports.add(vue3Hook);
     }
   });
@@ -1364,19 +1559,19 @@ function generateImportStatements(j: any, imports: Set<string>): any[] {
   imports.forEach((imp) => {
     if (
       [
-        'ref',
-        'reactive',
-        'computed',
-        'watch',
-        'onMounted',
-        'onUpdated',
-        'onBeforeMount',
-        'onBeforeUpdate',
-        'onBeforeUnmount',
-        'onUnmounted',
-        'onActivated',
-        'onDeactivated',
-        'onErrorCaptured',
+        "ref",
+        "reactive",
+        "computed",
+        "watch",
+        "onMounted",
+        "onUpdated",
+        "onBeforeMount",
+        "onBeforeUpdate",
+        "onBeforeUnmount",
+        "onUnmounted",
+        "onActivated",
+        "onDeactivated",
+        "onErrorCaptured",
       ].includes(imp)
     ) {
       vueImports.push(imp);
@@ -1386,9 +1581,11 @@ function generateImportStatements(j: any, imports: Set<string>): any[] {
   if (vueImports.length > 0) {
     statements.push(
       j.importDeclaration(
-        vueImports.sort().map((imp: string) => j.importSpecifier(j.identifier(imp))),
-        j.literal('vue')
-      )
+        vueImports
+          .sort()
+          .map((imp: string) => j.importSpecifier(j.identifier(imp))),
+        j.literal("vue"),
+      ),
     );
   }
 
@@ -1396,36 +1593,36 @@ function generateImportStatements(j: any, imports: Set<string>): any[] {
 }
 
 function isVueComponent(obj: any): boolean {
-  if (!obj || obj.type !== 'ObjectExpression') return false;
+  if (!obj || obj.type !== "ObjectExpression") return false;
 
   // Check if it has any Vue component properties
   const vueKeys = [
-    'props',
-    'data',
-    'methods',
-    'computed',
-    'setup',
-    'created',
-    'mounted',
-    'emits',
-    'watch',
-    'beforeCreate',
-    'beforeMount',
-    'beforeUpdate',
-    'beforeDestroy',
-    'destroyed',
-    'beforeUnmount',
-    'unmounted',
-    'activated',
-    'deactivated',
-    'errorCaptured',
-    'name',
-    'components',
-    'directives',
-    'filters',
-    'mixins',
-    'provide',
-    'inject',
+    "props",
+    "data",
+    "methods",
+    "computed",
+    "setup",
+    "created",
+    "mounted",
+    "emits",
+    "watch",
+    "beforeCreate",
+    "beforeMount",
+    "beforeUpdate",
+    "beforeDestroy",
+    "destroyed",
+    "beforeUnmount",
+    "unmounted",
+    "activated",
+    "deactivated",
+    "errorCaptured",
+    "name",
+    "components",
+    "directives",
+    "filters",
+    "mixins",
+    "provide",
+    "inject",
   ];
 
   // If it's an export default object, it's likely a Vue component
@@ -1433,7 +1630,8 @@ function isVueComponent(obj: any): boolean {
   if (obj.properties && obj.properties.length > 0) {
     // Check for Vue component properties
     const hasVueProperty = obj.properties.some(
-      (prop: any) => prop && prop.key && prop.key.name && vueKeys.includes(prop.key.name)
+      (prop: any) =>
+        prop && prop.key && prop.key.name && vueKeys.includes(prop.key.name),
     );
 
     // Also consider it a Vue component if it has data() function (common pattern)
@@ -1441,9 +1639,10 @@ function isVueComponent(obj: any): boolean {
       (prop: any) =>
         prop &&
         prop.key &&
-        prop.key.name === 'data' &&
+        prop.key.name === "data" &&
         prop.value &&
-        (prop.value.type === 'FunctionExpression' || prop.value.type === 'ArrowFunctionExpression')
+        (prop.value.type === "FunctionExpression" ||
+          prop.value.type === "ArrowFunctionExpression"),
     );
 
     // If it's an export default with properties, assume it's a Vue component
@@ -1471,7 +1670,7 @@ function transformThisReferences(
   dataProperties: Set<string>,
   computedProperties: Set<string>,
   methodNames: Set<string>,
-  propNames: Set<string>
+  propNames: Set<string>,
 ): void {
   root.find(j.MemberExpression).forEach((path: any) => {
     const node = path.value;
@@ -1479,26 +1678,32 @@ function transformThisReferences(
     // Check if it's a this.xxx expression
     if (
       node.object &&
-      node.object.type === 'ThisExpression' &&
+      node.object.type === "ThisExpression" &&
       node.property &&
-      node.property.type === 'Identifier'
+      node.property.type === "Identifier"
     ) {
       const propertyName = node.property.name;
 
       // Skip Vue internal properties
-      if (propertyName.startsWith('$')) {
+      if (propertyName.startsWith("$")) {
         return;
       }
 
       // Transform based on what type of property it is
       if (propNames.has(propertyName)) {
         // Props: this.propName → props.propName
-        const newExpression = j.memberExpression(j.identifier('props'), j.identifier(propertyName));
+        const newExpression = j.memberExpression(
+          j.identifier("props"),
+          j.identifier(propertyName),
+        );
         j(path).replaceWith(newExpression);
       } else if (dataProperties.has(propertyName)) {
         // Data properties: this.dataProperty → dataProperty.value
         // Replace the entire MemberExpression with dataProperty.value
-        const newExpression = j.memberExpression(j.identifier(propertyName), j.identifier('value'));
+        const newExpression = j.memberExpression(
+          j.identifier(propertyName),
+          j.identifier("value"),
+        );
         j(path).replaceWith(newExpression);
       } else if (computedProperties.has(propertyName)) {
         // Computed properties: this.computedProperty → computedProperty
@@ -1514,19 +1719,21 @@ function transformThisReferences(
 
 function findLifecycleHooks(properties: any[]): any[] {
   const hooks = [
-    'beforeCreate',
-    'created',
-    'beforeMount',
-    'mounted',
-    'beforeUpdate',
-    'updated',
-    'beforeDestroy',
-    'destroyed',
-    'beforeUnmount',
-    'unmounted',
-    'activated',
-    'deactivated',
-    'errorCaptured',
+    "beforeCreate",
+    "created",
+    "beforeMount",
+    "mounted",
+    "beforeUpdate",
+    "updated",
+    "beforeDestroy",
+    "destroyed",
+    "beforeUnmount",
+    "unmounted",
+    "activated",
+    "deactivated",
+    "errorCaptured",
   ];
-  return properties.filter((prop: any) => prop.key && hooks.includes(prop.key.name));
+  return properties.filter(
+    (prop: any) => prop.key && hooks.includes(prop.key.name),
+  );
 }
