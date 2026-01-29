@@ -74,6 +74,47 @@ Automatic Vue 2 → Vue 3 migration combining:
 
 ### Migration Workflow
 
+> **Note**: For interactive diagrams, view this README on [GitHub](https://github.com/TylerDurden75/vue-ai-migrator).
+
+```
+Vue 2 Project
+    ↓
+[Analyze Project]
+    ↓
+[Classify Files]
+    ↓
+{Complexity Assessment}
+    ├─→ 🟢 Simple → [AST Transform]
+    ├─→ 🟡 Medium → [AST + Validation]
+    └─→ 🔴 Complex → [AI Agent]
+    ↓
+[Generate Vue 3 Code]
+    ↓
+[Validate Syntax]
+    ↓
+{Valid?}
+    ├─→ Yes → [Generate Tests] → [Create Report]
+    └─→ No → [Report Issues] → [Create Report]
+    ↓
+Vue 3 Project
+```
+
+**Workflow Steps:**
+
+1. **Analyze Project**: Scans all Vue files and detects patterns
+2. **Classify Files**: Categorizes files by complexity (Simple/Medium/Complex)
+3. **Transform**:
+   - 🟢 **Simple**: Direct AST transformation (fast, deterministic)
+   - 🟡 **Medium**: AST transformation with validation
+   - 🔴 **Complex**: AI-assisted transformation with retry logic
+4. **Generate Vue 3 Code**: Produces migrated code
+5. **Validate Syntax**: Ensures generated code is valid
+6. **Generate Tests** (optional): Creates Vitest tests for migrated components
+7. **Create Report**: Generates detailed migration report
+
+<details>
+<summary>View interactive Mermaid diagram (GitHub only)</summary>
+
 ```mermaid
 graph TD
     A[Vue 2 Project] --> B[Analyze Project]
@@ -101,7 +142,27 @@ graph TD
     style F fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
 ```
 
+</details>
+
 ### Hybrid Approach: AST + AI
+
+```
+Vue 2 Code
+    ↓
+[AST Parser]
+    ↓
+{Pattern Detection}
+    ├─→ Deterministic → [AST Transform] → Vue 3 Code
+    └─→ Complex → [AI Analysis] → [AI Suggestions] → [AST Validation] → Vue 3 Code
+```
+
+**Hybrid Strategy:**
+
+- **Deterministic patterns** (90% of cases): Fast AST-based transformation
+- **Complex patterns** (10% of cases): AI analysis with AST validation for reliability
+
+<details>
+<summary>View interactive Mermaid diagram (GitHub only)</summary>
 
 ```mermaid
 graph LR
@@ -118,6 +179,8 @@ graph LR
     style E fill:#3B82F6,stroke:#333,stroke-width:2px,color:#fff
     style F fill:#42B883,stroke:#333,stroke-width:2px,color:#fff
 ```
+
+</details>
 
 ## 📖 Documentation
 
