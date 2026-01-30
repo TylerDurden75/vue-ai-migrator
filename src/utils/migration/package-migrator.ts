@@ -128,6 +128,35 @@ export async function migratePackageJson(
       }
     }
 
+    // Update vue-loader 15 → 17 (Vue 3 compatible)
+    if (allDeps["vue-loader"]) {
+      const loaderVersion = allDeps["vue-loader"];
+      if (loaderVersion.startsWith("^15.") || loaderVersion.startsWith("15.")) {
+        if (packageJson.devDependencies?.["vue-loader"]) {
+          packageJson.devDependencies["vue-loader"] = "^17.4.2";
+          result.changes.push(`vue-loader: ${loaderVersion} → ^17.4.2`);
+          result.modified = true;
+        }
+      }
+    }
+
+    // Add @vue/compiler-sfc if vue-loader is updated to v17
+    if (
+      packageJson.devDependencies?.["vue-loader"] &&
+      packageJson.devDependencies["vue-loader"].startsWith("^17")
+    ) {
+      if (!allDeps["@vue/compiler-sfc"]) {
+        if (!packageJson.devDependencies) {
+          packageJson.devDependencies = {};
+        }
+        packageJson.devDependencies["@vue/compiler-sfc"] = "^3.4.21";
+        result.changes.push(
+          "Added @vue/compiler-sfc: ^3.4.21 (required for vue-loader v17)",
+        );
+        result.modified = true;
+      }
+    }
+
     // Remove Vue 2 specific plugins
     const vue2Plugins = [
       "vue-template-compiler",

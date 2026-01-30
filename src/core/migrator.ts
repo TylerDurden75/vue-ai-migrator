@@ -14,7 +14,12 @@ import {
 } from "../utils/safety";
 import { RollbackManager } from "../utils/safety";
 import { migratePackageJson } from "../utils/migration";
+import { migrateWebpackConfig } from "../utils/migration/webpack-config-migrator";
 import { validateMigration } from "../utils/migration";
+import {
+  fixPostMigrationIssues,
+  fixImportPaths,
+} from "../utils/migration/post-migration-fixer";
 import { CacheManager } from "../utils/cache";
 import { MigrationReporter, FileReport } from "./reporter";
 import * as path from "path";
@@ -128,6 +133,23 @@ export async function migrate(
     // Load existing backups if rollback is enabled
     if (rollbackManager && !dryRun) {
       await rollbackManager.loadBackups();
+
+      // Backup important configuration files before migration
+      const configFiles = [
+        path.join(projectPath, "package.json"),
+        path.join(projectPath, "webpack.config.js"),
+        path.join(projectPath, "vite.config.js"),
+        path.join(projectPath, "vue.config.js"),
+        path.join(projectPath, "tsconfig.json"),
+      ];
+
+      for (const configFile of configFiles) {
+        try {
+          await rollbackManager.backupFile(configFile);
+        } catch {
+          // File doesn't exist, skip silently
+        }
+      }
     }
 
     // Load cache if enabled
@@ -382,6 +404,37 @@ export async function migrate(
 
             if (migrated) {
               if (!dryRun) {
+                // Apply post-migration fixes
+                try {
+                  const fixResult = await fixPostMigrationIssues(
+                    filePath,
+                    finalCode,
+                  );
+                  if (fixResult.fixed) {
+                    finalCode = fixResult.content;
+                    if (fixResult.fixes.length > 0) {
+                      result.warnings.push(
+                        `Post-migration fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`,
+                      );
+                    }
+                  }
+
+                  // Fix import paths to use @ alias
+                  finalCode = fixImportPaths(finalCode, projectPath, filePath);
+
+                  // Report issues found but not fixed
+                  if (fixResult.issues.length > 0) {
+                    result.warnings.push(
+                      `Issues detected in ${path.relative(projectPath, filePath)}: ${fixResult.issues.join(", ")}`,
+                    );
+                  }
+                } catch (error) {
+                  // If fixing fails, still write the file but warn
+                  result.warnings.push(
+                    `Post-migration fixer failed for ${path.relative(projectPath, filePath)}: ${error instanceof Error ? error.message : String(error)}`,
+                  );
+                }
+
                 await safeWriteFile(filePath, finalCode);
               }
               result.filesModified++;
@@ -450,6 +503,16 @@ export async function migrate(
     // Migrate package.json if requested
     if (shouldMigratePackage) {
       try {
+        // Backup package.json before migration if not already backed up
+        const packageJsonPath = path.join(projectPath, "package.json");
+        if (rollbackManager && !dryRun) {
+          try {
+            await rollbackManager.backupFile(packageJsonPath);
+          } catch {
+            // Already backed up or doesn't exist
+          }
+        }
+
         const packageResult = await migratePackageJson(projectPath, dryRun);
         if (packageResult.modified) {
           result.warnings.push(
@@ -462,6 +525,29 @@ export async function migrate(
           `Package migration error: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+    }
+
+    // Migrate webpack.config.js if it exists
+    try {
+      const webpackConfigPath = path.join(projectPath, "webpack.config.js");
+      // Backup webpack.config.js before migration if not already backed up
+      if (rollbackManager && !dryRun) {
+        try {
+          await rollbackManager.backupFile(webpackConfigPath);
+        } catch {
+          // Already backed up or doesn't exist
+        }
+      }
+
+      const webpackResult = await migrateWebpackConfig(projectPath, dryRun);
+      if (webpackResult.modified) {
+        result.warnings.push(
+          ...webpackResult.changes.map((c) => `Webpack: ${c}`),
+        );
+        result.warnings.push(...webpackResult.warnings);
+      }
+    } catch (error) {
+      // webpack.config.js doesn't exist or error, that's fine
     }
 
     // Validate migration if requested
