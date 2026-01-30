@@ -428,6 +428,7 @@ export async function migrate(
                       filePath,
                       finalCode,
                       options.enableTypeScript || false,
+                      projectPath, // Pass projectRoot for dynamic store analysis
                     );
                     if (fixResult.fixed) {
                       finalCode = fixResult.content;

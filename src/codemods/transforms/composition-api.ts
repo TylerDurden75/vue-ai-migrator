@@ -40,6 +40,7 @@ export const compositionApiTransform: Transform = (
   >(); // Method name → signature
   const propNames = new Set<string>(); // Props → props.xxx
   const propInterfaces: string[] = []; // Generated TypeScript interfaces for props
+  const emittedEvents = new Set<string>(); // Events emitted via this.$emit
 
   // Find Vue component - check both export default and regular objects
   root.find(j.ExportDefaultDeclaration).forEach((path: any) => {
@@ -154,14 +155,41 @@ export const compositionApiTransform: Transform = (
           methodsProp?.value ||
           ((methodsProp as any)?.kind === "method" ? methodsProp : null);
         if (methodsProp && methodsValue) {
+          // Detect this.$emit calls in methods to auto-create defineEmits
+          detectEmittedEvents(j, methodsValue, emittedEvents);
+          
           const methodStatements = transformMethodsAST(
             j,
             methodsValue,
             methodNames,
+            undefined,
             enableTypeScript,
           );
           if (methodStatements.length > 0) {
             statements.push(...methodStatements);
+            hasChanges = true;
+          }
+        }
+        
+        // If we detected emitted events but no emits prop, create defineEmits
+        if (emittedEvents.size > 0 && !emitsProp) {
+          const emitArray = Array.from(emittedEvents).map(e => j.literal(e));
+          const emitsAst = transformEmitsAST(
+            j,
+            j.arrayExpression(emitArray),
+            enableTypeScript,
+          );
+          if (emitsAst) {
+            // Insert after props if exists, otherwise at the beginning
+            const propsIndex = statements.findIndex((s: any) => 
+              s && s.declarations && s.declarations[0] && 
+              s.declarations[0].id && s.declarations[0].id.name === 'props'
+            );
+            if (propsIndex !== -1) {
+              statements.splice(propsIndex + 1, 0, emitsAst);
+            } else {
+              statements.unshift(emitsAst);
+            }
             hasChanges = true;
           }
         }
@@ -1272,6 +1300,72 @@ function transformComputedAST(
   });
 
   return statements;
+}
+
+/**
+ * Detect emitted events from this.$emit calls in methods
+ */
+function detectEmittedEvents(
+  j: any,
+  methodsValue: any,
+  emittedEvents: Set<string>,
+): void {
+  if (
+    !methodsValue ||
+    methodsValue.type !== "ObjectExpression" ||
+    !methodsValue.properties
+  ) {
+    return;
+  }
+
+  methodsValue.properties.forEach((methodProp: any) => {
+    const methodValue =
+      methodProp.value ||
+      (methodProp.type === "ObjectMethod" ? methodProp : null);
+
+    if (
+      methodValue &&
+      (methodValue.type === "FunctionExpression" ||
+        methodValue.type === "ArrowFunctionExpression" ||
+        methodValue.type === "ObjectMethod")
+    ) {
+      const methodBody =
+        methodValue.type === "ObjectMethod"
+          ? methodValue.body
+          : methodValue.body;
+
+      if (methodBody) {
+        // Find all this.$emit('eventName', ...) calls
+        j(methodBody).find(j.CallExpression).forEach((path: any) => {
+          const callee = path.value.callee;
+          if (
+            callee &&
+            callee.type === "MemberExpression" &&
+            callee.object &&
+            callee.object.type === "ThisExpression" &&
+            callee.property &&
+            callee.property.type === "Identifier" &&
+            callee.property.name === "$emit"
+          ) {
+            // Extract event name from first argument
+            const args = path.value.arguments || [];
+            if (args.length > 0) {
+              const firstArg = args[0];
+              if (
+                firstArg.type === "StringLiteral" ||
+                firstArg.type === "Literal"
+              ) {
+                const eventName = firstArg.value || firstArg.name;
+                if (eventName) {
+                  emittedEvents.add(eventName);
+                }
+              }
+            }
+          }
+        });
+      }
+    }
+  });
 }
 
 function transformMethodsAST(

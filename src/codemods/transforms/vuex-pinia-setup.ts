@@ -13,7 +13,7 @@ import { Transform, FileInfo, API } from "jscodeshift";
 export const vuexPiniaSetupTransform: Transform = (
   fileInfo: FileInfo,
   api: API,
-  options: any = {},
+  options: any = {}
 ) => {
   const j = api.jscodeshift;
   const root = j(fileInfo.source);
@@ -57,12 +57,12 @@ export const vuexPiniaSetupTransform: Transform = (
           p.key &&
           p.key.name === "namespaced" &&
           p.value &&
-          p.value.value === true,
+          p.value.value === true
       );
       const hasVuexStructure = properties.some(
         (p: any) =>
           p.key &&
-          ["state", "getters", "mutations", "actions"].includes(p.key.name),
+          ["state", "getters", "mutations", "actions"].includes(p.key.name)
       );
 
       if (
@@ -90,11 +90,12 @@ export const vuexPiniaSetupTransform: Transform = (
         const localComputedProperties = new Set<string>();
         const localFunctionNames = new Set<string>();
         const returnProperties: string[] = [];
+        const getterRenames = new Map<string, string>(); // original name → renamed name
 
         // Extract state - check both export default and const declaration
         let stateValue: any = null;
         const stateProp = properties.find(
-          (p: any) => p.key && p.key.name === "state",
+          (p: any) => p.key && p.key.name === "state"
         );
         if (stateProp && stateProp.value) {
           // If stateProp.value is an Identifier (reference to const state), resolve it
@@ -139,9 +140,9 @@ export const vuexPiniaSetupTransform: Transform = (
                           j.identifier(propName),
                           j.callExpression(j.identifier("reactive"), [
                             prop.value,
-                          ]),
+                          ])
                         ),
-                      ]),
+                      ])
                     );
                     imports.add("reactive");
                   } else {
@@ -151,9 +152,9 @@ export const vuexPiniaSetupTransform: Transform = (
                           j.identifier(propName),
                           j.callExpression(j.identifier("ref"), [
                             prop.value || j.literal(null),
-                          ]),
+                          ])
                         ),
-                      ]),
+                      ])
                     );
                     imports.add("ref");
                   }
@@ -166,7 +167,7 @@ export const vuexPiniaSetupTransform: Transform = (
             setupStatements.push(
               j.variableDeclaration("const", [
                 j.variableDeclarator(j.identifier("state"), stateCall),
-              ]),
+              ])
             );
             // Then extract properties from state object
             // This is simplified - in reality we'd need to execute the function
@@ -177,7 +178,7 @@ export const vuexPiniaSetupTransform: Transform = (
         // Extract getters - check both export default and const declaration
         let gettersValue: any = null;
         const gettersProp = properties.find(
-          (p: any) => p.key && p.key.name === "getters",
+          (p: any) => p.key && p.key.name === "getters"
         );
         if (gettersProp && gettersProp.value) {
           // If gettersProp.value is an Identifier (reference to const getters), resolve it
@@ -212,33 +213,41 @@ export const vuexPiniaSetupTransform: Transform = (
                 // If it conflicts, check if the getter is just returning state.xxx
                 // If so, we can skip it and use the state property directly
                 let shouldSkipGetter = false;
+                let renamedGetterName = getterName;
+
                 if (conflictsWithState) {
                   const getterValue: any = getterProp.value;
                   if (getterValue) {
                     const getterCode = j(getterValue).toSource();
                     // Check if getter is just: (state) => state.getterName
                     const simpleReturnPattern = new RegExp(
-                      `\\(state\\)\\s*=>\\s*state\\.${getterName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+                      `\\(state\\)\\s*=>\\s*state\\.${getterName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`
                     );
                     if (simpleReturnPattern.test(getterCode)) {
+                      // Simple getter that just returns state - skip it, use state directly
                       shouldSkipGetter = true;
+                    } else {
+                      // Complex getter with same name as state - rename it
+                      renamedGetterName = `${getterName}Computed`;
                     }
                   }
                 }
 
                 if (!shouldSkipGetter) {
-                  localComputedProperties.add(getterName);
-                  computedProperties.add(getterName);
-                  // Only add to returnProperties if it doesn't conflict with state
-                  if (
-                    !conflictsWithState ||
-                    !returnProperties.includes(getterName)
-                  ) {
-                    returnProperties.push(getterName);
+                  localComputedProperties.add(renamedGetterName);
+                  computedProperties.add(renamedGetterName);
+                  // Add to returnProperties with the renamed name
+                  if (!returnProperties.includes(renamedGetterName)) {
+                    returnProperties.push(renamedGetterName);
+                  }
+
+                  // Track the mapping for return statement
+                  if (renamedGetterName !== getterName) {
+                    getterRenames.set(getterName, renamedGetterName);
                   }
 
                   // Transform getter to computed or function
-                  let getterValue: any = getterProp.value;
+                  const getterValue: any = getterProp.value;
                   let getterBody: any = null;
 
                   if (
@@ -254,7 +263,7 @@ export const vuexPiniaSetupTransform: Transform = (
                     let returnedFunction: any = null;
                     if (getterBody && getterBody.type === "BlockStatement") {
                       const returnStmt = getterBody.body.find(
-                        (stmt: any) => stmt.type === "ReturnStatement",
+                        (stmt: any) => stmt.type === "ReturnStatement"
                       );
                       if (
                         returnStmt &&
@@ -291,7 +300,7 @@ export const vuexPiniaSetupTransform: Transform = (
                         transformedBody = transformStateReferencesInBody(
                           j,
                           returnedFunctionBody,
-                          stateProperties,
+                          stateProperties
                         );
                       } else if (returnedFunctionBody) {
                         // Expression body - wrap in return statement
@@ -299,7 +308,7 @@ export const vuexPiniaSetupTransform: Transform = (
                           transformStateReferencesInExpression(
                             j,
                             returnedFunctionBody,
-                            stateProperties,
+                            stateProperties
                           );
                         transformedBody = j.blockStatement([
                           j.returnStatement(transformedExpr),
@@ -308,22 +317,22 @@ export const vuexPiniaSetupTransform: Transform = (
 
                       setupStatements.push(
                         j.functionDeclaration(
-                          j.identifier(getterName),
+                          j.identifier(renamedGetterName),
                           returnedFunctionParams,
-                          transformedBody || j.blockStatement([]),
-                        ),
+                          transformedBody || j.blockStatement([])
+                        )
                       );
                       // Remove from computed properties since it's now a function
-                      localComputedProperties.delete(getterName);
-                      computedProperties.delete(getterName);
-                      localFunctionNames.add(getterName);
-                      functionNames.add(getterName);
+                      localComputedProperties.delete(renamedGetterName);
+                      computedProperties.delete(renamedGetterName);
+                      localFunctionNames.add(renamedGetterName);
+                      functionNames.add(renamedGetterName);
                     } else {
                       // Regular getter - convert to computed
                       // Transform state references in getter body
                       if (getterBody && getterBody.type === "BlockStatement") {
                         const returnStmt = getterBody.body.find(
-                          (stmt: any) => stmt.type === "ReturnStatement",
+                          (stmt: any) => stmt.type === "ReturnStatement"
                         );
                         if (returnStmt && returnStmt.argument) {
                           let returnExpr = returnStmt.argument;
@@ -331,45 +340,45 @@ export const vuexPiniaSetupTransform: Transform = (
                           returnExpr = transformStateReferencesInExpression(
                             j,
                             returnExpr,
-                            stateProperties,
+                            stateProperties
                           );
                           const arrowFn = j.arrowFunctionExpression(
                             [],
-                            returnExpr,
+                            returnExpr
                           );
                           setupStatements.push(
                             j.variableDeclaration("const", [
                               j.variableDeclarator(
-                                j.identifier(getterName),
+                                j.identifier(renamedGetterName),
                                 j.callExpression(j.identifier("computed"), [
                                   arrowFn,
-                                ]),
+                                ])
                               ),
-                            ]),
+                            ])
                           );
                           imports.add("computed");
                         }
                       } else if (getterBody) {
                         // Arrow function with expression body
-                        let transformedBody =
+                        const transformedBody =
                           transformStateReferencesInExpression(
                             j,
                             getterBody,
-                            stateProperties,
+                            stateProperties
                           );
                         const arrowFn = j.arrowFunctionExpression(
                           [],
-                          transformedBody,
+                          transformedBody
                         );
                         setupStatements.push(
                           j.variableDeclaration("const", [
                             j.variableDeclarator(
-                              j.identifier(getterName),
+                              j.identifier(renamedGetterName),
                               j.callExpression(j.identifier("computed"), [
                                 arrowFn,
-                              ]),
+                              ])
                             ),
-                          ]),
+                          ])
                         );
                         imports.add("computed");
                       }
@@ -385,7 +394,7 @@ export const vuexPiniaSetupTransform: Transform = (
         // Extract mutations - check both export default and const declaration
         let mutationsValue: any = null;
         const mutationsProp = properties.find(
-          (p: any) => p.key && p.key.name === "mutations",
+          (p: any) => p.key && p.key.name === "mutations"
         );
         if (mutationsProp && mutationsProp.value) {
           // If mutationsProp.value is an Identifier (reference to const mutations), resolve it
@@ -478,7 +487,7 @@ export const vuexPiniaSetupTransform: Transform = (
                 transformedBody = transformStateReferencesInBody(
                   j,
                   mutBody,
-                  stateProperties,
+                  stateProperties
                 );
 
                 // Rename conflicting parameters in the body
@@ -490,17 +499,17 @@ export const vuexPiniaSetupTransform: Transform = (
                     // Use word boundaries and negative lookbehind to avoid replacing property accesses
                     const escapedOldName = oldName.replace(
                       /[.*+?^${}()|[\]\\]/g,
-                      "\\$&",
+                      "\\$&"
                     );
                     // Match the parameter name but not if it's part of a property access (e.g., users.value)
                     // Pattern: word boundary, not preceded by a dot, followed by word boundary or assignment
                     const paramPattern = new RegExp(
                       `(?<!\\.)\\b${escapedOldName}\\b(?!\\.)`,
-                      "g",
+                      "g"
                     );
                     transformedCode = transformedCode.replace(
                       paramPattern,
-                      newName,
+                      newName
                     );
                   });
                   try {
@@ -525,7 +534,7 @@ export const vuexPiniaSetupTransform: Transform = (
                       transformedBody = j.blockStatement(
                         cleanedStatements.length > 0
                           ? cleanedStatements
-                          : transformedBody.body,
+                          : transformedBody.body
                       );
                     }
                   } catch (e) {
@@ -538,8 +547,8 @@ export const vuexPiniaSetupTransform: Transform = (
                 j.functionDeclaration(
                   j.identifier(mutName),
                   paramConflicts.size > 0 ? newParamsCopy : newParams,
-                  transformedBody,
-                ),
+                  transformedBody
+                )
               );
             }
           });
@@ -549,7 +558,7 @@ export const vuexPiniaSetupTransform: Transform = (
         // Extract actions - check both export default and const declaration
         let actionsValue: any = null;
         const actionsProp = properties.find(
-          (p: any) => p.key && p.key.name === "actions",
+          (p: any) => p.key && p.key.name === "actions"
         );
         if (actionsProp && actionsProp.value) {
           // If actionsProp.value is an Identifier (reference to const actions), resolve it
@@ -639,13 +648,13 @@ export const vuexPiniaSetupTransform: Transform = (
                 transformedBody = transformCommitCalls(
                   j,
                   actionBody,
-                  localFunctionNames,
+                  localFunctionNames
                 );
                 // Then transform state references
                 transformedBody = transformStateReferencesInBody(
                   j,
                   transformedBody,
-                  stateProperties,
+                  stateProperties
                 );
               }
 
@@ -653,8 +662,8 @@ export const vuexPiniaSetupTransform: Transform = (
                 j.functionDeclaration(
                   j.identifier(actionName),
                   cleanedParams,
-                  transformedBody,
-                ),
+                  transformedBody
+                )
               );
             }
           });
@@ -662,17 +671,35 @@ export const vuexPiniaSetupTransform: Transform = (
         }
 
         // Create return statement
-        const returnPropertiesAST = returnProperties.map((name) =>
-          j.property("init", j.identifier(name), j.identifier(name)),
-        );
+        // Map original getter names to renamed names in return
+        const returnPropertiesAST = returnProperties.map((name: string) => {
+          // Check if this is a renamed getter that should use original name in return
+          let originalName: string | undefined;
+          for (const [orig, renamed] of getterRenames.entries()) {
+            if (renamed === name) {
+              originalName = orig;
+              break;
+            }
+          }
+
+          if (originalName) {
+            // Return with original name pointing to renamed variable
+            return j.property(
+              "init",
+              j.identifier(originalName),
+              j.identifier(name)
+            );
+          }
+          return j.property("init", j.identifier(name), j.identifier(name));
+        });
         setupStatements.push(
-          j.returnStatement(j.objectExpression(returnPropertiesAST)),
+          j.returnStatement(j.objectExpression(returnPropertiesAST))
         );
 
         // Create defineStore call
         const setupFunction = j.arrowFunctionExpression(
           [],
-          j.blockStatement(setupStatements),
+          j.blockStatement(setupStatements)
         );
         const storeId = j.literal(moduleName);
         const defineStoreCall = j.callExpression(j.identifier("defineStore"), [
@@ -684,7 +711,7 @@ export const vuexPiniaSetupTransform: Transform = (
         const exportDeclaration = j.exportNamedDeclaration(
           j.variableDeclaration("const", [
             j.variableDeclarator(j.identifier(useStoreName), defineStoreCall),
-          ]),
+          ])
         );
 
         j(path).replaceWith(exportDeclaration);
@@ -774,10 +801,11 @@ export const vuexPiniaSetupTransform: Transform = (
         const localComputedProperties = new Set<string>();
         const localFunctionNames = new Set<string>();
         const returnProperties: string[] = [];
+        const getterRenames = new Map<string, string>(); // original name → renamed name
 
         // Step 1: Extract state properties and convert to ref()/reactive()
         const stateProp = properties.find(
-          (p: any) => p.key && p.key.name === "state",
+          (p: any) => p.key && p.key.name === "state"
         );
         if (
           stateProp &&
@@ -800,11 +828,9 @@ export const vuexPiniaSetupTransform: Transform = (
                     j.variableDeclaration("const", [
                       j.variableDeclarator(
                         j.identifier(propName),
-                        j.callExpression(j.identifier("reactive"), [
-                          prop.value,
-                        ]),
+                        j.callExpression(j.identifier("reactive"), [prop.value])
                       ),
-                    ]),
+                    ])
                   );
                   imports.add("reactive");
 
@@ -821,9 +847,9 @@ export const vuexPiniaSetupTransform: Transform = (
                         j.identifier(propName),
                         j.callExpression(j.identifier("ref"), [
                           prop.value || j.literal(null),
-                        ]),
+                        ])
                       ),
-                    ]),
+                    ])
                   );
                   imports.add("ref");
                   // Track ref properties for TypeScript typing
@@ -832,10 +858,10 @@ export const vuexPiniaSetupTransform: Transform = (
                   // Track property types for interface generation
                   if (enableTypeScript) {
                     const propCode = j(
-                      prop.value || j.literal(null),
+                      prop.value || j.literal(null)
                     ).toSource();
                     const inferredType = inferTypeFromValueString(
-                      propCode.trim(),
+                      propCode.trim()
                     );
                     statePropertyTypes.set(propName, inferredType);
                   }
@@ -848,7 +874,7 @@ export const vuexPiniaSetupTransform: Transform = (
 
         // Step 2: Extract getters and convert to computed()
         const gettersProp = properties.find(
-          (p: any) => p.key && p.key.name === "getters",
+          (p: any) => p.key && p.key.name === "getters"
         );
         if (
           gettersProp &&
@@ -861,164 +887,172 @@ export const vuexPiniaSetupTransform: Transform = (
               if (getterProp && getterProp.key) {
                 const getterName = getterProp.key.name || getterProp.key.value;
                 if (getterName) {
-                  localComputedProperties.add(getterName);
-                  computedProperties.add(getterName);
-                  returnProperties.push(getterName);
+                  // Check if this getter name conflicts with a state property
+                  const conflictsWithState = stateProperties.has(getterName);
+
+                  // If it conflicts, check if the getter is just returning state.xxx
+                  // If so, we can skip it and use the state property directly
+                  let shouldSkipGetter = false;
+                  let renamedGetterName = getterName;
 
                   // Handle both ObjectMethod (shorthand) and ObjectProperty (with value)
                   let getterValue: any = null;
-                  let getterBody: any = null;
-                  let isArrowExpression = false;
-
                   if (getterProp.type === "ObjectMethod") {
-                    // Shorthand method: doubleCount(state) { ... }
                     getterValue = getterProp;
-                    getterBody = getterProp.body;
                   } else if (getterProp.value) {
-                    // Property with value: doubleCount: function(state) { ... } or (state) => state.count * 2
                     getterValue = getterProp.value;
-                    if (
-                      getterValue.type === "FunctionExpression" ||
-                      getterValue.type === "ArrowFunctionExpression"
-                    ) {
-                      getterBody = getterValue.body;
-                      // Check if it's an arrow function with expression body (not block)
-                      if (
-                        getterValue.type === "ArrowFunctionExpression" &&
-                        getterBody.type !== "BlockStatement"
-                      ) {
-                        isArrowExpression = true;
-                      }
-                    } else if (getterValue.type === "ObjectMethod") {
-                      getterBody = getterValue.body;
-                    }
                   }
 
-                  if (!getterBody) {
-                    // Create a placeholder computed if body is missing
-                    setupStatements.push(
-                      j.variableDeclaration("const", [
-                        j.variableDeclarator(
-                          j.identifier(getterName),
-                          j.callExpression(j.identifier("computed"), [
-                            j.arrowFunctionExpression(
-                              [],
-                              j.identifier("undefined"),
-                            ),
-                          ]),
-                        ),
-                      ]),
+                  if (conflictsWithState && getterValue) {
+                    const getterCode = j(getterValue).toSource();
+                    // Check if getter is just: (state) => state.getterName
+                    const simpleReturnPattern = new RegExp(
+                      `\\(state\\)\\s*=>\\s*state\\.${getterName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`
                     );
-                    imports.add("computed");
-                    return;
-                  }
-
-                  // Extract return statement from getter body
-                  let returnExpression: any = null;
-
-                  if (isArrowExpression) {
-                    // Arrow function with expression body: (state) => state.count * 2
-                    returnExpression = getterBody;
-                  } else if (
-                    getterBody.type === "BlockStatement" &&
-                    getterBody.body
-                  ) {
-                    const returnStmt = getterBody.body.find(
-                      (stmt: any) => stmt && stmt.type === "ReturnStatement",
-                    );
-                    if (returnStmt && returnStmt.argument) {
-                      returnExpression = returnStmt.argument;
+                    if (simpleReturnPattern.test(getterCode)) {
+                      // Simple getter that just returns state - skip it, use state directly
+                      shouldSkipGetter = true;
+                    } else {
+                      // Complex getter with same name as state - rename it
+                      renamedGetterName = `${getterName}Computed`;
+                      getterRenames.set(getterName, renamedGetterName);
                     }
+                  } else if (conflictsWithState) {
+                    // If we can't determine, rename to be safe
+                    renamedGetterName = `${getterName}Computed`;
+                    getterRenames.set(getterName, renamedGetterName);
                   }
 
-                  // Transform state references in the return expression
-                  if (returnExpression) {
-                    const returnCode = j(returnExpression).toSource();
-                    let transformedCode = returnCode;
+                  if (!shouldSkipGetter) {
+                    localComputedProperties.add(renamedGetterName);
+                    computedProperties.add(renamedGetterName);
+                    if (!returnProperties.includes(renamedGetterName)) {
+                      returnProperties.push(renamedGetterName);
+                    }
 
-                    // Replace state references - handle nested properties first
-                    // Process in order: longest matches first (nested properties), then simple properties
-                    const sortedProps = Array.from(
-                      stateProperties.entries(),
-                    ).sort((a, b) => {
-                      // Sort by depth (objects first, then refs)
-                      if (a[1].isObject && !b[1].isObject) return -1;
-                      if (!a[1].isObject && b[1].isObject) return 1;
-                      return 0;
-                    });
+                    let getterBody: any = null;
+                    let isArrowExpression = false;
 
-                    sortedProps.forEach(([propName, info]) => {
-                      // Escape propName for regex
-                      const escapedName = propName.replace(
-                        /[.*+?^${}()|[\]\\]/g,
-                        "\\$&",
-                      );
-
-                      if (info.isObject) {
-                        // For reactive objects: state.user.name → user.name, state.user.preferences.theme → user.preferences.theme
-                        // Match state.propName.anything (including deeply nested) - match the longest path first
-                        // Pattern: state.propName.anything (at least one dot after propName)
-                        const nestedPattern = new RegExp(
-                          `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
-                          "g",
-                        );
-                        transformedCode = transformedCode.replace(
-                          nestedPattern,
-                          (match: string) => {
-                            // Remove 'state.' prefix
-                            return match.replace(/^state\./, "");
-                          },
-                        );
-                        // Also handle direct state.user → user (must come after nested to avoid double replacement)
-                        // Match state.user not followed by a dot (end of property access)
-                        transformedCode = transformedCode.replace(
-                          new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
-                          propName,
-                        );
-                      } else {
-                        // For refs: state.count → count.value, state.items → items.value
-                        // Must match state.items.length, state.items.push, etc.
-                        // Match state.items followed by a dot (method/property access)
-                        transformedCode = transformedCode.replace(
-                          new RegExp(`state\\.${escapedName}\\.`, "g"),
-                          `${propName}.value.`,
-                        );
-                        // Also match state.items at end of expression
-                        transformedCode = transformedCode.replace(
-                          new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
-                          `${propName}.value`,
-                        );
-                      }
-                    });
-
-                    // Parse back to AST
-                    try {
-                      // Wrap in parentheses to ensure it's parsed as an expression
-                      const wrappedCode = `(${transformedCode})`;
-                      const exprRoot = j(wrappedCode);
-                      const program = exprRoot.find(j.Program).paths()[0];
+                    if (getterValue) {
                       if (
-                        program &&
-                        program.value.body &&
-                        program.value.body.length > 0
+                        getterValue.type === "FunctionExpression" ||
+                        getterValue.type === "ArrowFunctionExpression"
                       ) {
-                        const firstStmt = program.value.body[0];
-                        if (firstStmt.type === "ExpressionStatement") {
-                          const expr = firstStmt.expression;
-                          // Unwrap if it's a parenthesized expression
-                          if (expr.type === "ParenthesizedExpression") {
-                            returnExpression = expr.expression;
-                          } else {
-                            returnExpression = expr;
-                          }
-                        } else {
-                          returnExpression = firstStmt;
+                        getterBody = getterValue.body;
+                        // Check if it's an arrow function with expression body (not block)
+                        if (
+                          getterValue.type === "ArrowFunctionExpression" &&
+                          getterBody.type !== "BlockStatement"
+                        ) {
+                          isArrowExpression = true;
                         }
+                      } else if (getterValue.type === "ObjectMethod") {
+                        getterBody = getterValue.body;
                       }
-                    } catch (e) {
-                      // If parsing fails, try parsing the transformed code directly as an expression
+                    }
+
+                    if (!getterBody) {
+                      // Create a placeholder computed if body is missing
+                      setupStatements.push(
+                        j.variableDeclaration("const", [
+                          j.variableDeclarator(
+                            j.identifier(renamedGetterName),
+                            j.callExpression(j.identifier("computed"), [
+                              j.arrowFunctionExpression(
+                                [],
+                                j.identifier("undefined")
+                              ),
+                            ])
+                          ),
+                        ])
+                      );
+                      imports.add("computed");
+                      return;
+                    }
+
+                    // Extract return statement from getter body
+                    let returnExpression: any = null;
+
+                    if (isArrowExpression) {
+                      // Arrow function with expression body: (state) => state.count * 2
+                      returnExpression = getterBody;
+                    } else if (
+                      getterBody.type === "BlockStatement" &&
+                      getterBody.body
+                    ) {
+                      const returnStmt = getterBody.body.find(
+                        (stmt: any) => stmt && stmt.type === "ReturnStatement"
+                      );
+                      if (returnStmt && returnStmt.argument) {
+                        returnExpression = returnStmt.argument;
+                      }
+                    }
+
+                    // Transform state references in the return expression
+                    if (returnExpression) {
+                      const returnCode = j(returnExpression).toSource();
+                      let transformedCode = returnCode;
+
+                      // Replace state references - handle nested properties first
+                      // Process in order: longest matches first (nested properties), then simple properties
+                      const sortedProps = Array.from(
+                        stateProperties.entries()
+                      ).sort((a, b) => {
+                        // Sort by depth (objects first, then refs)
+                        if (a[1].isObject && !b[1].isObject) return -1;
+                        if (!a[1].isObject && b[1].isObject) return 1;
+                        return 0;
+                      });
+
+                      sortedProps.forEach(([propName, info]) => {
+                        // Escape propName for regex
+                        const escapedName = propName.replace(
+                          /[.*+?^${}()|[\]\\]/g,
+                          "\\$&"
+                        );
+
+                        if (info.isObject) {
+                          // For reactive objects: state.user.name → user.name, state.user.preferences.theme → user.preferences.theme
+                          // Match state.propName.anything (including deeply nested) - match the longest path first
+                          // Pattern: state.propName.anything (at least one dot after propName)
+                          const nestedPattern = new RegExp(
+                            `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
+                            "g"
+                          );
+                          transformedCode = transformedCode.replace(
+                            nestedPattern,
+                            (match: string) => {
+                              // Remove 'state.' prefix
+                              return match.replace(/^state\./, "");
+                            }
+                          );
+                          // Also handle direct state.user → user (must come after nested to avoid double replacement)
+                          // Match state.user not followed by a dot (end of property access)
+                          transformedCode = transformedCode.replace(
+                            new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
+                            propName
+                          );
+                        } else {
+                          // For refs: state.count → count.value, state.items → items.value
+                          // Must match state.items.length, state.items.push, etc.
+                          // Match state.items followed by a dot (method/property access)
+                          transformedCode = transformedCode.replace(
+                            new RegExp(`state\\.${escapedName}\\.`, "g"),
+                            `${propName}.value.`
+                          );
+                          // Also match state.items at end of expression
+                          transformedCode = transformedCode.replace(
+                            new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
+                            `${propName}.value`
+                          );
+                        }
+                      });
+
+                      // Parse back to AST
                       try {
-                        const exprRoot = j(`(${transformedCode})`);
+                        // Wrap in parentheses to ensure it's parsed as an expression
+                        const wrappedCode = `(${transformedCode})`;
+                        const exprRoot = j(wrappedCode);
                         const program = exprRoot.find(j.Program).paths()[0];
                         if (
                           program &&
@@ -1028,44 +1062,68 @@ export const vuexPiniaSetupTransform: Transform = (
                           const firstStmt = program.value.body[0];
                           if (firstStmt.type === "ExpressionStatement") {
                             const expr = firstStmt.expression;
+                            // Unwrap if it's a parenthesized expression
                             if (expr.type === "ParenthesizedExpression") {
                               returnExpression = expr.expression;
                             } else {
                               returnExpression = expr;
                             }
+                          } else {
+                            returnExpression = firstStmt;
                           }
                         }
-                      } catch (e2) {
-                        // Keep original if parsing fails
+                      } catch (e) {
+                        // If parsing fails, try parsing the transformed code directly as an expression
+                        try {
+                          const exprRoot = j(`(${transformedCode})`);
+                          const program = exprRoot.find(j.Program).paths()[0];
+                          if (
+                            program &&
+                            program.value.body &&
+                            program.value.body.length > 0
+                          ) {
+                            const firstStmt = program.value.body[0];
+                            if (firstStmt.type === "ExpressionStatement") {
+                              const expr = firstStmt.expression;
+                              if (expr.type === "ParenthesizedExpression") {
+                                returnExpression = expr.expression;
+                              } else {
+                                returnExpression = expr;
+                              }
+                            }
+                          }
+                        } catch (e2) {
+                          // Keep original if parsing fails
+                        }
                       }
                     }
-                  }
 
-                  // Always create computed - use transformed expression or fallback
-                  const finalExpression =
-                    returnExpression || j.identifier("undefined");
+                    // Always create computed - use transformed expression or fallback
+                    const finalExpression =
+                      returnExpression || j.identifier("undefined");
 
-                  // Infer return type for TypeScript
-                  if (enableTypeScript && returnExpression) {
-                    const returnType = inferTypeFromAST(returnExpression);
-                    if (returnType && returnType !== "any") {
-                      computedReturnTypes.set(getterName, returnType);
+                    // Infer return type for TypeScript
+                    if (enableTypeScript && returnExpression) {
+                      const returnType = inferTypeFromAST(returnExpression);
+                      if (returnType && returnType !== "any") {
+                        computedReturnTypes.set(renamedGetterName, returnType);
+                      }
                     }
-                  }
 
-                  const arrowFn = j.arrowFunctionExpression(
-                    [],
-                    finalExpression,
-                  );
-                  setupStatements.push(
-                    j.variableDeclaration("const", [
-                      j.variableDeclarator(
-                        j.identifier(getterName),
-                        j.callExpression(j.identifier("computed"), [arrowFn]),
-                      ),
-                    ]),
-                  );
-                  imports.add("computed");
+                    const arrowFn = j.arrowFunctionExpression(
+                      [],
+                      finalExpression
+                    );
+                    setupStatements.push(
+                      j.variableDeclaration("const", [
+                        j.variableDeclarator(
+                          j.identifier(renamedGetterName),
+                          j.callExpression(j.identifier("computed"), [arrowFn])
+                        ),
+                      ])
+                    );
+                    imports.add("computed");
+                  }
                 }
               }
             });
@@ -1075,7 +1133,7 @@ export const vuexPiniaSetupTransform: Transform = (
 
         // Step 3: Extract mutations and convert to functions
         const mutationsProp = properties.find(
-          (p: any) => p.key && p.key.name === "mutations",
+          (p: any) => p.key && p.key.name === "mutations"
         );
         if (
           mutationsProp &&
@@ -1135,7 +1193,7 @@ export const vuexPiniaSetupTransform: Transform = (
                 transformedBody = transformStateReferencesInBody(
                   j,
                   mutBody,
-                  stateProperties,
+                  stateProperties
                 );
               }
 
@@ -1143,8 +1201,8 @@ export const vuexPiniaSetupTransform: Transform = (
                 j.functionDeclaration(
                   j.identifier(mutName),
                   newParams,
-                  transformedBody || j.blockStatement([]),
-                ),
+                  transformedBody || j.blockStatement([])
+                )
               );
             });
           }
@@ -1153,7 +1211,7 @@ export const vuexPiniaSetupTransform: Transform = (
 
         // Step 4: Extract actions and convert to functions
         const actionsProp = properties.find(
-          (p: any) => p.key && p.key.name === "actions",
+          (p: any) => p.key && p.key.name === "actions"
         );
         if (
           actionsProp &&
@@ -1231,13 +1289,13 @@ export const vuexPiniaSetupTransform: Transform = (
                 transformedBody = transformCommitCalls(
                   j,
                   actionBody,
-                  localFunctionNames,
+                  localFunctionNames
                 );
                 // Then transform state references
                 transformedBody = transformStateReferencesInBody(
                   j,
                   transformedBody,
-                  stateProperties,
+                  stateProperties
                 );
               }
 
@@ -1245,8 +1303,8 @@ export const vuexPiniaSetupTransform: Transform = (
                 j.functionDeclaration(
                   j.identifier(actionName),
                   cleanedParams,
-                  transformedBody || j.blockStatement([]),
-                ),
+                  transformedBody || j.blockStatement([])
+                )
               );
             });
           }
@@ -1254,17 +1312,35 @@ export const vuexPiniaSetupTransform: Transform = (
         }
 
         // Step 5: Create return statement
-        const returnPropertiesAST = returnProperties.map((name) =>
-          j.property("init", j.identifier(name), j.identifier(name)),
-        );
+        // Map original getter names to renamed names in return
+        const returnPropertiesAST = returnProperties.map((name: string) => {
+          // Check if this is a renamed getter that should use original name in return
+          let originalName: string | undefined;
+          for (const [orig, renamed] of getterRenames.entries()) {
+            if (renamed === name) {
+              originalName = orig;
+              break;
+            }
+          }
+
+          if (originalName) {
+            // Return with original name pointing to renamed variable
+            return j.property(
+              "init",
+              j.identifier(originalName),
+              j.identifier(name)
+            );
+          }
+          return j.property("init", j.identifier(name), j.identifier(name));
+        });
         setupStatements.push(
-          j.returnStatement(j.objectExpression(returnPropertiesAST)),
+          j.returnStatement(j.objectExpression(returnPropertiesAST))
         );
 
         // Step 6: Create setup function and defineStore call
         const setupFunction = j.arrowFunctionExpression(
           [],
-          j.blockStatement(setupStatements),
+          j.blockStatement(setupStatements)
         );
         const storeId = j.literal(storeName);
         const defineStoreCall = j.callExpression(j.identifier("defineStore"), [
@@ -1286,11 +1362,11 @@ export const vuexPiniaSetupTransform: Transform = (
   // Add imports for ref, reactive, computed
   if (hasChanges && imports.size > 0) {
     const importSpecifiers = Array.from(imports).map((imp) =>
-      j.importSpecifier(j.identifier(imp)),
+      j.importSpecifier(j.identifier(imp))
     );
     const importStatement = j.importDeclaration(
       importSpecifiers,
-      j.literal("vue"),
+      j.literal("vue")
     );
 
     // Check if pinia import exists, add vue import before it
@@ -1359,7 +1435,7 @@ export const vuexPiniaSetupTransform: Transform = (
         hasPiniaImport = true;
         const specifiers = path.value.specifiers || [];
         const hasDefineStore = specifiers.some(
-          (s: any) => s.imported && s.imported.name === "defineStore",
+          (s: any) => s.imported && s.imported.name === "defineStore"
         );
         if (!hasDefineStore) {
           specifiers.push(j.importSpecifier(j.identifier("defineStore")));
@@ -1371,7 +1447,7 @@ export const vuexPiniaSetupTransform: Transform = (
     if (!hasPiniaImport) {
       const importStatement = j.importDeclaration(
         [j.importSpecifier(j.identifier("defineStore"))],
-        j.literal("pinia"),
+        j.literal("pinia")
       );
       const program = root.get().node.program;
       if (program && program.body) {
@@ -1419,7 +1495,7 @@ export const vuexPiniaSetupTransform: Transform = (
 function transformStateReferencesInExpression(
   j: any,
   expression: any,
-  stateProperties: Map<string, { isObject: boolean; value: any }>,
+  stateProperties: Map<string, { isObject: boolean; value: any }>
 ): any {
   if (!expression) return expression;
 
@@ -1444,28 +1520,28 @@ function transformStateReferencesInExpression(
       // For reactive objects: state.user.name → user.name
       const nestedPattern = new RegExp(
         `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
-        "g",
+        "g"
       );
       transformedCode = transformedCode.replace(
         nestedPattern,
         (match: string) => {
           return match.replace(/^state\./, "");
-        },
+        }
       );
       // Also handle direct state.user → user
       transformedCode = transformedCode.replace(
         new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
-        propName,
+        propName
       );
     } else {
       // For refs: state.count → count.value
       transformedCode = transformedCode.replace(
         new RegExp(`state\\.${escapedName}\\.`, "g"),
-        `${propName}.value.`,
+        `${propName}.value.`
       );
       transformedCode = transformedCode.replace(
         new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
-        `${propName}.value`,
+        `${propName}.value`
       );
     }
   });
@@ -1498,7 +1574,7 @@ function transformStateReferencesInExpression(
 function transformStateReferencesInBody(
   j: any,
   body: any,
-  stateProperties: Map<string, { isObject: boolean; value: any }>,
+  stateProperties: Map<string, { isObject: boolean; value: any }>
 ): any {
   if (!body || body.type !== "BlockStatement") return body;
 
@@ -1525,20 +1601,20 @@ function transformStateReferencesInBody(
       // Pattern: state.propName.anything (at least one dot after propName)
       const nestedPattern = new RegExp(
         `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
-        "g",
+        "g"
       );
       transformedCode = transformedCode.replace(
         nestedPattern,
         (match: string) => {
           // Remove 'state.' prefix
           return match.replace(/^state\./, "");
-        },
+        }
       );
       // Also handle direct state.user → user (must come after nested to avoid double replacement)
       // Match state.user not followed by a dot (end of property access)
       transformedCode = transformedCode.replace(
         new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
-        propName,
+        propName
       );
     } else {
       // For refs: state.count → count.value, state.items → items.value
@@ -1546,12 +1622,12 @@ function transformStateReferencesInBody(
       // Match state.items followed by a dot (method/property access)
       transformedCode = transformedCode.replace(
         new RegExp(`state\\.${escapedName}\\.`, "g"),
-        `${propName}.value.`,
+        `${propName}.value.`
       );
       // Also match state.items at end of expression
       transformedCode = transformedCode.replace(
         new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
-        `${propName}.value`,
+        `${propName}.value`
       );
     }
   });
@@ -1577,7 +1653,7 @@ function transformStateReferencesInBody(
         }
       });
       return j.blockStatement(
-        cleanedStatements.length > 0 ? cleanedStatements : body.body,
+        cleanedStatements.length > 0 ? cleanedStatements : body.body
       );
     }
   } catch (e) {
@@ -1594,7 +1670,7 @@ function transformStateReferencesInBody(
 function transformCommitCalls(
   j: any,
   body: any,
-  functionNames: Set<string>,
+  functionNames: Set<string>
 ): any {
   if (!body || body.type !== "BlockStatement") return body;
 
@@ -1610,19 +1686,19 @@ function transformCommitCalls(
     // Match: commit('FUNC_NAME', payload) - with payload
     const commitWithPayload = new RegExp(
       `commit\\s*\\(\\s*['"]${escapedName}['"]\\s*,\\s*([^)]+)\\)`,
-      "g",
+      "g"
     );
     transformedCode = transformedCode.replace(
       commitWithPayload,
       (_match: string, payload: string) => {
         return `${funcName}(${payload.trim()})`;
-      },
+      }
     );
 
     // Match: commit('FUNC_NAME') - without payload
     const commitWithoutPayload = new RegExp(
       `commit\\s*\\(\\s*['"]${escapedName}['"]\\s*\\)`,
-      "g",
+      "g"
     );
     transformedCode = transformedCode.replace(commitWithoutPayload, () => {
       return `${funcName}()`;
@@ -1650,7 +1726,7 @@ function transformCommitCalls(
         }
       });
       return j.blockStatement(
-        cleanedStatements.length > 0 ? cleanedStatements : body.body,
+        cleanedStatements.length > 0 ? cleanedStatements : body.body
       );
     }
   } catch (e) {
@@ -1673,7 +1749,7 @@ function addTypeScriptTypesToStore(
     statePropertyTypes?: Record<string, string>;
     computedReturnTypes?: Record<string, string>;
     objectPropertyDetails?: Record<string, any>;
-  },
+  }
 ): string {
   let result = code;
 
@@ -1719,7 +1795,7 @@ function addTypeScriptTypesToStore(
             context.objectPropertyDetails[propName]
           ) {
             objectProperties = extractObjectProperties(
-              context.objectPropertyDetails[propName],
+              context.objectPropertyDetails[propName]
             );
           }
 
@@ -1731,7 +1807,7 @@ function addTypeScriptTypesToStore(
         } else {
           interfaceProps.push(`  ${propName}: ${propType};`);
         }
-      },
+      }
     );
 
     // Generate interfaces for arrays and objects
@@ -1757,7 +1833,7 @@ function addTypeScriptTypesToStore(
     const allInterfaces: string[] = [];
     if (interfaceProps.length > 0) {
       allInterfaces.push(
-        `interface StoreState {\n${interfaceProps.join("\n")}\n}`,
+        `interface StoreState {\n${interfaceProps.join("\n")}\n}`
       );
     }
     if (arrayInterfaceCodes.length > 0) {
@@ -1804,7 +1880,7 @@ function addTypeScriptTypesToStore(
     // Handle both single and double quotes in the code
     const refPattern = new RegExp(
       `(const\\s+${escapedProp}\\s*=\\s*ref)(\\()([^)]+)(\\))`,
-      "g",
+      "g"
     );
 
     // Use replace with a function to handle each match
@@ -1832,7 +1908,7 @@ function addTypeScriptTypesToStore(
 
         // Correct format: ref<number>(value) not ref(<number>value)
         return `${before}<${type}>${openParen}${value}${closeParen}`;
-      },
+      }
     );
   });
 
@@ -1843,7 +1919,7 @@ function addTypeScriptTypesToStore(
     const escapedProp = prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const computedPattern = new RegExp(
       `(const\\s+${escapedProp}\\s*=\\s*computed)(\\()([^)]+)(\\))`,
-      "g",
+      "g"
     );
     result = result.replace(
       computedPattern,
@@ -1852,7 +1928,7 @@ function addTypeScriptTypesToStore(
         const returnType = context.computedReturnTypes?.[prop] || "any";
         // Correct format: computed<number>(() => ...) not computed(<number>() => ...)
         return `${before}<${returnType}>${openParen}${fn}${closeParen}`;
-      },
+      }
     );
   });
 
@@ -1866,7 +1942,7 @@ function addTypeScriptTypesToStore(
     // Fix: capture the entire function declaration including the opening brace
     const functionPattern = new RegExp(
       `(function\\s+${escapedFuncName}\\s*\\(([^)]*)\\)\\s*\\{)`,
-      "g",
+      "g"
     );
 
     // Find and replace function declarations
@@ -1900,7 +1976,7 @@ function addTypeScriptTypesToStore(
     // Match: const functionName = (param1, param2) => {
     const arrowPattern = new RegExp(
       `(const\\s+${escapedFuncName}\\s*=\\s*\\(([^)]*)\\)\\s*=>\\s*\\{)`,
-      "g",
+      "g"
     );
     result = result.replace(arrowPattern, (_match, paramList) => {
       let typedParams = paramList;

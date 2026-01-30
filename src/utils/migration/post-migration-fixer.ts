@@ -15,10 +15,173 @@ export interface FixResult {
  * - Makes functions async if they use await
  * - Removes Vuex imports
  */
+/**
+ * Analyze Pinia stores to build a dynamic map of methods/getters → store modules
+ * This makes store detection generic for any project
+ */
+async function analyzePiniaStores(
+  projectRoot: string,
+): Promise<Map<string, string>> {
+  const methodToStoreMap = new Map<string, string>();
+  
+  try {
+    // Find all store files in src/store/modules/
+    const storeModulesPath = path.join(projectRoot, "src", "store", "modules");
+    
+    try {
+      const storeFiles = await fs.readdir(storeModulesPath);
+      
+      for (const storeFile of storeFiles) {
+        if (!storeFile.endsWith('.js') && !storeFile.endsWith('.ts')) {
+          continue;
+        }
+        
+        const storeFilePath = path.join(storeModulesPath, storeFile);
+        const storeContent = await fs.readFile(storeFilePath, 'utf-8');
+        
+        // Extract module name from filename (e.g., 'user.js' → 'user')
+        const moduleName = storeFile.replace(/\.(js|ts)$/, '');
+        
+        // Extract store name from export: export const useUserStore = ...
+        const storeNameMatch = storeContent.match(/export\s+const\s+(use\w+Store)\s*=/);
+        if (!storeNameMatch) continue;
+        
+        // Extract all methods/getters from the return statement
+        // Pattern: return { method1, method2, getter1, ... } or return { prop1: value1, prop2: value2 }
+        // Match return statement that closes the defineStore function
+        const returnMatch = storeContent.match(/return\s*\{([\s\S]+?)\}\s*;?\s*\}\)/);
+        if (!returnMatch) {
+          // Try simpler pattern: return { ... };
+          const simpleReturnMatch = storeContent.match(/return\s*\{([\s\S]+?)\}\s*;/);
+          if (simpleReturnMatch) {
+            const returnContent = simpleReturnMatch[1];
+            
+            // Extract property names from return object
+            // Pattern 1: methodName, (shorthand)
+            // Pattern 2: methodName: variableName, (with alias)
+            // Pattern 3: methodName: computedValue, (computed property)
+            const propertyPattern = /(\w+)(?:\s*:\s*(\w+))?/g;
+            let propMatch;
+            while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
+              const exportedName = propMatch[2] || propMatch[1]; // Use alias if present, otherwise original name
+              const internalName = propMatch[1];
+              
+              // Skip common Vue/Pinia keywords and internal variables
+              if (!['ref', 'reactive', 'computed', 'watch', 'onMounted', 'onUnmounted', 'undefined', 'null'].includes(exportedName)) {
+                // Map both the exported name and internal name to the module
+                methodToStoreMap.set(exportedName, moduleName);
+                if (internalName !== exportedName) {
+                  methodToStoreMap.set(internalName, moduleName);
+                }
+              }
+            }
+          }
+        } else {
+          const returnContent = returnMatch[1];
+          
+          // Extract property names from return object
+          const propertyPattern = /(\w+)(?:\s*:\s*(\w+))?/g;
+          let propMatch;
+          while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
+            const exportedName = propMatch[2] || propMatch[1];
+            const internalName = propMatch[1];
+            
+            if (!['ref', 'reactive', 'computed', 'watch', 'onMounted', 'onUnmounted', 'undefined', 'null'].includes(exportedName)) {
+              methodToStoreMap.set(exportedName, moduleName);
+              if (internalName !== exportedName) {
+                methodToStoreMap.set(internalName, moduleName);
+              }
+            }
+          }
+        }
+        
+        // Also extract function declarations directly in the store
+        // Pattern: function methodName(...) { ... }
+        const functionPattern = /function\s+(\w+)\s*\(/g;
+        let funcMatch;
+        while ((funcMatch = functionPattern.exec(storeContent)) !== null) {
+          const funcName = funcMatch[1];
+          // Skip internal functions (usually uppercase like SET_USER)
+          if (!funcName.match(/^[A-Z_]+$/)) {
+            methodToStoreMap.set(funcName, moduleName);
+          }
+        }
+        
+        // Extract const declarations that are methods
+        // Pattern: const methodName = (...) => { ... } or const methodName = async (...) => { ... }
+        const constMethodPattern = /const\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/g;
+        let constMatch;
+        while ((constMatch = constMethodPattern.exec(storeContent)) !== null) {
+          const methodName = constMatch[1];
+          methodToStoreMap.set(methodName, moduleName);
+        }
+        
+        // Extract computed properties
+        // Pattern: const computedName = computed(() => ...)
+        const computedPattern = /const\s+(\w+)\s*=\s*computed\s*\(/g;
+        let computedMatch;
+        while ((computedMatch = computedPattern.exec(storeContent)) !== null) {
+          const computedName = computedMatch[1];
+          methodToStoreMap.set(computedName, moduleName);
+        }
+      }
+    } catch (error) {
+      // If store/modules directory doesn't exist, try alternative paths
+      // Try src/stores/ (Pinia plural convention)
+      const storesPath = path.join(projectRoot, "src", "stores");
+      try {
+        const storeFiles = await fs.readdir(storesPath);
+        for (const storeFile of storeFiles) {
+          if (!storeFile.endsWith('.js') && !storeFile.endsWith('.ts')) {
+            continue;
+          }
+          const storeFilePath = path.join(storesPath, storeFile);
+          const storeContent = await fs.readFile(storeFilePath, 'utf-8');
+          const moduleName = storeFile.replace(/\.(js|ts)$/, '').replace(/\.store$/, '');
+          
+          // Same extraction logic as above
+          const returnMatch = storeContent.match(/return\s*\{([^}]+)\}/s);
+          if (returnMatch) {
+            const returnContent = returnMatch[1];
+            const propertyPattern = /(\w+)(?:\s*:\s*\w+)?/g;
+            let propMatch;
+            while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
+              const propName = propMatch[1];
+              if (!['ref', 'reactive', 'computed', 'watch'].includes(propName)) {
+                methodToStoreMap.set(propName, moduleName);
+              }
+            }
+          }
+          
+          const functionPattern = /function\s+(\w+)\s*\(/g;
+          let funcMatch;
+          while ((funcMatch = functionPattern.exec(storeContent)) !== null) {
+            const funcName = funcMatch[1];
+            if (!funcName.match(/^[A-Z_]+$/)) {
+              methodToStoreMap.set(funcName, moduleName);
+            }
+          }
+        }
+      } catch (altError) {
+        // If both paths fail, return empty map (fallback to hardcoded map)
+      }
+    }
+  } catch (error) {
+    // If analysis fails, return empty map (will fallback to hardcoded map)
+  }
+  
+  return methodToStoreMap;
+}
+
+// Cache for store analysis to avoid re-analyzing on every file
+let storeAnalysisCache: Map<string, string> | null = null;
+let storeAnalysisProjectRoot: string | null = null;
+
 export async function fixPostMigrationIssues(
   filePath: string,
   content: string,
   enableTypeScript: boolean = false,
+  projectRoot?: string,
 ): Promise<FixResult> {
   const result: FixResult = {
     fixed: false,
@@ -114,8 +277,8 @@ export async function fixPostMigrationIssues(
       }
     }
 
-    // Fix 2: Remove this. references in <script setup>
-    // In <script setup>, this. references should be removed as they don't work
+    // Fix 2: Handle this.$emit in <script setup>
+    // Convert this.$emit('eventName', ...) to emit('eventName', ...) with defineEmits
     if (fixedContent.includes("<script setup")) {
       const scriptSetupMatch = fixedContent.match(
         /<script\s+setup[^>]*>([\s\S]*?)<\/script>/,
@@ -124,7 +287,48 @@ export async function fixPostMigrationIssues(
         let scriptContent = scriptSetupMatch[1];
         const originalScriptContent = scriptContent;
 
-        // Remove this. references (but keep this.$router, this.$route, etc.)
+        // Find all this.$emit calls and extract event names
+        const emitPattern = /this\.\$emit\(['"]([^'"]+)['"]/g;
+        const eventNames = new Set<string>();
+        let match;
+        while ((match = emitPattern.exec(scriptContent)) !== null) {
+          eventNames.add(match[1]);
+        }
+
+        // If we found $emit calls, add defineEmits if not present
+        if (eventNames.size > 0) {
+          // Check if defineEmits already exists
+          const hasDefineEmits = /const\s+emit\s*=\s*defineEmits/.test(scriptContent);
+          
+          if (!hasDefineEmits) {
+            // Create defineEmits with all event names
+            const eventsArray = Array.from(eventNames).map(e => `'${e}'`).join(', ');
+            const defineEmitsLine = `const emit = defineEmits([${eventsArray}]);\n`;
+            
+            // Insert after imports and before other code
+            const importMatch = scriptContent.match(/(import\s+[^;]+;?\s*\n*)+/);
+            if (importMatch) {
+              const insertIndex = importMatch[0].length;
+              scriptContent = scriptContent.substring(0, insertIndex) + 
+                            defineEmitsLine + 
+                            scriptContent.substring(insertIndex);
+            } else {
+              // No imports, add at the beginning
+              scriptContent = defineEmitsLine + scriptContent;
+            }
+            
+            result.fixed = true;
+            result.fixes.push(`Added defineEmits for events: ${Array.from(eventNames).join(', ')}`);
+          }
+
+          // Replace this.$emit('eventName', ...) with emit('eventName', ...)
+          scriptContent = scriptContent.replace(
+            /this\.\$emit\((['"][^'"]+['"])/g,
+            'emit($1'
+          );
+        }
+
+        // Remove other this. references (but keep this.$router, this.$route, etc.)
         // Pattern: this.methodName() or this.property
 
         // First, replace this.methodName() with just methodName()
@@ -132,10 +336,11 @@ export async function fixPostMigrationIssues(
         scriptContent = scriptContent.replace(
           /this\.([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g,
           (match, methodName) => {
-            // Don't replace Vue router/route special properties
+            // Don't replace Vue router/route special properties or $emit (already handled)
             if (
               methodName === "$router" ||
               methodName === "$route" ||
+              methodName === "$emit" ||
               methodName.startsWith("$")
             ) {
               return match;
@@ -168,7 +373,9 @@ export async function fixPostMigrationIssues(
             `$1${scriptContent}$3`,
           );
           result.fixed = true;
-          result.fixes.push("Removed this. references from <script setup>");
+          if (!result.fixes.some(f => f.includes('defineEmits'))) {
+            result.fixes.push("Removed this. references from <script setup>");
+          }
         }
       }
     }
@@ -223,6 +430,90 @@ export async function fixPostMigrationIssues(
         result.fixes.push("Made lifecycle hooks async where await is used");
       }
     }
+
+    // Fix 3b: Make regular functions async if they use await (not just hooks)
+    // Pattern: const functionName = () => { await ... } or function functionName() { await ... }
+    if (fixedContent.includes("<script setup") || fixedContent.includes("<script>")) {
+      const scriptMatch = fixedContent.match(
+        /<script[^>]*>([\s\S]*?)<\/script>/,
+      );
+      if (scriptMatch) {
+        let scriptContent = scriptMatch[1];
+        const originalScriptContent = scriptContent;
+
+        // Find all functions that contain await but are not async
+        // Pattern 1: const funcName = () => { ... await ... }
+        scriptContent = scriptContent.replace(
+          /(const\s+(\w+)\s*=\s*)(\([^)]*\)\s*=>\s*\{)/g,
+          (match, before, funcName, arrowPart) => {
+            // Check if already async
+            if (before.includes('async')) return match;
+            // Find the function body after this match
+            const matchIndex = scriptContent.indexOf(match);
+            const afterMatch = scriptContent.substring(matchIndex + match.length);
+            // Find the matching closing brace
+            let braceCount = 0;
+            let bodyEnd = 0;
+            for (let i = 0; i < afterMatch.length; i++) {
+              if (afterMatch[i] === '{') braceCount++;
+              if (afterMatch[i] === '}') {
+                braceCount--;
+                if (braceCount === 0) {
+                  bodyEnd = i + 1;
+                  break;
+                }
+              }
+            }
+            const functionBody = afterMatch.substring(0, bodyEnd);
+            // Check if body contains await
+            if (functionBody.includes('await')) {
+              return before + 'async ' + arrowPart;
+            }
+            return match;
+          }
+        );
+
+        // Pattern 2: function funcName() { ... await ... }
+        scriptContent = scriptContent.replace(
+          /(function\s+(\w+)\s*\([^)]*\)\s*\{)/g,
+          (match, funcDecl, funcName) => {
+            // Check if already async
+            if (funcDecl.includes('async')) return match;
+            // Find the function body
+            const matchIndex = scriptContent.indexOf(match);
+            const afterMatch = scriptContent.substring(matchIndex + match.length);
+            // Find the matching closing brace
+            let braceCount = 0;
+            let bodyEnd = 0;
+            for (let i = 0; i < afterMatch.length; i++) {
+              if (afterMatch[i] === '{') braceCount++;
+              if (afterMatch[i] === '}') {
+                braceCount--;
+                if (braceCount === 0) {
+                  bodyEnd = i + 1;
+                  break;
+                }
+              }
+            }
+            const functionBody = afterMatch.substring(0, bodyEnd);
+            // Check if body contains await
+            if (functionBody.includes('await')) {
+              return funcDecl.replace(/function\s+/, 'async function ');
+            }
+            return match;
+          }
+        );
+
+        if (scriptContent !== originalScriptContent) {
+          fixedContent = fixedContent.replace(
+            /(<script[^>]*>)([\s\S]*?)(<\/script>)/,
+            `$1${scriptContent}$3`,
+          );
+          result.fixed = true;
+          result.fixes.push("Made functions async where await is used");
+        }
+      }
+    }
   }
 
   // Fix 4: Remove Vuex imports (always, not just if Pinia is used)
@@ -243,7 +534,7 @@ export async function fixPostMigrationIssues(
     result.fixes.push("Removed Vuex named imports");
   }
 
-  // Fix 5: Remove store import from main.js if it exists
+  // Fix 5: Fix createApp syntax in main.js/main.ts
   if (filePath.includes("main.js") || filePath.includes("main.ts")) {
     // Remove import store from "./store"
     const storeImportPattern =
@@ -254,7 +545,45 @@ export async function fixPostMigrationIssues(
       result.fixes.push("Removed store import from main.js");
     }
 
-    // Remove store from createApp options
+    // Fix incorrect createApp syntax: createApp({ router, render: () => h(App) })
+    // Should be: createApp(App) then app.use(router)
+    const incorrectCreateAppPattern = /const\s+app\s*=\s*createApp\s*\(\s*\{\s*router\s*,\s*render\s*:\s*\(\)\s*=>\s*h\s*\(\s*App\s*\)\s*\}\s*\)/;
+    if (incorrectCreateAppPattern.test(fixedContent)) {
+      // Extract router import if exists
+      const routerImportMatch = fixedContent.match(/import\s+router\s+from\s+['"]([^'"]+)['"]/);
+      const routerPath = routerImportMatch ? routerImportMatch[1] : './router';
+      
+      // Replace with correct syntax
+      fixedContent = fixedContent.replace(
+        incorrectCreateAppPattern,
+        'const app = createApp(App)'
+      );
+      
+      // Ensure router is imported
+      if (!fixedContent.includes('import router')) {
+        const appImportMatch = fixedContent.match(/import\s+App\s+from\s+['"]([^'"]+)['"]/);
+        if (appImportMatch) {
+          const appImportLine = appImportMatch[0];
+          fixedContent = fixedContent.replace(
+            appImportLine,
+            `${appImportLine}\nimport router from '${routerPath}'`
+          );
+        }
+      }
+      
+      // Ensure app.use(router) is called after createApp
+      if (!fixedContent.includes('app.use(router)')) {
+        fixedContent = fixedContent.replace(
+          /(const\s+app\s*=\s*createApp\s*\(\s*App\s*\)\s*;)/,
+          '$1\n\napp.use(router);'
+        );
+      }
+      
+      result.fixed = true;
+      result.fixes.push("Fixed createApp syntax to Vue 3 format");
+    }
+
+    // Remove store from createApp options (legacy pattern)
     const storeInAppPattern =
       /(const\s+app\s*=\s*createApp\([^)]*),\s*store\s*([^)]*\))/;
     if (storeInAppPattern.test(fixedContent)) {
@@ -265,15 +594,115 @@ export async function fixPostMigrationIssues(
   }
 
   // Fix 6: Fix router navigation guards that use router.app.$store
-  // Pattern: router.app.$store.getters[...] or router.app.$store.dispatch(...)
-  const routerStorePattern =
-    /router\.app\.\$store\.(getters|dispatch|state)\[([^\]]+)\]/g;
-  if (routerStorePattern.test(fixedContent)) {
-    result.issues.push(
-      "Found router.app.$store references - these need manual migration to Pinia stores",
-    );
-    // We can't automatically fix this without knowing which store to use
-    // But we can at least detect it
+  // Pattern: router.app.$store.getters['module/getter'] or router.app.$store.getters['user/isAuthenticated']
+  // Transform to: useUserStore().isAuthenticated
+  if (filePath.includes("router") || filePath.includes("Router")) {
+    const routerStorePattern =
+      /router\.app\.\$store\.(getters|dispatch|state)\[['"]([^'"]+)['"]\]/g;
+    const matches = Array.from(fixedContent.matchAll(routerStorePattern));
+    
+    if (matches.length > 0) {
+      const scriptMatch = fixedContent.match(
+        /<script[^>]*>([\s\S]*?)<\/script>/,
+      ) || fixedContent.match(/^([\s\S]*)$/); // For .js files
+      
+      if (scriptMatch) {
+        let scriptContent = scriptMatch[1];
+        const originalScriptContent = scriptContent;
+        const storesToImport = new Map<string, string>(); // module name → store name
+        
+        matches.forEach((match) => {
+          const [, type, path] = match;
+          // Extract module name from path like 'user/isAuthenticated' or 'user'
+          const parts = path.split('/');
+          let moduleName: string;
+          let propertyName: string;
+          
+          if (parts.length === 2) {
+            // Pattern: 'user/isAuthenticated'
+            [moduleName, propertyName] = parts;
+          } else {
+            // Pattern: 'isAuthenticated' - try to infer module from property name
+            propertyName = parts[0];
+            // Common patterns: isAuthenticated, currentUser → user module
+            if (propertyName.includes('user') || propertyName.includes('auth') || propertyName.includes('login')) {
+              moduleName = 'user';
+            } else if (propertyName.includes('product')) {
+              moduleName = 'products';
+            } else {
+              moduleName = 'user'; // Default fallback
+            }
+          }
+          
+          // Determine store name: 'user' → 'useUserStore'
+          const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
+          storesToImport.set(moduleName, storeName);
+          
+          // Replace router.app.$store.getters['module/prop'] with store().prop
+          const storeVarName = `${moduleName}Store`;
+          let replacement: string;
+          
+          if (type === 'getters') {
+            replacement = `${storeVarName}.${propertyName}`;
+          } else if (type === 'dispatch') {
+            replacement = `${storeVarName}.${propertyName}()`;
+          } else {
+            // state
+            replacement = `${storeVarName}.${propertyName}`;
+          }
+          
+          // Replace the pattern
+          const patternToReplace = match[0];
+          scriptContent = scriptContent.replace(patternToReplace, replacement);
+        });
+        
+        // Add store imports if needed
+        if (storesToImport.size > 0 && scriptContent !== originalScriptContent) {
+          storesToImport.forEach((storeName, moduleName) => {
+            const importPath = `@/store/modules/${moduleName}`;
+            const importPattern = new RegExp(`import\\s+.*${storeName}.*from`, 'g');
+            
+            if (!importPattern.test(scriptContent)) {
+              // Add import at the top of script content
+              const importLine = `import { ${storeName} } from '${importPath}';\n`;
+              scriptContent = importLine + scriptContent;
+            }
+            
+            // Initialize store if not already done
+            const storeVarName = `${moduleName}Store`;
+            const initPattern = new RegExp(`const\\s+${storeVarName}\\s*=`, 'g');
+            if (!initPattern.test(scriptContent)) {
+              // Add store initialization before router.beforeEach
+              const initLine = `const ${storeVarName} = ${storeName}();\n\n`;
+              const beforeEachMatch = scriptContent.match(/router\.beforeEach/);
+              if (beforeEachMatch) {
+                const index = scriptContent.indexOf('router.beforeEach');
+                scriptContent = scriptContent.substring(0, index) + 
+                              initLine + 
+                              scriptContent.substring(index);
+              } else {
+                // Add at the end before export
+                scriptContent = scriptContent.replace(/export\s+default/, `${initLine}export default`);
+              }
+            }
+          });
+          
+          // Update fixedContent
+          if (fixedContent.includes('<script')) {
+            fixedContent = fixedContent.replace(
+              /(<script[^>]*>)([\s\S]*?)(<\/script>)/,
+              `$1${scriptContent}$3`,
+            );
+          } else {
+            // For .js files without script tags
+            fixedContent = scriptContent;
+          }
+          
+          result.fixed = true;
+          result.fixes.push(`Migrated router.app.$store to Pinia stores: ${Array.from(storesToImport.keys()).join(', ')}`);
+        }
+      }
+    }
   }
 
   // Fix 7: Transform Vuex mapGetters/mapActions to Pinia stores in Vue components
@@ -577,6 +1006,162 @@ export async function fixPostMigrationIssues(
     }
   }
 
+  // Fix 7b: Detect and correct wrong store imports
+  // Pattern: import { useUsersStore } but code uses fetchProducts, deleteProduct, etc. → should be useProductsStore
+  if (isVueFile && fixedContent.includes("<script setup")) {
+    const scriptSetupMatch = fixedContent.match(
+      /<script\s+setup[^>]*>([\s\S]*?)<\/script>/,
+    );
+    if (scriptSetupMatch) {
+      let scriptContent = scriptSetupMatch[1];
+      const originalScriptContent = scriptContent;
+      
+      // Try to get dynamic store map from analysis, fallback to hardcoded map
+      let storeMethodMap: Record<string, string> = {};
+      
+      // Fallback hardcoded map for common patterns (used if analysis fails)
+      const fallbackStoreMethodMap: Record<string, string> = {
+        // Products store
+        'fetchProducts': 'products',
+        'deleteProduct': 'products',
+        'addProduct': 'products',
+        'updateProduct': 'products',
+        'filteredProducts': 'products',
+        'allProducts': 'products',
+        'setFilter': 'products',
+        'isLoading': 'products',
+        // User store
+        'login': 'user',
+        'logout': 'user',
+        'addUser': 'user',
+        'removeUser': 'user',
+        'currentUser': 'user',
+        'isAuthenticated': 'user',
+        'users': 'user',
+        'userCount': 'user',
+      };
+      
+      // Try to analyze stores dynamically if projectRoot is provided
+      if (projectRoot) {
+        // Use cache if available and for same project
+        if (!storeAnalysisCache || storeAnalysisProjectRoot !== projectRoot) {
+          try {
+            storeAnalysisCache = await analyzePiniaStores(projectRoot);
+            storeAnalysisProjectRoot = projectRoot;
+          } catch (error) {
+            // If analysis fails, use fallback
+            storeAnalysisCache = null;
+          }
+        }
+        
+        // Convert Map to Record for easier use
+        if (storeAnalysisCache && storeAnalysisCache.size > 0) {
+          storeAnalysisCache.forEach((module, method) => {
+            storeMethodMap[method] = module;
+          });
+        }
+      }
+      
+      // Merge with fallback map (fallback takes precedence if conflict, but dynamic should have more entries)
+      storeMethodMap = { ...fallbackStoreMethodMap, ...storeMethodMap };
+      
+      // Find all store method/getter calls
+      const usedMethods = new Set<string>();
+      Object.keys(storeMethodMap).forEach(method => {
+        // Pattern 1: storeName.method() - explicit store call
+        // Pattern 2: method() - direct method call (if it's a store method)
+        // Pattern 3: method.value - computed property access
+        // Pattern 4: method, - destructured or referenced
+        const patterns = [
+          new RegExp(`\\w+Store\\.${method}\\b`, 'g'), // store.method
+          new RegExp(`\\b${method}\\s*\\(`, 'g'), // method()
+          new RegExp(`\\b${method}\\.value\\b`, 'g'), // method.value
+          new RegExp(`\\b${method}\\s*[,\\}]`, 'g'), // method, or method}
+        ];
+        
+        for (const pattern of patterns) {
+          if (pattern.test(scriptContent)) {
+            usedMethods.add(method);
+            break; // Found, no need to check other patterns
+          }
+        }
+      });
+      
+      // Determine which store should be used based on methods
+      const storeUsage = new Map<string, number>(); // module → count
+      usedMethods.forEach(method => {
+        const module = storeMethodMap[method];
+        if (module) {
+          storeUsage.set(module, (storeUsage.get(module) || 0) + 1);
+        }
+      });
+      
+      // Find wrong store imports
+      const wrongStorePattern = /import\s+\{\s*use(\w+)Store\s*\}\s+from\s+['"]@\/store\/modules\/(\w+)['"]/g;
+      let match;
+      const wrongImports: Array<{ importLine: string; wrongStore: string; wrongModule: string; correctModule: string }> = [];
+      
+      while ((match = wrongStorePattern.exec(scriptContent)) !== null) {
+        const [, storeName, importedModule] = match;
+        const actualModule = storeName.toLowerCase().replace('store', '');
+        
+        // Check if the imported module doesn't match the methods used
+        if (storeUsage.size > 0) {
+          // Find the most used module
+          let mostUsedModule = '';
+          let maxCount = 0;
+          storeUsage.forEach((count, module) => {
+            if (count > maxCount) {
+              maxCount = count;
+              mostUsedModule = module;
+            }
+          });
+          
+          // If imported module doesn't match most used module, it's wrong
+          if (mostUsedModule && importedModule !== mostUsedModule) {
+            wrongImports.push({
+              importLine: match[0],
+              wrongStore: `use${storeName}Store`,
+              wrongModule: importedModule,
+              correctModule: mostUsedModule
+            });
+          }
+        }
+      }
+      
+      // Fix wrong imports
+      wrongImports.forEach(({ importLine, wrongStore, wrongModule, correctModule }) => {
+        const correctStore = `use${correctModule.charAt(0).toUpperCase() + correctModule.slice(1)}Store`;
+        const correctImport = `import { ${correctStore} } from '@/store/modules/${correctModule}'`;
+        
+        scriptContent = scriptContent.replace(importLine, correctImport);
+        
+        // Also fix store variable initialization
+        const wrongStoreVar = `${wrongModule}Store`;
+        const correctStoreVar = `${correctModule}Store`;
+        scriptContent = scriptContent.replace(
+          new RegExp(`const\\s+${wrongStoreVar}\\s*=\\s*${wrongStore}\\(\\)`, 'g'),
+          `const ${correctStoreVar} = ${correctStore}()`
+        );
+        
+        // Fix store method calls
+        scriptContent = scriptContent.replace(
+          new RegExp(`${wrongStoreVar}\\.`, 'g'),
+          `${correctStoreVar}.`
+        );
+      });
+      
+      if (scriptContent !== originalScriptContent) {
+        fixedContent = fixedContent.replace(
+          /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
+          `$1${scriptContent}$3`,
+        );
+        result.fixed = true;
+        result.fixes.push(`Corrected wrong store imports: ${wrongImports.map(i => `${i.wrongStore} → use${i.correctModule.charAt(0).toUpperCase() + i.correctModule.slice(1)}Store`).join(', ')}`);
+      }
+    }
+  }
+
   // Fix 8: Add missing Pinia store imports and initializations in <script setup>
   // This handles components that were converted to <script setup> but are missing store setup
   if (isVueFile && fixedContent.includes("<script setup")) {
@@ -770,6 +1355,95 @@ export async function fixPostMigrationIssues(
             "Added missing Pinia store imports and initializations",
           );
         }
+      }
+    }
+  }
+
+  // Fix 11: Correct props references in watchers and computed
+  // Pattern: watch(() => propName.value, ...) should be watch(() => props.propName, ...)
+  // Pattern: watch(() => initialData.value, ...) should be watch(() => props.initialData, ...)
+  if (isVueFile && fixedContent.includes("<script setup")) {
+    const scriptSetupMatch = fixedContent.match(
+      /<script\s+setup[^>]*>([\s\S]*?)<\/script>/,
+    );
+    if (scriptSetupMatch) {
+      let scriptContent = scriptSetupMatch[1];
+      const originalScriptContent = scriptContent;
+
+      // Extract prop names from defineProps
+      const propNames = new Set<string>();
+      
+      // Pattern 1: defineProps({ propName: Type, ... })
+      const propsObjectMatch = scriptContent.match(/defineProps\s*\(\s*\{([^}]+)\}/);
+      if (propsObjectMatch) {
+        const propsContent = propsObjectMatch[1];
+        const propNamePattern = /(\w+)\s*:/g;
+        let propMatch;
+        while ((propMatch = propNamePattern.exec(propsContent)) !== null) {
+          propNames.add(propMatch[1]);
+        }
+      }
+      
+      // Pattern 2: defineProps(['prop1', 'prop2'])
+      const propsArrayMatch = scriptContent.match(/defineProps\s*\(\s*\[([^\]]+)\]/);
+      if (propsArrayMatch) {
+        const propsContent = propsArrayMatch[1];
+        const propNamePattern = /['"](\w+)['"]/g;
+        let propMatch;
+        while ((propMatch = propNamePattern.exec(propsContent)) !== null) {
+          propNames.add(propMatch[1]);
+        }
+      }
+
+      // Fix watch(() => propName.value, ...) → watch(() => props.propName, ...)
+      propNames.forEach(propName => {
+        // Pattern: watch(() => propName.value, ...)
+        const watchPattern = new RegExp(
+          `watch\\(\\s*\\(\\)\\s*=>\\s*${propName}\\.value`,
+          'g'
+        );
+        if (watchPattern.test(scriptContent)) {
+          scriptContent = scriptContent.replace(
+            watchPattern,
+            `watch(() => props.${propName}`
+          );
+        }
+
+        // Pattern: watch(propName, ...) → watch(() => props.propName, ...)
+        // Only if propName is used directly in watch (not as a ref)
+        const watchDirectPattern = new RegExp(
+          `watch\\(\\s*${propName}\\s*,`,
+          'g'
+        );
+        // Check if propName is not a ref (not declared as const propName = ref(...))
+        const isRef = new RegExp(`const\\s+${propName}\\s*=\\s*ref\\(`).test(scriptContent);
+        if (watchDirectPattern.test(scriptContent) && !isRef) {
+          scriptContent = scriptContent.replace(
+            watchDirectPattern,
+            `watch(() => props.${propName},`
+          );
+        }
+
+        // Pattern: computed(() => propName.value) → computed(() => props.propName)
+        const computedPattern = new RegExp(
+          `computed\\(\\s*\\(\\)\\s*=>\\s*${propName}\\.value`,
+          'g'
+        );
+        if (computedPattern.test(scriptContent)) {
+          scriptContent = scriptContent.replace(
+            computedPattern,
+            `computed(() => props.${propName}`
+          );
+        }
+      });
+
+      if (scriptContent !== originalScriptContent) {
+        fixedContent = fixedContent.replace(
+          /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
+          `$1${scriptContent}$3`,
+        );
+        result.fixed = true;
+        result.fixes.push("Fixed props references in watchers and computed");
       }
     }
   }
