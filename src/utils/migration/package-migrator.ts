@@ -75,6 +75,17 @@ export async function migratePackageJson(
       }
     }
 
+    // Migrate Vue CLI 4 → 5 (for better ESM support with Vue Router 4)
+    if (allDeps["@vue/cli-service"] && allDeps["@vue/cli-service"].startsWith("^4.")) {
+      const cliVersion = allDeps["@vue/cli-service"];
+
+      if (packageJson.devDependencies?.["@vue/cli-service"]) {
+        packageJson.devDependencies["@vue/cli-service"] = "^5.0.8";
+        result.changes.push(`Vue CLI: ${cliVersion} → ^5.0.8 (for better ESM support)`);
+        result.modified = true;
+      }
+    }
+
     // Migrate Vuex → Pinia
     if (allDeps.vuex) {
       const vuexVersion = allDeps.vuex;

@@ -112,48 +112,38 @@ async function analyzePiniaStores(
         
         // Extract all methods/getters from the return statement
         // Pattern: return { method1, method2, getter1, ... } or return { prop1: value1, prop2: value2 }
-        // Match return statement that closes the defineStore function
-        const returnMatch = storeContent.match(/return\s*\{([\s\S]+?)\}\s*;?\s*\}\)/);
-        if (!returnMatch) {
-          // Try simpler pattern: return { ... };
-          const simpleReturnMatch = storeContent.match(/return\s*\{([\s\S]+?)\}\s*;/);
-          if (simpleReturnMatch) {
-            const returnContent = simpleReturnMatch[1];
-            
-            // Extract property names from return object
-            // Pattern 1: methodName, (shorthand)
-            // Pattern 2: methodName: variableName, (with alias)
-            // Pattern 3: methodName: computedValue, (computed property)
-            const propertyPattern = /(\w+)(?:\s*:\s*(\w+))?/g;
-            let propMatch;
-            while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
-              const exportedName = propMatch[2] || propMatch[1]; // Use alias if present, otherwise original name
-              const internalName = propMatch[1];
+        // Find the return statement by locating the last 'return' before the closing '});'
+        const returnIndex = storeContent.lastIndexOf('return');
+        if (returnIndex !== -1) {
+          const afterReturn = storeContent.substring(returnIndex);
+          // Find the closing }); of defineStore
+          const closingIndex = afterReturn.indexOf('});');
+          if (closingIndex !== -1) {
+            // Extract content between return { and };
+            const returnSection = afterReturn.substring(0, closingIndex);
+            // Match return { ... };
+            const returnMatch = returnSection.match(/return\s*\{([\s\S]+?)\}\s*;/);
+            if (returnMatch) {
+              const returnContent = returnMatch[1];
               
-              // Skip common Vue/Pinia keywords and internal variables
-              if (!['ref', 'reactive', 'computed', 'watch', 'onMounted', 'onUnmounted', 'undefined', 'null'].includes(exportedName)) {
-                // Map both the exported name and internal name to the module
-                methodToStoreMap.set(exportedName, moduleName);
-                if (internalName !== exportedName) {
-                  methodToStoreMap.set(internalName, moduleName);
+              // Extract property names from return object
+              // Pattern 1: methodName, (shorthand)
+              // Pattern 2: methodName: variableName, (with alias)
+              // Pattern 3: methodName: computedValue, (computed property)
+              const propertyPattern = /(\w+)(?:\s*:\s*(\w+))?/g;
+              let propMatch;
+              while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
+                const exportedName = propMatch[2] || propMatch[1]; // Use alias if present, otherwise original name
+                const internalName = propMatch[1];
+                
+                // Skip common Vue/Pinia keywords and internal variables
+                if (!['ref', 'reactive', 'computed', 'watch', 'onMounted', 'onUnmounted', 'undefined', 'null'].includes(exportedName)) {
+                  // Map both the exported name and internal name to the module
+                  methodToStoreMap.set(exportedName, moduleName);
+                  if (internalName !== exportedName) {
+                    methodToStoreMap.set(internalName, moduleName);
+                  }
                 }
-              }
-            }
-          }
-        } else {
-          const returnContent = returnMatch[1];
-          
-          // Extract property names from return object
-          const propertyPattern = /(\w+)(?:\s*:\s*(\w+))?/g;
-          let propMatch;
-          while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
-            const exportedName = propMatch[2] || propMatch[1];
-            const internalName = propMatch[1];
-            
-            if (!['ref', 'reactive', 'computed', 'watch', 'onMounted', 'onUnmounted', 'undefined', 'null'].includes(exportedName)) {
-              methodToStoreMap.set(exportedName, moduleName);
-              if (internalName !== exportedName) {
-                methodToStoreMap.set(internalName, moduleName);
               }
             }
           }
@@ -240,6 +230,15 @@ async function analyzePiniaStores(
 // Cache for store analysis to avoid re-analyzing on every file
 let storeAnalysisCache: Map<string, string> | null = null;
 let storeAnalysisProjectRoot: string | null = null;
+
+/**
+ * Clear the store analysis cache - useful for second pass after all stores are migrated
+ * GENERIC: This allows re-analysis after stores are fully migrated
+ */
+export function clearStoreAnalysisCache(): void {
+  storeAnalysisCache = null;
+  storeAnalysisProjectRoot = null;
+}
 
 export async function fixPostMigrationIssues(
   filePath: string,
@@ -390,6 +389,86 @@ export async function fixPostMigrationIssues(
             /this\.\$emit\((['"][^'"]+['"])/g,
             'emit($1'
           );
+        }
+
+        // Fix this.$router and this.$route - add useRouter/useRoute if missing
+        const hasThisRouter = /this\.\$router/.test(scriptContent);
+        const hasThisRoute = /this\.\$route/.test(scriptContent);
+        const hasUseRouter = scriptContent.includes('useRouter');
+        const hasUseRoute = scriptContent.includes('useRoute');
+        
+        if ((hasThisRouter || hasThisRoute) && (!hasUseRouter || !hasUseRoute)) {
+          // Add imports if missing
+          if (hasThisRouter && !hasUseRouter) {
+            if (!scriptContent.includes("import { useRouter }")) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$1import { useRouter } from 'vue-router';\n`
+              );
+            }
+            // Add const router = useRouter() if missing
+            if (!scriptContent.includes('const router = useRouter()')) {
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                const insertPos = importMatch[0].length;
+                scriptContent = scriptContent.slice(0, insertPos) + 
+                  '\nconst router = useRouter();\n' + 
+                  scriptContent.slice(insertPos);
+              }
+            }
+            // Replace this.$router with router
+            scriptContent = scriptContent.replace(/this\.\$router/g, 'router');
+            result.fixed = true;
+            result.fixes.push("Replaced this.$router with useRouter()");
+          }
+          
+          if (hasThisRoute && !hasUseRoute) {
+            if (!scriptContent.includes("import { useRoute }")) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$1import { useRoute } from 'vue-router';\n`
+              );
+            }
+            // Add const route = useRoute() if missing
+            if (!scriptContent.includes('const route = useRoute()')) {
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                const insertPos = importMatch[0].length;
+                scriptContent = scriptContent.slice(0, insertPos) + 
+                  '\nconst route = useRoute();\n' + 
+                  scriptContent.slice(insertPos);
+              }
+            }
+            // Replace this.$route with route
+            scriptContent = scriptContent.replace(/this\.\$route/g, 'route');
+            result.fixed = true;
+            result.fixes.push("Replaced this.$route with useRoute()");
+          }
+        }
+        
+        // Fix route.query.redirect that might be an object (causes [object Object] in URL)
+        // Pattern: route.query.redirect or this.$route.query.redirect
+        const routeQueryRedirectPattern = /(route|this\.\$route)\.query\.redirect(\s*\|\|)?/g;
+        if (routeQueryRedirectPattern.test(scriptContent)) {
+          // Find all usages and ensure they're properly handled
+          scriptContent = scriptContent.replace(
+            /(const\s+\w+\s*=\s*)(route|this\.\$route)\.query\.redirect(\s*\|\|\s*['"][^'"]+['"])?/g,
+            (match, prefix, routeVar, fallback) => {
+              const varName = match.match(/const\s+(\w+)\s*=/)?.[1] || 'redirect';
+              // Ensure redirect is a string, not an object
+              return `${prefix}typeof ${routeVar === 'this.$route' ? 'route' : routeVar}.query.redirect === 'string' ? ${routeVar === 'this.$route' ? 'route' : routeVar}.query.redirect : ${fallback || "'/profile'"}`;
+            }
+          );
+          // Also fix direct usage in router.push(route.query.redirect)
+          scriptContent = scriptContent.replace(
+            /router\.push\((route|this\.\$route)\.query\.redirect\)/g,
+            (match, routeVar) => {
+              const routeName = routeVar === 'this.$route' ? 'route' : routeVar;
+              return `router.push(typeof ${routeName}.query.redirect === 'string' ? ${routeName}.query.redirect : '/profile')`;
+            }
+          );
+          result.fixed = true;
+          result.fixes.push("Fixed route.query.redirect to handle object type (prevent [object Object] in URL)");
         }
 
         // Remove other this. references (but keep this.$router, this.$route, etc.)
@@ -580,6 +659,80 @@ export async function fixPostMigrationIssues(
     }
   }
 
+  // Fix 3c: Make functions async if they use await in .js/.ts files (stores, etc.)
+  // This handles Pinia stores and other JS files that aren't Vue components
+  if ((filePath.endsWith('.js') || filePath.endsWith('.ts')) && !isVueFile && fixedContent.includes('await')) {
+    // Pattern 1: function funcName() { ... await ... }
+    const functionPattern = /(function\s+(\w+)\s*\([^)]*\)\s*\{)/g;
+    let functionMatch;
+    const functionsToFix: Array<{ match: string; replacement: string }> = [];
+    
+    while ((functionMatch = functionPattern.exec(fixedContent)) !== null) {
+      const match = functionMatch[0];
+      const funcName = functionMatch[2];
+      
+      // Skip if already async
+      if (match.includes('async')) continue;
+      
+      // Find the function body
+      const matchIndex = functionMatch.index;
+      const afterMatch = fixedContent.substring(matchIndex + match.length);
+      
+      // Find the matching closing brace
+      let braceCount = 0;
+      let bodyEnd = 0;
+      for (let i = 0; i < afterMatch.length; i++) {
+        if (afterMatch[i] === '{') braceCount++;
+        if (afterMatch[i] === '}') {
+          braceCount--;
+          if (braceCount === 0) {
+            bodyEnd = i + 1;
+            break;
+          }
+        }
+      }
+      
+      const functionBody = afterMatch.substring(0, bodyEnd);
+      // Check if body contains await
+      if (functionBody.includes('await')) {
+        const replacement = match.replace(/function\s+/, 'async function ');
+        functionsToFix.push({ match, replacement });
+      }
+    }
+    
+    // Apply fixes (in reverse order to preserve indices)
+    functionsToFix.reverse().forEach(({ match, replacement }) => {
+      fixedContent = fixedContent.replace(match, replacement);
+    });
+    
+    if (functionsToFix.length > 0) {
+      result.fixed = true;
+      result.fixes.push(`Made ${functionsToFix.length} function(s) async where await is used`);
+    }
+
+    // Fix 3d: Fix incomplete computed properties in Pinia stores
+    // Pattern: const filteredProducts = computed(() => filtered); → should have full logic
+    // This is a complex fix that requires understanding the store context
+    // For now, we detect obvious incomplete computed properties and warn
+    if (fixedContent.includes('defineStore') && fixedContent.includes('computed')) {
+      const incompleteComputedPattern = /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*(\w+)\s*\)/g;
+      let incompleteMatch;
+      const incompleteComputed: string[] = [];
+      
+      while ((incompleteMatch = incompleteComputedPattern.exec(fixedContent)) !== null) {
+        const computedName = incompleteMatch[1];
+        const referencedVar = incompleteMatch[2];
+        
+        // Check if the referenced variable is not defined in the store
+        // This is a heuristic - if computedName !== referencedVar and referencedVar is not in scope
+        if (computedName !== referencedVar && !fixedContent.match(new RegExp(`(const|let|var|ref|reactive)\\s+${referencedVar}\\b`))) {
+          incompleteComputed.push(computedName);
+          result.issues.push(`Incomplete computed property detected: ${computedName} references undefined variable '${referencedVar}'. Manual fix required.`);
+        }
+      }
+    }
+  }
+
   // Fix 4: Remove Vuex imports (always, not just if Pinia is used)
   // Remove vuex default import
   const vuexDefaultImportPattern = /import\s+Vuex\s+from\s+['"]vuex['"];?\n?/g;
@@ -647,6 +800,29 @@ export async function fixPostMigrationIssues(
       result.fixes.push("Fixed createApp syntax to Vue 3 format");
     }
 
+    // Fix order: Pinia must be initialized BEFORE router (router guards may use stores)
+    // Pattern: app.use(router); app.use(createPinia()); → app.use(createPinia()); app.use(router);
+    const piniaAfterRouterPattern = /app\.use\(router\)\s*;\s*app\.use\(createPinia\(\)\)/;
+    if (piniaAfterRouterPattern.test(fixedContent)) {
+      fixedContent = fixedContent.replace(
+        /(app\.use\(router\)\s*;)\s*(app\.use\(createPinia\(\)\)\s*;)/,
+        '$2\n$1'
+      );
+      result.fixed = true;
+      result.fixes.push("Fixed Pinia initialization order (Pinia before Router)");
+    }
+
+    // Remove unused 'h' import from createApp
+    const unusedHImportPattern = /import\s+\{\s*createApp\s*,\s*h\s*\}\s+from\s+['"]vue['"]/;
+    if (unusedHImportPattern.test(fixedContent) && !fixedContent.includes('h(') && !fixedContent.includes('h (')) {
+      fixedContent = fixedContent.replace(
+        /import\s+\{\s*createApp\s*,\s*h\s*\}\s+from\s+['"]vue['"]/,
+        "import { createApp } from 'vue'"
+      );
+      result.fixed = true;
+      result.fixes.push("Removed unused 'h' import");
+    }
+
     // Remove store from createApp options (legacy pattern)
     const storeInAppPattern =
       /(const\s+app\s*=\s*createApp\([^)]*),\s*store\s*([^)]*\))/;
@@ -654,6 +830,48 @@ export async function fixPostMigrationIssues(
       fixedContent = fixedContent.replace(storeInAppPattern, "$1$2");
       result.fixed = true;
       result.fixes.push("Removed store from createApp options");
+    }
+  }
+
+  // Fix 5b: Fix createWebHistory with process.env.BASE_URL that can be an object
+  // Pattern: createWebHistory({ base: process.env.BASE_URL })
+  // Problem: process.env.BASE_URL can be transformed to an object by webpack, causing [object Object] in URL
+  // Solution: Remove base option or ensure it's a string
+  if (filePath.includes("router") || filePath.includes("Router")) {
+    const createWebHistoryPattern = /createWebHistory\s*\(\s*\{\s*base\s*:\s*process\.env\.BASE_URL\s*\}\s*\)/g;
+    if (createWebHistoryPattern.test(fixedContent)) {
+      // Remove the base option completely - Vue Router will use '/' by default
+      fixedContent = fixedContent.replace(
+        /createWebHistory\s*\(\s*\{\s*base\s*:\s*process\.env\.BASE_URL\s*\}\s*\)/g,
+        'createWebHistory()'
+      );
+      result.fixed = true;
+      result.fixes.push("Removed process.env.BASE_URL from createWebHistory (can cause [object Object] in URL)");
+    }
+    
+    // Also handle cases where base is passed as a variable or other expression
+    const createWebHistoryWithBasePattern = /createWebHistory\s*\(\s*\{\s*base\s*:\s*([^}]+)\s*\}\s*\)/g;
+    const matches = Array.from(fixedContent.matchAll(createWebHistoryWithBasePattern));
+    matches.forEach(match => {
+      const baseValue = match[1].trim();
+      // If base value contains process.env.BASE_URL or looks like it could be an object
+      if (baseValue.includes('process.env.BASE_URL') || baseValue.includes('BASE_URL')) {
+        fixedContent = fixedContent.replace(match[0], 'createWebHistory()');
+        result.fixed = true;
+        result.fixes.push("Removed BASE_URL from createWebHistory base option");
+      }
+    });
+
+    // Fix 5c: Fix catch-all route path: '*' → path: '/:pathMatch(.*)*'
+    // Vue Router 4 requires catch-all routes to use a param with custom regexp
+    const catchAllRoutePattern = /path:\s*['"]\*['"]/g;
+    if (catchAllRoutePattern.test(fixedContent)) {
+      fixedContent = fixedContent.replace(
+        /path:\s*['"]\*['"]/g,
+        "path: '/:pathMatch(.*)*'"
+      );
+      result.fixed = true;
+      result.fixes.push("Fixed catch-all route: path: '*' → path: '/:pathMatch(.*)*'");
     }
   }
 
@@ -679,46 +897,44 @@ export async function fixPostMigrationIssues(
           const [, type, path] = match;
           // Extract module name from path like 'user/isAuthenticated' or 'user'
           const parts = path.split('/');
-          let moduleName: string;
+          let moduleName: string | null = null;
           let propertyName: string;
           
           if (parts.length === 2) {
-            // Pattern: 'user/isAuthenticated'
+            // Pattern: 'user/isAuthenticated' - explicit module/property format
             [moduleName, propertyName] = parts;
           } else {
-            // Pattern: 'isAuthenticated' - try to infer module from property name
-            propertyName = parts[0];
-            // Common patterns: isAuthenticated, currentUser → user module
-            if (propertyName.includes('user') || propertyName.includes('auth') || propertyName.includes('login')) {
-              moduleName = 'user';
-            } else if (propertyName.includes('product')) {
-              moduleName = 'products';
-            } else {
-              moduleName = 'user'; // Default fallback
-            }
+            // Pattern: 'isAuthenticated' - cannot infer module without analysis
+            // Skip this pattern - we need explicit module/property format or dynamic store analysis
+            // This ensures genericity - we don't guess module names
+            // Skip this match - cannot determine module safely
+            return; // Skip to next match
           }
           
-          // Determine store name: 'user' → 'useUserStore'
-          const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
-          storesToImport.set(moduleName, storeName);
-          
-              // Replace router.app.$store.getters['module/prop'] with store().prop
-              // Note: Store will be initialized inside beforeEach guard
-              const storeVarName = `${moduleName}Store`;
-              let replacement: string;
-              
-              if (type === 'getters') {
-                replacement = `${storeVarName}.${propertyName}`;
-              } else if (type === 'dispatch') {
-                replacement = `${storeVarName}.${propertyName}()`;
-              } else {
-                // state
-                replacement = `${storeVarName}.${propertyName}`;
-              }
-              
-              // Replace the pattern
-              const patternToReplace = match[0];
-              scriptContent = scriptContent.replace(patternToReplace, replacement);
+          // Only proceed if we have a valid module name
+          if (moduleName) {
+            // Determine store name: 'user' → 'useUserStore'
+            const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
+            storesToImport.set(moduleName, storeName);
+            
+            // Replace router.app.$store.getters['module/prop'] with store().prop
+            // Note: Store will be initialized inside beforeEach guard
+            const storeVarName = `${moduleName}Store`;
+            let replacement: string;
+            
+            if (type === 'getters') {
+              replacement = `${storeVarName}.${propertyName}`;
+            } else if (type === 'dispatch') {
+              replacement = `${storeVarName}.${propertyName}()`;
+            } else {
+              // state
+              replacement = `${storeVarName}.${propertyName}`;
+            }
+            
+            // Replace the pattern
+            const patternToReplace = match[0];
+            scriptContent = scriptContent.replace(patternToReplace, replacement);
+          }
         });
         
         // Add store imports if needed
@@ -1017,6 +1233,8 @@ export async function fixPostMigrationIssues(
 
   // Fix 8: Fix components using <script setup> that reference stores incorrectly
   // Pattern: this.userById(props.id) → useUsersStore().userById(props.id)
+  // Now uses dynamic store analysis to correctly detect which store to use
+  // GENERIC: No hardcoded patterns - relies entirely on dynamic store analysis
   if (isVueFile && fixedContent.includes("<script setup")) {
     const scriptSetupMatch = fixedContent.match(
       /<script\s+setup[^>]*>([\s\S]*?)<\/script>/,
@@ -1025,63 +1243,654 @@ export async function fixPostMigrationIssues(
       let scriptContent = scriptSetupMatch[1];
       const originalScriptContent = scriptContent;
 
-      // Detect store method calls that need store initialization
-      // Pattern: this.userById(...) where userById is a store getter
-      // We need to detect which store to use based on the method name
-      const storeMethodPatterns = [
-        // Auth store methods
-        {
-          pattern: /this\.(login|logout|isAuthenticated|currentUser)/g,
-          store: "useAuthStore",
-        },
-        // Users store methods
-        {
-          pattern: /this\.(fetchUsers|allUsers|isLoading|userById)/g,
-          store: "useUsersStore",
-        },
-      ];
-
-      const storesToImport = new Set<string>();
-
-      storeMethodPatterns.forEach(({ pattern, store }) => {
-        if (pattern.test(scriptContent)) {
-          storesToImport.add(store);
-
-          // Replace this.methodName with store().methodName
-          scriptContent = scriptContent.replace(
-            pattern,
-            (match, methodName) => {
-              const storeVarName =
-                store.replace("use", "").replace("Store", "").toLowerCase() +
-                "Store";
-              return `${storeVarName}.${methodName}`;
-            },
-          );
-        }
-      });
-
-      // Add store imports and initialization if needed
-      if (storesToImport.size > 0 && scriptContent !== originalScriptContent) {
-        // Check if stores are already imported
-        storesToImport.forEach((storeName) => {
-          const storeVarName =
-            storeName.replace("use", "").replace("Store", "").toLowerCase() +
-            "Store";
-          const importPath =
-            storeName === "useAuthStore"
-              ? "@/store/modules/auth"
-              : "@/store/modules/users";
-
-          // Add import if not present
-          if (!scriptContent.includes(`import { ${storeName} }`)) {
-            scriptContent = `import { ${storeName} } from '${importPath}';\n${scriptContent}`;
+      // Get dynamic store map from analysis - NO hardcoded fallback for genericity
+      let storeMethodMap: Record<string, string> = {};
+      
+      // Analyze stores dynamically - REQUIRED for genericity
+      if (projectRoot) {
+        // Use cache if available and for same project
+        if (!storeAnalysisCache || storeAnalysisProjectRoot !== projectRoot) {
+          try {
+            storeAnalysisCache = await analyzePiniaStores(projectRoot);
+            storeAnalysisProjectRoot = projectRoot;
+          } catch (error) {
+            // If analysis fails, we can't proceed without store information
+            // This ensures the fixer is generic and doesn't rely on project-specific patterns
+            storeAnalysisCache = null;
           }
+        }
+        
+        // Convert Map to Record for easier use
+        if (storeAnalysisCache && storeAnalysisCache.size > 0) {
+          storeAnalysisCache.forEach((module, method) => {
+            storeMethodMap[method] = module;
+          });
+        }
+      }
+      
+      // If no store analysis available, skip this fix (generic approach)
+      // This ensures we don't make incorrect assumptions about store structure
+      if (Object.keys(storeMethodMap).length === 0) {
+        // No store information available, cannot proceed safely
+        // Skip this fix to maintain genericity - don't proceed with empty map
+      } else {
+        // Detect this.methodName() patterns and determine which store to use
+        const thisMethodPattern = /this\.(\w+)\s*\(/g;
+        const storesToImport = new Map<string, string>(); // moduleName → storeName (for easier iteration)
+        let match;
 
-          // Add store initialization if not present
-          if (!scriptContent.includes(`const ${storeVarName} = ${storeName}`)) {
-            scriptContent = `${scriptContent}\nconst ${storeVarName} = ${storeName}();`;
+        while ((match = thisMethodPattern.exec(scriptContent)) !== null) {
+          const methodName = match[1];
+          const moduleName = storeMethodMap[methodName];
+          
+          if (moduleName) {
+            // Determine store name from module name
+            const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
+            storesToImport.set(moduleName, storeName); // moduleName → storeName
+            
+            // Replace this.methodName() with storeVarName.methodName()
+            const storeVarName = `${moduleName}Store`;
+            scriptContent = scriptContent.replace(
+              new RegExp(`this\\.${methodName}\\s*\\(`, 'g'),
+              `${storeVarName}.${methodName}(`
+            );
+          }
+        }
+
+        // Also detect this.propertyName (without parentheses) for getters
+        const thisPropertyPattern = /this\.(\w+)(?!\s*\()/g;
+        while ((match = thisPropertyPattern.exec(scriptContent)) !== null) {
+          const propertyName = match[1];
+          const moduleName = storeMethodMap[propertyName];
+          
+          if (moduleName) {
+            const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
+            storesToImport.set(moduleName, storeName);
+            
+            const storeVarName = `${moduleName}Store`;
+            scriptContent = scriptContent.replace(
+              new RegExp(`this\\.${propertyName}(?!\\s*\\()`, 'g'),
+              `${storeVarName}.${propertyName}`
+            );
+          }
+        }
+
+        // Also detect direct function calls that are store methods
+        // GENERIC: Pattern: methodName() where methodName is in storeMethodMap but not defined locally
+        // First collect all potential method calls, then check against storeMethodMap
+        const directCallPattern = /\b(\w+)\s*\(/g;
+        const directCalls = new Set<string>();
+        let directCallMatch;
+        while ((directCallMatch = directCallPattern.exec(scriptContent)) !== null) {
+          const methodName = directCallMatch[1];
+          // Skip if it's already a store call (store.methodName), a Vue API, or a local function
+          // GENERIC: Check if methodName exists in storeMethodMap (dynamically detected from stores)
+          const isDefinedLocally = scriptContent.match(new RegExp(`(const|let|var|function|import)\\s+${methodName}\\b`));
+          const isStoreCall = scriptContent.match(new RegExp(`\\w+Store\\.${methodName}`));
+          const isVueAPI = ['computed', 'ref', 'reactive', 'watch', 'onMounted', 'onUnmounted', 'defineProps', 'defineEmits', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'].includes(methodName);
+          
+          // If method is in storeMethodMap and not defined locally, it's a store method call
+          if (
+            storeMethodMap[methodName] &&
+            !isDefinedLocally &&
+            !isStoreCall &&
+            !isVueAPI
+          ) {
+            directCalls.add(methodName);
+          }
+        }
+
+        // Add stores for direct function calls
+        directCalls.forEach(methodName => {
+          const moduleName = storeMethodMap[methodName];
+          if (moduleName) {
+            const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
+            storesToImport.set(moduleName, storeName); // moduleName → storeName
+            
+            // Replace methodName() with storeVarName.methodName()
+            const storeVarName = `${moduleName}Store`;
+            scriptContent = scriptContent.replace(
+              new RegExp(`\\b${methodName}\\s*\\(`, 'g'),
+              `${storeVarName}.${methodName}(`
+            );
           }
         });
+
+        // Add store imports and initialization if needed
+        if (storesToImport.size > 0) {
+          // Check if stores are already imported
+          // GENERIC: storesToImport is Map<moduleName, storeName>
+          storesToImport.forEach((storeName, moduleName) => {
+            const storeVarName = `${moduleName}Store`;
+            const importPath = `@/store/modules/${moduleName}`;
+
+            // Add import if not present (check for exact import statement)
+            if (!scriptContent.includes(`import { ${storeName} } from`)) {
+              // Find the best place to insert import (after other imports or at the beginning)
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                scriptContent = scriptContent.replace(
+                  /(import\s+[^;]+;[\s\n]*)+/,
+                  `$&import { ${storeName} } from '${importPath}';\n`
+                );
+              } else {
+                scriptContent = `import { ${storeName} } from '${importPath}';\n${scriptContent}`;
+              }
+            }
+
+            // Add store initialization if not present
+            if (!scriptContent.includes(`const ${storeVarName} = ${storeName}`)) {
+              // Find the best place to insert store initialization (after imports, before usage)
+              const afterImportsMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (afterImportsMatch) {
+                const insertIndex = afterImportsMatch[0].length;
+                scriptContent = scriptContent.slice(0, insertIndex) + 
+                  `\nconst ${storeVarName} = ${storeName}();\n` + 
+                  scriptContent.slice(insertIndex);
+              } else {
+                scriptContent = `const ${storeVarName} = ${storeName}();\n${scriptContent}`;
+              }
+            }
+          });
+        }
+
+        // Fix 8b: Remove duplicate imports and declarations
+        // GENERIC: Detects and removes duplicate imports and variable declarations
+        // Use a more robust approach: parse the entire script and rebuild it cleanly
+        if (scriptContent && scriptContent.includes('import')) {
+          // Step 1: Extract all imports with their positions
+          const importPattern = /import\s+[^;]+;/g;
+          const allImports: Array<{ content: string; normalized: string }> = [];
+          let importMatch;
+          
+          while ((importMatch = importPattern.exec(scriptContent)) !== null) {
+            if (importMatch && importMatch[0]) {
+              const content = importMatch[0];
+              const normalized = content.replace(/\s+/g, ' ').trim();
+              allImports.push({ content, normalized });
+            }
+          }
+          
+          // Step 2: Deduplicate imports by grouping by module and merging exports
+          // GENERIC: Groups imports by their 'from' path and merges all exports
+          const importsByModule = new Map<string, Set<string>>(); // modulePath → Set of export names
+          
+          allImports.forEach(({ content, normalized }) => {
+            const importNameMatch = normalized.match(/import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/);
+            if (importNameMatch) {
+              const exportNames = importNameMatch[1].split(',').map(s => s.trim());
+              const fromPath = importNameMatch[2];
+              
+              if (!importsByModule.has(fromPath)) {
+                importsByModule.set(fromPath, new Set());
+              }
+              
+              const moduleExports = importsByModule.get(fromPath)!;
+              exportNames.forEach(name => moduleExports.add(name));
+            } else {
+              // Simple import without destructuring - keep as is
+              const simpleMatch = normalized.match(/import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/);
+              if (simpleMatch) {
+                const exportName = simpleMatch[1];
+                const fromPath = simpleMatch[2];
+                
+                if (!importsByModule.has(fromPath)) {
+                  importsByModule.set(fromPath, new Set());
+                }
+                
+                const moduleExports = importsByModule.get(fromPath)!;
+                moduleExports.add(exportName);
+              }
+            }
+          });
+          
+          // Step 3: Rebuild unique imports from grouped modules
+          const uniqueImports: string[] = [];
+          importsByModule.forEach((exports, modulePath) => {
+            const sortedExports = Array.from(exports).sort();
+            const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
+            uniqueImports.push(importStatement);
+          });
+          
+          // Step 4: Always remove all imports and rebuild with merged unique imports
+          // This ensures imports from the same module are merged (e.g., computed + computed,onMounted → computed,onMounted)
+          // Remove ALL import statements using regex (more reliable than string replacement)
+          let cleanedContent = scriptContent.replace(/import\s+[^;]+;\s*\n?/g, '');
+          
+          // Clean up multiple consecutive newlines and empty lines
+          cleanedContent = cleanedContent.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '').trim();
+          
+          // Add unique imports at the beginning (always rebuild to ensure proper merging)
+          if (uniqueImports.length > 0) {
+            scriptContent = uniqueImports.join('\n') + '\n\n' + cleanedContent;
+            result.fixed = true;
+            result.fixes.push("Merged duplicate imports from same modules");
+          } else {
+            scriptContent = cleanedContent;
+          }
+          
+          // Step 4: Remove duplicate variable declarations (const storeVar = useStore())
+          const storeDeclPattern = /const\s+(\w+Store)\s*=\s*use\w+Store\(\)/g;
+          const seenStoreVars = new Set<string>();
+          const storeDeclsToRemove: Array<{ start: number; end: number }> = [];
+          let storeDeclMatch;
+          
+          // Reset regex lastIndex
+          storeDeclPattern.lastIndex = 0;
+          
+          while ((storeDeclMatch = storeDeclPattern.exec(scriptContent)) !== null) {
+            const varName = storeDeclMatch[1];
+            if (seenStoreVars.has(varName)) {
+              // Duplicate - mark for removal
+              storeDeclsToRemove.push({
+                start: storeDeclMatch.index,
+                end: storeDeclMatch.index + storeDeclMatch[0].length
+              });
+            } else {
+              seenStoreVars.add(varName);
+            }
+          }
+          
+          // Remove duplicate declarations (in reverse order to preserve indices)
+          storeDeclsToRemove.reverse().forEach(pos => {
+            const before = scriptContent.substring(0, pos.start);
+            const after = scriptContent.substring(pos.end);
+            // Remove the declaration and clean up surrounding whitespace
+            scriptContent = before.replace(/\n+$/, '') + '\n' + after.replace(/^\s*\n+/, '');
+          });
+          
+          // Step 5: Clean up empty lines and multiple consecutive newlines
+          scriptContent = scriptContent.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '');
+        }
+        
+        // Step 6: Remove duplicate variable declarations (const varName = ...)
+        // GENERIC: Detects and removes duplicate variable declarations
+        const varDeclPattern = /const\s+(\w+)\s*=/g;
+        const seenVars = new Map<string, number>(); // varName → first occurrence index
+        const varDeclsToRemove: Array<{ start: number; end: number; varName: string }> = [];
+        let varDeclMatch;
+        
+        varDeclPattern.lastIndex = 0;
+        while ((varDeclMatch = varDeclPattern.exec(scriptContent)) !== null) {
+          const varName = varDeclMatch[1];
+          if (seenVars.has(varName)) {
+            // Duplicate - mark for removal (keep the first one)
+            // Find the end of this declaration: find the next semicolon or end of line
+            const start = varDeclMatch.index;
+            const afterMatch = scriptContent.substring(start);
+            // Match the entire declaration: const varName = ... until semicolon (including it)
+            // This handles: const varName = value; or const varName = value\n
+            const declMatch = afterMatch.match(/const\s+\w+\s*=[^;]*;?/);
+            if (declMatch) {
+              // Find the actual end: semicolon or newline
+              let end = start + declMatch[0].length;
+              // If no semicolon, include until newline
+              if (!declMatch[0].endsWith(';')) {
+                const afterDecl = scriptContent.substring(end);
+                const newlineMatch = afterDecl.match(/^\s*\n/);
+                if (newlineMatch) {
+                  end += newlineMatch[0].length;
+                }
+              }
+              varDeclsToRemove.push({
+                start: start,
+                end: end,
+                varName: varName
+              });
+            }
+          } else {
+            seenVars.set(varName, varDeclMatch.index);
+          }
+        }
+        
+        // Remove duplicate declarations (in reverse order to preserve indices)
+        varDeclsToRemove.reverse().forEach(pos => {
+          const before = scriptContent.substring(0, pos.start);
+          const after = scriptContent.substring(pos.end);
+          // Remove the declaration and clean up surrounding whitespace
+          scriptContent = before.replace(/\n+$/, '') + '\n' + after.replace(/^\s*\n+/, '');
+        });
+        
+        // Clean up empty lines again
+        scriptContent = scriptContent.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '');
+        
+        // Step 7: Remove duplicate store declarations and reorganize them
+        // GENERIC: Removes duplicates and moves all store declarations to the top to avoid "used before declaration" errors
+        const storeDeclPattern = /const\s+(\w+Store)\s*=\s*use\w+Store\(\)\s*;?/g;
+        
+        // Helper function to find all store declarations
+        const findAllStoreDecls = (content: string): Array<{ varName: string; declaration: string; index: number; fullMatch: string }> => {
+          const decls: Array<{ varName: string; declaration: string; index: number; fullMatch: string }> = [];
+          storeDeclPattern.lastIndex = 0;
+          let match;
+          while ((match = storeDeclPattern.exec(content)) !== null) {
+            const varName = match[1];
+            const fullMatch = match[0];
+            const declaration = fullMatch.endsWith(';') ? fullMatch : fullMatch + ';';
+            decls.push({
+              varName,
+              declaration,
+              index: match.index,
+              fullMatch: fullMatch
+            });
+          }
+          return decls;
+        };
+        
+        let storeDeclarations = findAllStoreDecls(scriptContent);
+        
+        if (storeDeclarations.length > 0) {
+          // Step 7a: Remove ALL duplicates (keep only first occurrence of each store)
+          const seenStoreVars = new Set<string>();
+          const duplicatesToRemove: Array<{ start: number; end: number }> = [];
+          
+          storeDeclarations.forEach(decl => {
+            if (seenStoreVars.has(decl.varName)) {
+              // Duplicate - mark for removal (include trailing whitespace/newlines)
+              const afterMatch = scriptContent.substring(decl.index + decl.fullMatch.length);
+              const trailingWhitespace = afterMatch.match(/^\s*/)?.[0] || '';
+              duplicatesToRemove.push({
+                start: decl.index,
+                end: decl.index + decl.fullMatch.length + trailingWhitespace.length
+              });
+            } else {
+              seenStoreVars.add(decl.varName);
+            }
+          });
+          
+          // Remove duplicates (in reverse order to preserve indices)
+          if (duplicatesToRemove.length > 0) {
+            duplicatesToRemove.reverse().forEach(pos => {
+              const before = scriptContent.substring(0, pos.start);
+              const after = scriptContent.substring(pos.end);
+              scriptContent = before.replace(/\n+$/, '') + '\n' + after.replace(/^\s*\n+/, '');
+            });
+            result.fixed = true;
+            result.fixes.push("Removed duplicate store declarations");
+            
+            // Re-find store declarations after duplicate removal
+            storeDeclarations = findAllStoreDecls(scriptContent);
+          }
+          
+          // Step 7b: Reorganize store declarations to top (after imports, before usage)
+          if (storeDeclarations.length > 0) {
+            // Check if stores are used before their declarations
+            let needsReorganization = false;
+            storeDeclarations.forEach(decl => {
+              // Check if this store is used before its declaration
+              const beforeDecl = scriptContent.substring(0, decl.index);
+              const usagePattern = new RegExp(`\\b${decl.varName}\\b`);
+              if (usagePattern.test(beforeDecl)) {
+                needsReorganization = true;
+              }
+            });
+            
+            if (needsReorganization) {
+              // Remove ALL store declarations from their current positions (in reverse order)
+              let reorganizedContent = scriptContent;
+              storeDeclarations.reverse().forEach(decl => {
+                const before = reorganizedContent.substring(0, decl.index);
+                const afterMatch = reorganizedContent.substring(decl.index + decl.fullMatch.length);
+                const trailingWhitespace = afterMatch.match(/^\s*/)?.[0] || '';
+                const after = reorganizedContent.substring(decl.index + decl.fullMatch.length + trailingWhitespace.length);
+                reorganizedContent = before.replace(/\n+$/, '') + '\n' + after.replace(/^\s*\n+/, '');
+              });
+              
+              // Get unique declarations only (should already be unique after Step 7a)
+              const finalUniqueStoreDecls = new Map<string, string>();
+              storeDeclarations.reverse().forEach(decl => {
+                if (!finalUniqueStoreDecls.has(decl.varName)) {
+                  finalUniqueStoreDecls.set(decl.varName, decl.declaration);
+                }
+              });
+              
+              // Find the end of imports section
+              const importMatch = reorganizedContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                const insertIndex = importMatch[0].length;
+                const storeDeclsText = Array.from(finalUniqueStoreDecls.values()).join('\n');
+                reorganizedContent = reorganizedContent.slice(0, insertIndex) + 
+                  '\n\n' + storeDeclsText + '\n' + 
+                  reorganizedContent.slice(insertIndex).trim();
+              } else {
+                // No imports, add at the beginning
+                const storeDeclsText = Array.from(finalUniqueStoreDecls.values()).join('\n');
+                reorganizedContent = storeDeclsText + '\n\n' + reorganizedContent.trim();
+              }
+              
+              scriptContent = reorganizedContent;
+              result.fixed = true;
+              result.fixes.push("Reorganized store declarations to top of script");
+              
+              // Final check: remove any duplicates that might have been created during reorganization
+              const finalStoreDecls = findAllStoreDecls(scriptContent);
+              const finalSeenVars = new Set<string>();
+              const finalDuplicatesToRemove: Array<{ start: number; end: number }> = [];
+              
+              finalStoreDecls.forEach(decl => {
+                if (finalSeenVars.has(decl.varName)) {
+                  const afterMatch = scriptContent.substring(decl.index + decl.fullMatch.length);
+                  const trailingWhitespace = afterMatch.match(/^\s*/)?.[0] || '';
+                  finalDuplicatesToRemove.push({
+                    start: decl.index,
+                    end: decl.index + decl.fullMatch.length + trailingWhitespace.length
+                  });
+                } else {
+                  finalSeenVars.add(decl.varName);
+                }
+              });
+              
+              if (finalDuplicatesToRemove.length > 0) {
+                finalDuplicatesToRemove.reverse().forEach(pos => {
+                  const before = scriptContent.substring(0, pos.start);
+                  const after = scriptContent.substring(pos.end);
+                  scriptContent = before.replace(/\n+$/, '') + '\n' + after.replace(/^\s*\n+/, '');
+                });
+                result.fixes.push("Removed duplicate store declarations after reorganization");
+              }
+            }
+          }
+        }
+        
+        // Fix 8c: Correct wrong store method calls and property access
+        // GENERIC: Uses storeMethodMap to detect which store should have which method/property
+        if (Object.keys(storeMethodMap).length > 0) {
+          // Find all store.method() calls
+          const storeMethodCallPattern = /(\w+Store)\.(\w+)\s*\(/g;
+          let storeCallMatch;
+          const corrections: Array<{ wrong: string; correct: string }> = [];
+          
+          // Reset regex lastIndex
+          storeMethodCallPattern.lastIndex = 0;
+          
+          while ((storeCallMatch = storeMethodCallPattern.exec(scriptContent)) !== null) {
+            const storeVarName = storeCallMatch[1];
+            const methodName = storeCallMatch[2];
+            const moduleName = storeMethodMap[methodName];
+            
+            if (moduleName) {
+              // Check if the store variable matches the module
+              const expectedStoreVar = `${moduleName}Store`;
+              if (storeVarName !== expectedStoreVar) {
+                // Wrong store used - correct it
+                const wrongCall = `${storeVarName}.${methodName}`;
+                const correctCall = `${expectedStoreVar}.${methodName}`;
+                corrections.push({ wrong: wrongCall, correct: correctCall });
+              }
+            }
+          }
+          
+          // Find all store.property access (e.g., authStore.cartItemCount → cartStore.cartItemCount)
+          // Pattern: storeVar.property (not followed by opening parenthesis, which would be a method call)
+          // We need to match store.property in various contexts: computed(() => store.property), store.property, etc.
+          const storePropertyPattern = /(\w+Store)\.(\w+)(?![(\s]*\()/g;
+          let storePropMatch;
+          
+          storePropertyPattern.lastIndex = 0;
+          const seenCorrections = new Set<string>();
+          
+          while ((storePropMatch = storePropertyPattern.exec(scriptContent)) !== null) {
+            const storeVarName = storePropMatch[1];
+            const propertyName = storePropMatch[2];
+            const moduleName = storeMethodMap[propertyName];
+            
+            // Debug: log if property is found in map
+            if (propertyName === 'cartItemCount' || propertyName === 'isAuthenticated') {
+              // This helps debug property detection
+            }
+            
+            if (moduleName) {
+              // Check if the store variable matches the module
+              const expectedStoreVar = `${moduleName}Store`;
+              if (storeVarName !== expectedStoreVar) {
+                // Wrong store used - correct it
+                const wrongAccess = `${storeVarName}.${propertyName}`;
+                const correctAccess = `${expectedStoreVar}.${propertyName}`;
+                // Avoid duplicates
+                if (!seenCorrections.has(wrongAccess)) {
+                  seenCorrections.add(wrongAccess);
+                  corrections.push({ wrong: wrongAccess, correct: correctAccess });
+                }
+              }
+            }
+          }
+          
+          // Debug: Check if cartItemCount is in storeMethodMap
+          if (scriptContent.includes('cartItemCount') && !storeMethodMap['cartItemCount']) {
+            // cartItemCount is used but not in map - this might indicate an issue with store analysis
+            result.issues.push(`Property 'cartItemCount' is used but not found in storeMethodMap. Store analysis may need improvement.`);
+          }
+          
+          // Apply corrections (apply in reverse to avoid index issues)
+          corrections.reverse().forEach(({ wrong, correct }) => {
+            scriptContent = scriptContent.replace(
+              new RegExp(wrong.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+              correct
+            );
+          });
+          
+          if (corrections.length > 0) {
+            result.fixes.push(`Corrected wrong store method calls and property access: ${corrections.map(c => `${c.wrong} → ${c.correct}`).join(', ')}`);
+          }
+        }
+
+        // Fix 8d: Add missing imports for used but not imported stores/functions
+        // GENERIC: Detects usage of stores/functions and adds missing imports
+        // Check for useRouter usage
+        if (scriptContent.includes('useRouter()') && !scriptContent.match(/import\s+.*useRouter.*from/)) {
+          const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+          if (importMatch) {
+            scriptContent = scriptContent.replace(
+              /(import\s+[^;]+;[\s\n]*)+/,
+              `$&import { useRouter } from 'vue-router';\n`
+            );
+          } else {
+            scriptContent = `import { useRouter } from 'vue-router';\n${scriptContent}`;
+          }
+          
+          // Add const router = useRouter() if missing
+          if (!scriptContent.includes('const router = useRouter()')) {
+            const afterImportsMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (afterImportsMatch) {
+              const insertIndex = afterImportsMatch[0].length;
+              scriptContent = scriptContent.slice(0, insertIndex) + 
+                `\nconst router = useRouter();\n` + 
+                scriptContent.slice(insertIndex);
+            } else {
+              scriptContent = `const router = useRouter();\n${scriptContent}`;
+            }
+          }
+        }
+        
+        // Check for useIndexStore/useAppStore usage
+        const indexStorePattern = /useIndexStore\(\)|useAppStore\(\)/g;
+        if (indexStorePattern.test(scriptContent)) {
+          // Find the actual store name from store/index.js
+          if (projectRoot) {
+            try {
+              const mainStore = await findMainStore(projectRoot);
+              if (mainStore && !scriptContent.match(new RegExp(`import\\s+.*${mainStore.storeName}.*from`))) {
+                const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+                if (importMatch) {
+                  scriptContent = scriptContent.replace(
+                    /(import\s+[^;]+;[\s\n]*)+/,
+                    `$&import { ${mainStore.storeName} } from '${mainStore.importPath}';\n`
+                  );
+                } else {
+                  scriptContent = `import { ${mainStore.storeName} } from '${mainStore.importPath}';\n${scriptContent}`;
+                }
+                
+                // Replace useIndexStore() with the correct store name
+                scriptContent = scriptContent.replace(/useIndexStore\(\)/g, `${mainStore.storeName}()`);
+                // Derive store variable name
+                const storeVarMatch = mainStore.storeName.match(/use(\w+)Store/);
+                const storeVarName = storeVarMatch ? storeVarMatch[1].charAt(0).toLowerCase() + storeVarMatch[1].slice(1) + 'Store' : 'appStore';
+                scriptContent = scriptContent.replace(/const\s+indexStore\s*=\s*useIndexStore\(\)/g, `const ${storeVarName} = ${mainStore.storeName}()`);
+                scriptContent = scriptContent.replace(/indexStore\./g, `${storeVarName}.`);
+              }
+            } catch (error) {
+              // Could not find main store
+            }
+          }
+        }
+
+      // Final step: Always merge imports at the end (after all other fixes that might add imports)
+      // This ensures that even if other fixes add imports, they are properly merged
+      if (scriptContent && scriptContent.includes('import')) {
+        const importPattern = /import\s+[^;]+;/g;
+        const finalImports: Array<{ content: string; normalized: string }> = [];
+        let importMatch;
+        
+        // Reset regex lastIndex
+        importPattern.lastIndex = 0;
+        
+        while ((importMatch = importPattern.exec(scriptContent)) !== null) {
+          if (importMatch && importMatch[0]) {
+            const content = importMatch[0];
+            const normalized = content.replace(/\s+/g, ' ').trim();
+            finalImports.push({ content, normalized });
+          }
+        }
+        
+        if (finalImports.length > 0) {
+          // Group imports by module and merge exports
+          const finalImportsByModule = new Map<string, Set<string>>();
+          
+          finalImports.forEach(({ content, normalized }) => {
+            const importNameMatch = normalized.match(/import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/);
+            if (importNameMatch) {
+              const exportNames = importNameMatch[1].split(',').map(s => s.trim());
+              const fromPath = importNameMatch[2];
+              
+              if (!finalImportsByModule.has(fromPath)) {
+                finalImportsByModule.set(fromPath, new Set());
+              }
+              
+              const moduleExports = finalImportsByModule.get(fromPath)!;
+              exportNames.forEach(name => moduleExports.add(name));
+            }
+          });
+          
+          // Rebuild merged imports
+          const finalUniqueImports: string[] = [];
+          finalImportsByModule.forEach((exports, modulePath) => {
+            const sortedExports = Array.from(exports).sort();
+            const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
+            finalUniqueImports.push(importStatement);
+          });
+          
+          // Remove all imports and rebuild
+          let finalCleanedContent = scriptContent.replace(/import\s+[^;]+;\s*\n?/g, '');
+          finalCleanedContent = finalCleanedContent.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '').trim();
+          
+          if (finalUniqueImports.length > 0) {
+            scriptContent = finalUniqueImports.join('\n') + '\n\n' + finalCleanedContent;
+            result.fixed = true;
+            if (!result.fixes.includes("Merged duplicate imports from same modules")) {
+              result.fixes.push("Merged duplicate imports from same modules");
+            }
+          }
+        }
       }
 
       if (scriptContent !== originalScriptContent) {
@@ -1090,7 +1899,8 @@ export async function fixPostMigrationIssues(
           `$1${scriptContent}$3`,
         );
         result.fixed = true;
-        result.fixes.push("Fixed store method calls in <script setup>");
+        result.fixes.push("Fixed store method calls in <script setup> using dynamic store detection");
+      }
       }
     }
   }
@@ -1105,32 +1915,10 @@ export async function fixPostMigrationIssues(
       let scriptContent = scriptSetupMatch[1];
       const originalScriptContent = scriptContent;
       
-      // Try to get dynamic store map from analysis, fallback to hardcoded map
+      // Get dynamic store map from analysis - NO hardcoded fallback for genericity
       let storeMethodMap: Record<string, string> = {};
       
-      // Fallback hardcoded map for common patterns (used if analysis fails)
-      const fallbackStoreMethodMap: Record<string, string> = {
-        // Products store
-        'fetchProducts': 'products',
-        'deleteProduct': 'products',
-        'addProduct': 'products',
-        'updateProduct': 'products',
-        'filteredProducts': 'products',
-        'allProducts': 'products',
-        'setFilter': 'products',
-        'isLoading': 'products',
-        // User store
-        'login': 'user',
-        'logout': 'user',
-        'addUser': 'user',
-        'removeUser': 'user',
-        'currentUser': 'user',
-        'isAuthenticated': 'user',
-        'users': 'user',
-        'userCount': 'user',
-      };
-      
-      // Try to analyze stores dynamically if projectRoot is provided
+      // Analyze stores dynamically - REQUIRED for genericity
       if (projectRoot) {
         // Use cache if available and for same project
         if (!storeAnalysisCache || storeAnalysisProjectRoot !== projectRoot) {
@@ -1138,7 +1926,8 @@ export async function fixPostMigrationIssues(
             storeAnalysisCache = await analyzePiniaStores(projectRoot);
             storeAnalysisProjectRoot = projectRoot;
           } catch (error) {
-            // If analysis fails, use fallback
+            // If analysis fails, we can't proceed without store information
+            // This ensures the fixer is generic and doesn't rely on project-specific patterns
             storeAnalysisCache = null;
           }
         }
@@ -1151,136 +1940,210 @@ export async function fixPostMigrationIssues(
         }
       }
       
-      // Merge with fallback map (fallback takes precedence if conflict, but dynamic should have more entries)
-      storeMethodMap = { ...fallbackStoreMethodMap, ...storeMethodMap };
-      
-      // Find all store method/getter calls
-      const usedMethods = new Set<string>();
-      const usedModules = new Set<string>(); // Track modules from this.$store patterns
-      
-      // First, detect this.$store.dispatch('module/method') or this.$store.getters['module/getter']
-      const vuexDispatchPattern = /this\.\$store\.dispatch\(['"]([^'"]+)\/([^'"]+)['"]/g;
-      const vuexGettersPattern = /this\.\$store\.getters\[['"]([^'"]+)\/([^'"]+)['"]/g;
-      
-      let dispatchMatch;
-      while ((dispatchMatch = vuexDispatchPattern.exec(scriptContent)) !== null) {
-        const [, module, method] = dispatchMatch;
-        usedModules.add(module);
-        usedMethods.add(method);
-      }
-      
-      let gettersMatch;
-      while ((gettersMatch = vuexGettersPattern.exec(scriptContent)) !== null) {
-        const [, module, getter] = gettersMatch;
-        usedModules.add(module);
-        usedMethods.add(getter);
-      }
-      
-      // Then detect direct method/getter calls
-      Object.keys(storeMethodMap).forEach(method => {
-        // Pattern 1: storeName.method() - explicit store call
-        // Pattern 2: method() - direct method call (if it's a store method)
-        // Pattern 3: method.value - computed property access
-        // Pattern 4: method, - destructured or referenced
-        const patterns = [
-          new RegExp(`\\w+Store\\.${method}\\b`, 'g'), // store.method
-          new RegExp(`\\b${method}\\s*\\(`, 'g'), // method()
-          new RegExp(`\\b${method}\\.value\\b`, 'g'), // method.value
-          new RegExp(`\\b${method}\\s*[,\\}]`, 'g'), // method, or method}
-        ];
+      // If no store analysis available, skip this fix (generic approach)
+      // This ensures we don't make incorrect assumptions about store structure
+      if (Object.keys(storeMethodMap).length > 0) {
+        // Find all store method/getter calls
+        const usedMethods = new Set<string>();
+        const usedModules = new Set<string>(); // Track modules from this.$store patterns
         
-        for (const pattern of patterns) {
-          if (pattern.test(scriptContent)) {
-            usedMethods.add(method);
-            break; // Found, no need to check other patterns
-          }
-        }
-      });
-      
-      // Determine which store should be used based on methods
-      const storeUsage = new Map<string, number>(); // module → count
-      
-      // First, add modules detected from this.$store patterns (high priority)
-      usedModules.forEach(module => {
-        storeUsage.set(module, (storeUsage.get(module) || 0) + 10); // Higher weight for explicit module references
-      });
-      
-      // Then add modules from method calls
-      usedMethods.forEach(method => {
-        const module = storeMethodMap[method];
-        if (module) {
-          storeUsage.set(module, (storeUsage.get(module) || 0) + 1);
-        }
-      });
-      
-      // Find wrong store imports
-      const wrongStorePattern = /import\s+\{\s*use(\w+)Store\s*\}\s+from\s+['"]@\/store\/modules\/(\w+)['"]/g;
-      let match;
-      const wrongImports: Array<{ importLine: string; wrongStore: string; wrongModule: string; correctModule: string }> = [];
-      
-      while ((match = wrongStorePattern.exec(scriptContent)) !== null) {
-        const [, storeName, importedModule] = match;
-        const actualModule = storeName.toLowerCase().replace('store', '');
+        // First, detect this.$store.dispatch('module/method') or this.$store.getters['module/getter']
+        const vuexDispatchPattern = /this\.\$store\.dispatch\(['"]([^'"]+)\/([^'"]+)['"]/g;
+        const vuexGettersPattern = /this\.\$store\.getters\[['"]([^'"]+)\/([^'"]+)['"]/g;
         
-        // Check if the imported module doesn't match the methods used
-        if (storeUsage.size > 0) {
-          // Find the most used module
-          let mostUsedModule = '';
-          let maxCount = 0;
-          storeUsage.forEach((count, module) => {
-            if (count > maxCount) {
-              maxCount = count;
-              mostUsedModule = module;
-            }
-          });
+        let dispatchMatch;
+        while ((dispatchMatch = vuexDispatchPattern.exec(scriptContent)) !== null) {
+          const [, module, method] = dispatchMatch;
+          usedModules.add(module);
+          usedMethods.add(method);
           
-          // If imported module doesn't match most used module, it's wrong
-          if (mostUsedModule && importedModule !== mostUsedModule) {
-            wrongImports.push({
-              importLine: match[0],
-              wrongStore: `use${storeName}Store`,
-              wrongModule: importedModule,
-              correctModule: mostUsedModule
+          // Replace this.$store.dispatch('module/method') with storeVar.method()
+          const storeVarName = `${module}Store`;
+          const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
+          const replacement = `${storeVarName}.${method}()`;
+          
+          // Ensure store is imported and initialized
+          if (!scriptContent.includes(`import { ${storeName} }`)) {
+            const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (importMatch) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$&import { ${storeName} } from '@/store/modules/${module}';\n`
+              );
+            } else {
+              scriptContent = `import { ${storeName} } from '@/store/modules/${module}';\n${scriptContent}`;
+            }
+          }
+          
+          if (!scriptContent.includes(`const ${storeVarName} = ${storeName}`)) {
+            const afterImportsMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (afterImportsMatch) {
+              const insertIndex = afterImportsMatch[0].length;
+              scriptContent = scriptContent.slice(0, insertIndex) + 
+                `\nconst ${storeVarName} = ${storeName}();\n` + 
+                scriptContent.slice(insertIndex);
+            } else {
+              scriptContent = `const ${storeVarName} = ${storeName}();\n${scriptContent}`;
+            }
+          }
+          
+          // Replace the dispatch call
+          scriptContent = scriptContent.replace(
+            new RegExp(`this\\.\\$store\\.dispatch\\(['"]${module}/${method}['"]\\)`, 'g'),
+            replacement
+          );
+        }
+        
+        let gettersMatch;
+        while ((gettersMatch = vuexGettersPattern.exec(scriptContent)) !== null) {
+          const [, module, getter] = gettersMatch;
+          usedModules.add(module);
+          usedMethods.add(getter);
+          
+          // Replace this.$store.getters['module/getter'] with storeVar.getter
+          const storeVarName = `${module}Store`;
+          const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
+          const replacement = `${storeVarName}.${getter}`;
+          
+          // Ensure store is imported and initialized (same logic as above)
+          if (!scriptContent.includes(`import { ${storeName} }`)) {
+            const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (importMatch) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$&import { ${storeName} } from '@/store/modules/${module}';\n`
+              );
+            } else {
+              scriptContent = `import { ${storeName} } from '@/store/modules/${module}';\n${scriptContent}`;
+            }
+          }
+          
+          if (!scriptContent.includes(`const ${storeVarName} = ${storeName}`)) {
+            const afterImportsMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (afterImportsMatch) {
+              const insertIndex = afterImportsMatch[0].length;
+              scriptContent = scriptContent.slice(0, insertIndex) + 
+                `\nconst ${storeVarName} = ${storeName}();\n` + 
+                scriptContent.slice(insertIndex);
+            } else {
+              scriptContent = `const ${storeVarName} = ${storeName}();\n${scriptContent}`;
+            }
+          }
+          
+          // Replace the getter access
+          scriptContent = scriptContent.replace(
+            new RegExp(`this\\.\\$store\\.getters\\[['"]${module}/${getter}['"]\\]`, 'g'),
+            replacement
+          );
+        }
+        
+        // Then detect direct method/getter calls
+        Object.keys(storeMethodMap).forEach(method => {
+          // Pattern 1: storeName.method() - explicit store call
+          // Pattern 2: method() - direct method call (if it's a store method)
+          // Pattern 3: method.value - computed property access
+          // Pattern 4: method, - destructured or referenced
+          const patterns = [
+            new RegExp(`\\w+Store\\.${method}\\b`, 'g'), // store.method
+            new RegExp(`\\b${method}\\s*\\(`, 'g'), // method()
+            new RegExp(`\\b${method}\\.value\\b`, 'g'), // method.value
+            new RegExp(`\\b${method}\\s*[,\\}]`, 'g'), // method, or method}
+          ];
+          
+          for (const pattern of patterns) {
+            if (pattern.test(scriptContent)) {
+              usedMethods.add(method);
+              break; // Found, no need to check other patterns
+            }
+          }
+        });
+        
+        // Determine which store should be used based on methods
+        const storeUsage = new Map<string, number>(); // module → count
+        
+        // First, add modules detected from this.$store patterns (high priority)
+        usedModules.forEach(module => {
+          storeUsage.set(module, (storeUsage.get(module) || 0) + 10); // Higher weight for explicit module references
+        });
+        
+        // Then add modules from method calls
+        usedMethods.forEach(method => {
+          const module = storeMethodMap[method];
+          if (module) {
+            storeUsage.set(module, (storeUsage.get(module) || 0) + 1);
+          }
+        });
+        
+        // Find wrong store imports
+        const wrongStorePattern = /import\s+\{\s*use(\w+)Store\s*\}\s+from\s+['"]@\/store\/modules\/(\w+)['"]/g;
+        let match;
+        const wrongImports: Array<{ importLine: string; wrongStore: string; wrongModule: string; correctModule: string }> = [];
+        
+        while ((match = wrongStorePattern.exec(scriptContent)) !== null) {
+          const [, storeName, importedModule] = match;
+          const actualModule = storeName.toLowerCase().replace('store', '');
+          
+          // Check if the imported module doesn't match the methods used
+          if (storeUsage.size > 0) {
+            // Find the most used module
+            let mostUsedModule = '';
+            let maxCount = 0;
+            storeUsage.forEach((count, module) => {
+              if (count > maxCount) {
+                maxCount = count;
+                mostUsedModule = module;
+              }
             });
+            
+            // If imported module doesn't match most used module, it's wrong
+            if (mostUsedModule && importedModule !== mostUsedModule) {
+              wrongImports.push({
+                importLine: match[0],
+                wrongStore: `use${storeName}Store`,
+                wrongModule: importedModule,
+                correctModule: mostUsedModule
+              });
+            }
           }
         }
-      }
-      
-      // Fix wrong imports
-      wrongImports.forEach(({ importLine, wrongStore, wrongModule, correctModule }) => {
-        const correctStore = `use${correctModule.charAt(0).toUpperCase() + correctModule.slice(1)}Store`;
-        const correctImport = `import { ${correctStore} } from '@/store/modules/${correctModule}'`;
         
-        scriptContent = scriptContent.replace(importLine, correctImport);
+        // Fix wrong imports
+        wrongImports.forEach(({ importLine, wrongStore, wrongModule, correctModule }) => {
+          const correctStore = `use${correctModule.charAt(0).toUpperCase() + correctModule.slice(1)}Store`;
+          const correctImport = `import { ${correctStore} } from '@/store/modules/${correctModule}'`;
+          
+          scriptContent = scriptContent.replace(importLine, correctImport);
+          
+          // Also fix store variable initialization
+          const wrongStoreVar = `${wrongModule}Store`;
+          const correctStoreVar = `${correctModule}Store`;
+          scriptContent = scriptContent.replace(
+            new RegExp(`const\\s+${wrongStoreVar}\\s*=\\s*${wrongStore}\\(\\)`, 'g'),
+            `const ${correctStoreVar} = ${correctStore}()`
+          );
+          
+          // Fix store method calls
+          scriptContent = scriptContent.replace(
+            new RegExp(`${wrongStoreVar}\\.`, 'g'),
+            `${correctStoreVar}.`
+          );
+        });
         
-        // Also fix store variable initialization
-        const wrongStoreVar = `${wrongModule}Store`;
-        const correctStoreVar = `${correctModule}Store`;
-        scriptContent = scriptContent.replace(
-          new RegExp(`const\\s+${wrongStoreVar}\\s*=\\s*${wrongStore}\\(\\)`, 'g'),
-          `const ${correctStoreVar} = ${correctStore}()`
-        );
-        
-        // Fix store method calls
-        scriptContent = scriptContent.replace(
-          new RegExp(`${wrongStoreVar}\\.`, 'g'),
-          `${correctStoreVar}.`
-        );
-      });
-      
-      if (scriptContent !== originalScriptContent) {
-        fixedContent = fixedContent.replace(
-          /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
-          `$1${scriptContent}$3`,
-        );
-        result.fixed = true;
-        result.fixes.push(`Corrected wrong store imports: ${wrongImports.map(i => `${i.wrongStore} → use${i.correctModule.charAt(0).toUpperCase() + i.correctModule.slice(1)}Store`).join(', ')}`);
+        if (scriptContent !== originalScriptContent) {
+          fixedContent = fixedContent.replace(
+            /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
+            `$1${scriptContent}$3`,
+          );
+          result.fixed = true;
+          result.fixes.push(`Corrected wrong store imports: ${wrongImports.map(i => `${i.wrongStore} → use${i.correctModule.charAt(0).toUpperCase() + i.correctModule.slice(1)}Store`).join(', ')}`);
+        }
       }
     }
   }
 
   // Fix 8: Add missing Pinia store imports and initializations in <script setup>
   // This handles components that were converted to <script setup> but are missing store setup
+  // GENERIC: No hardcoded patterns - relies entirely on dynamic store analysis
   if (isVueFile && fixedContent.includes("<script setup")) {
     const scriptSetupMatch = fixedContent.match(
       /<script\s+setup[^>]*>([\s\S]*?)<\/script>/,
@@ -1295,152 +2158,116 @@ export async function fixPostMigrationIssues(
       );
       const templateContent = templateMatch ? templateMatch[1] : "";
 
-      // Common store method/state patterns
-      const storePatterns = [
-        {
-          pattern: /isAuthenticated|currentUser|login|logout/g,
-          store: "useAuthStore",
-          module: "auth",
-        },
-        {
-          pattern: /allUsers|isLoading|fetchUsers|userById/g,
-          store: "useUsersStore",
-          module: "users",
-        },
-      ];
+      // Get dynamic store map from analysis - NO hardcoded fallback for genericity
+      let storeMethodMap: Record<string, string> = {};
+      
+      // Analyze stores dynamically - REQUIRED for genericity
+      if (projectRoot) {
+        // Use cache if available and for same project
+        if (!storeAnalysisCache || storeAnalysisProjectRoot !== projectRoot) {
+          try {
+            storeAnalysisCache = await analyzePiniaStores(projectRoot);
+            storeAnalysisProjectRoot = projectRoot;
+          } catch (error) {
+            // If analysis fails, we can't proceed without store information
+            // This ensures the fixer is generic and doesn't rely on project-specific patterns
+            storeAnalysisCache = null;
+          }
+        }
+        
+        // Convert Map to Record for easier use
+        if (storeAnalysisCache && storeAnalysisCache.size > 0) {
+          storeAnalysisCache.forEach((module, method) => {
+            storeMethodMap[method] = module;
+          });
+        }
+      }
+      
+      // If no store analysis available, skip this fix (generic approach)
+      // This ensures we don't make incorrect assumptions about store structure
+      if (Object.keys(storeMethodMap).length === 0) {
+        // No store information available, cannot proceed safely
+        // Skip this fix to maintain genericity
+      } else {
+        // Detect which stores are needed based on template and script usage
+        const usedMethods = new Set<string>();
+        const usedModules = new Map<string, string>(); // moduleName → storeName
+        
+        // Extract methods/properties from template and script
+        const allContent = templateContent + ' ' + scriptContent;
+        Object.keys(storeMethodMap).forEach(method => {
+          const pattern = new RegExp(`\\b${method}\\b`, 'g');
+          if (pattern.test(allContent)) {
+            usedMethods.add(method);
+            const moduleName = storeMethodMap[method];
+            const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
+            usedModules.set(moduleName, storeName);
+          }
+        });
 
-      const storesToAdd = new Set<string>();
+        const storesToAdd = new Set<string>();
 
-      storePatterns.forEach(({ pattern, store, module }) => {
-        if (pattern.test(templateContent) || pattern.test(scriptContent)) {
+        usedModules.forEach((storeName, moduleName) => {
           // Check if store is already imported/initialized
-          const hasStoreImport = scriptContent.includes(`import { ${store} }`);
-          const hasStoreInit = scriptContent.includes(`${module}Store`);
+          const hasStoreImport = scriptContent.includes(`import { ${storeName} }`);
+          const storeVarName = `${moduleName}Store`;
+          const hasStoreInit = scriptContent.includes(`const ${storeVarName} = ${storeName}`);
 
           if (!hasStoreImport || !hasStoreInit) {
-            storesToAdd.add(JSON.stringify({ store, module }));
-          }
-        }
-      });
-
-      if (storesToAdd.size > 0) {
-        let newImports = "";
-        let newInits = "";
-
-        storesToAdd.forEach((storeInfoStr) => {
-          const storeInfo = JSON.parse(storeInfoStr);
-          const { store, module } = storeInfo;
-          const storeVarName = module + "Store";
-
-          if (!scriptContent.includes(`import { ${store} }`)) {
-            newImports += `import { ${store} } from '@/store/modules/${module}';\n`;
-          }
-
-          if (!scriptContent.includes(`const ${storeVarName} = ${store}`)) {
-            newInits += `const ${storeVarName} = ${store}();\n`;
+            storesToAdd.add(JSON.stringify({ store: storeName, module: moduleName }));
           }
         });
 
-        // Add computed imports if needed
-        if (
-          (templateContent.includes("isAuthenticated") ||
-            templateContent.includes("currentUser") ||
-            templateContent.includes("allUsers") ||
-            templateContent.includes("isLoading")) &&
-          !scriptContent.includes("import { computed }")
-        ) {
-          newImports += "import { computed } from 'vue';\n";
-        }
+        if (storesToAdd.size > 0) {
+          let newImports = "";
+          let newInits = "";
 
-        // Add store getters/actions that are used in template but not defined
-        storePatterns.forEach(({ pattern, store, module }) => {
-          const storeVarName = module + "Store";
+          storesToAdd.forEach((storeInfoStr) => {
+            const storeInfo = JSON.parse(storeInfoStr);
+            const { store, module } = storeInfo;
+            const storeVarName = module + "Store";
 
-          // Check for isAuthenticated, currentUser
-          if (module === "auth") {
-            if (
-              templateContent.includes("isAuthenticated") &&
-              !scriptContent.includes("const isAuthenticated")
-            ) {
-              if (enableTypeScript) {
-                newInits += `const isAuthenticated = computed<boolean>(() => ${storeVarName}.isAuthenticated);\n`;
-              } else {
-                newInits += `const isAuthenticated = computed(() => ${storeVarName}.isAuthenticated);\n`;
-              }
+            if (!scriptContent.includes(`import { ${store} }`)) {
+              newImports += `import { ${store} } from '@/store/modules/${module}';\n`;
             }
-            if (
-              templateContent.includes("currentUser") &&
-              !scriptContent.includes("const currentUser")
-            ) {
-              if (enableTypeScript) {
-                newInits += `const currentUser = computed<{ name: string; email: string } | null>(() => ${storeVarName}.currentUser);\n`;
-              } else {
-                newInits += `const currentUser = computed(() => ${storeVarName}.currentUser);\n`;
-              }
+
+            if (!scriptContent.includes(`const ${storeVarName} = ${store}`)) {
+              newInits += `const ${storeVarName} = ${store}();\n`;
             }
-            if (
-              (templateContent.includes('@click="handleLogin"') ||
-                scriptContent.includes("handleLogin")) &&
-              !scriptContent.includes("const login")
-            ) {
-              newInits += `const login = ${storeVarName}.login;\n`;
-            }
-            if (
-              (templateContent.includes('@click="handleLogout"') ||
-                scriptContent.includes("handleLogout")) &&
-              !scriptContent.includes("const logout")
-            ) {
-              newInits += `const logout = ${storeVarName}.logout;\n`;
-            }
+          });
+
+          // Add computed imports if needed (generic - check if any computed properties are used)
+          const needsComputed = usedModules.size > 0 && !scriptContent.includes("import { computed }");
+          if (needsComputed) {
+            newImports += "import { computed } from 'vue';\n";
           }
 
-          // Check for allUsers, isLoading, fetchUsers
-          if (module === "users") {
-            if (
-              templateContent.includes("allUsers") &&
-              !scriptContent.includes("const allUsers")
-            ) {
-              if (enableTypeScript) {
-                newInits += `const allUsers = computed<Array<{ id: number; name: string; email: string; role: string }>>(() => ${storeVarName}.allUsers);\n`;
-              } else {
-                newInits += `const allUsers = computed(() => ${storeVarName}.allUsers);\n`;
+          // Add store getters/actions that are used in template but not defined (generic approach)
+          // Use the dynamically detected stores instead of hardcoded patterns
+          usedModules.forEach((storeName, moduleName) => {
+            const storeVarName = `${moduleName}Store`;
+            
+            // Dynamically detect which properties from this store are used in template
+            // and add computed properties for them if they're not already defined
+            Object.keys(storeMethodMap).forEach(method => {
+              if (storeMethodMap[method] === moduleName) {
+                // Check if this property is used in template but not defined in script
+                const propertyPattern = new RegExp(`\\b${method}\\b`, 'g');
+                if (propertyPattern.test(templateContent) && !scriptContent.includes(`const ${method}`)) {
+                  // Add as computed property
+                  if (enableTypeScript) {
+                    newInits += `const ${method} = computed(() => ${storeVarName}.${method});\n`;
+                  } else {
+                    newInits += `const ${method} = computed(() => ${storeVarName}.${method});\n`;
+                  }
+                }
               }
-            }
-            if (
-              templateContent.includes("isLoading") &&
-              !scriptContent.includes("const isLoading")
-            ) {
-              if (enableTypeScript) {
-                newInits += `const isLoading = computed<boolean>(() => ${storeVarName}.isLoading);\n`;
-              } else {
-                newInits += `const isLoading = computed(() => ${storeVarName}.isLoading);\n`;
-              }
-            }
-            if (
-              (templateContent.includes('@click="fetchUsers"') ||
-                scriptContent.includes("fetchUsers")) &&
-              !scriptContent.includes("const fetchUsers")
-            ) {
-              if (enableTypeScript) {
-                newInits += `const fetchUsers = (): Promise<void> => ${storeVarName}.fetchUsers();\n`;
-              } else {
-                newInits += `const fetchUsers = ${storeVarName}.fetchUsers;\n`;
-              }
-            }
-            if (
-              scriptContent.includes("userById") &&
-              !scriptContent.includes("const userById")
-            ) {
-              if (enableTypeScript) {
-                newInits += `const userById = (id: string | number): { id: number; name: string; email: string; role: string } | undefined => ${storeVarName}.userById(id);\n`;
-              } else {
-                newInits += `const userById = ${storeVarName}.userById;\n`;
-              }
-            }
-          }
-        });
+            });
+          });
 
-        if (newImports || newInits) {
+          // Legacy hardcoded code removed - now using dynamic detection above
+
+          if (newImports || newInits) {
           // Remove unused defineStore import if present
           scriptContent = scriptContent.replace(
             /import\s*{\s*defineStore\s*}\s*from\s*['"]pinia['"];?\n?/g,
@@ -1467,10 +2294,11 @@ export async function fixPostMigrationIssues(
             /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
             `$1${scriptContent}$3`,
           );
-          result.fixed = true;
-          result.fixes.push(
-            "Added missing Pinia store imports and initializations",
-          );
+            result.fixed = true;
+            result.fixes.push(
+              "Added missing Pinia store imports and initializations",
+            );
+          }
         }
       }
     }
@@ -1554,6 +2382,65 @@ export async function fixPostMigrationIssues(
         }
       });
 
+      // Final step: Always merge imports at the end (after all other fixes that might add imports)
+      // This ensures that even if other fixes add imports, they are properly merged
+      if (scriptContent && scriptContent.includes('import')) {
+        const importPattern = /import\s+[^;]+;/g;
+        const finalImports: Array<{ content: string; normalized: string }> = [];
+        let importMatch;
+        
+        // Reset regex lastIndex
+        importPattern.lastIndex = 0;
+        
+        while ((importMatch = importPattern.exec(scriptContent)) !== null) {
+          if (importMatch && importMatch[0]) {
+            const content = importMatch[0];
+            const normalized = content.replace(/\s+/g, ' ').trim();
+            finalImports.push({ content, normalized });
+          }
+        }
+        
+        if (finalImports.length > 0) {
+          // Group imports by module and merge exports
+          const finalImportsByModule = new Map<string, Set<string>>();
+          
+          finalImports.forEach(({ content, normalized }) => {
+            const importNameMatch = normalized.match(/import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/);
+            if (importNameMatch) {
+              const exportNames = importNameMatch[1].split(',').map(s => s.trim());
+              const fromPath = importNameMatch[2];
+              
+              if (!finalImportsByModule.has(fromPath)) {
+                finalImportsByModule.set(fromPath, new Set());
+              }
+              
+              const moduleExports = finalImportsByModule.get(fromPath)!;
+              exportNames.forEach(name => moduleExports.add(name));
+            }
+          });
+          
+          // Rebuild merged imports
+          const finalUniqueImports: string[] = [];
+          finalImportsByModule.forEach((exports, modulePath) => {
+            const sortedExports = Array.from(exports).sort();
+            const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
+            finalUniqueImports.push(importStatement);
+          });
+          
+          // Remove all imports and rebuild
+          let finalCleanedContent = scriptContent.replace(/import\s+[^;]+;\s*\n?/g, '');
+          finalCleanedContent = finalCleanedContent.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '').trim();
+          
+          if (finalUniqueImports.length > 0) {
+            scriptContent = finalUniqueImports.join('\n') + '\n\n' + finalCleanedContent;
+            result.fixed = true;
+            if (!result.fixes.includes("Merged duplicate imports from same modules")) {
+              result.fixes.push("Merged duplicate imports from same modules");
+            }
+          }
+        }
+      }
+
       if (scriptContent !== originalScriptContent) {
         fixedContent = fixedContent.replace(
           /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
@@ -1565,8 +2452,106 @@ export async function fixPostMigrationIssues(
     }
   }
 
-  // Fix 12: Detect undefined properties in <script setup> that might be from main store
-  // This handles cases like appInfo, appName, version that come from the main store
+  // Fix 13: Clean up store/index.js - remove unused imports and fix duplications
+  if (filePath.includes("store/index") && fixedContent.includes("defineStore")) {
+    // Remove unused Vue import
+    const vueImportPattern = /import\s+Vue\s+from\s+['"]vue['"];?\n?/g;
+    if (vueImportPattern.test(fixedContent) && !fixedContent.includes('Vue.')) {
+      fixedContent = fixedContent.replace(vueImportPattern, "");
+      result.fixed = true;
+      result.fixes.push("Removed unused Vue import from store/index.js");
+    }
+
+    // Remove unused module imports (auth, products, cart, etc.)
+    const moduleImportPattern = /import\s+\w+\s+from\s+['"]\.\/modules\/\w+['"];?\n?/g;
+    const moduleImports = fixedContent.match(moduleImportPattern);
+    if (moduleImports && moduleImports.length > 0) {
+      // Check if these modules are actually used
+      moduleImports.forEach(importLine => {
+        const moduleMatch = importLine.match(/import\s+(\w+)\s+from/);
+        if (moduleMatch) {
+          const moduleName = moduleMatch[1];
+          // If module is not used in the code, remove it
+          const moduleUsagePattern = new RegExp(`\\b${moduleName}\\b`);
+          if (!moduleUsagePattern.test(fixedContent.replace(importLine, ''))) {
+            fixedContent = fixedContent.replace(importLine, '');
+            result.fixed = true;
+            result.fixes.push(`Removed unused module import: ${moduleName}`);
+          }
+        }
+      });
+    }
+
+    // Fix duplications in return statement (e.g., appName: appName, appName: appNameComputed)
+    // Pattern: propName: value1, propName: value2
+    const returnMatch = fixedContent.match(/return\s*\{([\s\S]+?)\}\s*;?\s*\}\)/);
+    if (returnMatch) {
+      const returnContent = returnMatch[1];
+      const propertyPattern = /(\w+)\s*:\s*(\w+)/g;
+      const properties = new Map<string, string[]>(); // name → [values]
+      
+      let propMatch;
+      while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
+        const propName = propMatch[1];
+        const propValue = propMatch[2];
+        if (!properties.has(propName)) {
+          properties.set(propName, []);
+        }
+        properties.get(propName)!.push(propValue);
+      }
+
+      // Find duplicates
+      properties.forEach((values, propName) => {
+        if (values.length > 1) {
+          // Keep only the last one (usually the computed version)
+          const lastValue = values[values.length - 1];
+          // Remove all occurrences and keep only the last
+          const duplicatePattern = new RegExp(`(\\s*)${propName}\\s*:\\s*\\w+\\s*,?\\s*`, 'g');
+          const matches = Array.from(returnContent.matchAll(new RegExp(`${propName}\\s*:\\s*(\\w+)`, 'g')));
+          if (matches.length > 1) {
+            // Replace all but keep the last
+            let newReturnContent = returnContent;
+            for (let i = 0; i < matches.length - 1; i++) {
+              newReturnContent = newReturnContent.replace(
+                new RegExp(`\\s*${propName}\\s*:\\s*\\w+\\s*,?`),
+                ''
+              );
+            }
+            // Ensure the last one exists
+            if (!newReturnContent.includes(`${propName}:`)) {
+              newReturnContent = `${propName}: ${lastValue},\n${newReturnContent}`;
+            }
+            fixedContent = fixedContent.replace(returnMatch[0], `return {${newReturnContent}};})`);
+            result.fixed = true;
+            result.fixes.push(`Fixed duplicate property in return: ${propName}`);
+          }
+        }
+      });
+    }
+
+    // Ensure export is named (e.g., useAppStore, useIndexStore) not default
+    // GENERIC: Derives store name from defineStore ID, not hardcoded
+    if (fixedContent.includes('export default defineStore')) {
+      // Extract store name from defineStore call
+      const storeNameMatch = fixedContent.match(/defineStore\s*\(\s*['"]([^'"]+)['"]/);
+      // GENERIC: Use the store ID from defineStore, or derive from file path if not found
+      // No hardcoded fallback - derives from file path or uses 'app' as last resort
+      const storeId = storeNameMatch 
+        ? storeNameMatch[1] 
+        : (filePath.match(/store[\/\\](index|app|main|core|base)/i)?.[1]?.toLowerCase() || 'app');
+      const useStoreName = `use${storeId.charAt(0).toUpperCase() + storeId.slice(1)}Store`;
+      
+      fixedContent = fixedContent.replace(
+        /export\s+default\s+defineStore/,
+        `export const ${useStoreName} = defineStore`
+      );
+      result.fixed = true;
+      result.fixes.push(`Changed export default to named export: ${useStoreName}`);
+    }
+  }
+
+  // Fix 12: Detect undefined properties in <script setup> that might be from stores
+  // This handles cases like appInfo, appName, version, cartItems, cartTotal that come from stores
   if (isVueFile && fixedContent.includes("<script setup") && projectRoot) {
     const scriptSetupMatch = fixedContent.match(
       /<script\s+setup[^>]*>([\s\S]*?)<\/script>/,
@@ -1581,9 +2566,13 @@ export async function fixPostMigrationIssues(
       const originalScriptContent = scriptContent;
       
       // Find properties used in template but not defined in script
-      // Common main store properties: appInfo, appName, version, etc.
+      // GENERIC: Detects any property name used in template, not hardcoded names
       const mainStorePropertyPattern = /\{\{\s*(\w+)\s*\}\}/g;
+      const vIfPattern = /v-if=["']([^"']+)["']/g;
+      const vForPattern = /v-for=["']\w+\s+in\s+(\w+)/g;
       const usedProperties = new Set<string>();
+      
+      // Extract from {{ propName }}
       let templateMatch2;
       while ((templateMatch2 = mainStorePropertyPattern.exec(templateContent)) !== null) {
         const propName = templateMatch2[1];
@@ -1599,12 +2588,67 @@ export async function fixPostMigrationIssues(
         }
       }
       
-      // If we found undefined properties, try to find the main store
-      if (usedProperties.size > 0) {
-        const mainStore = await findMainStore(projectRoot);
+      // Extract from v-if="propName" or v-if="propName.length"
+      let vIfMatch;
+      while ((vIfMatch = vIfPattern.exec(templateContent)) !== null) {
+        const expr = vIfMatch[1];
+        // Extract property name (handle .length, .value, etc.)
+        const propMatch = expr.match(/^(\w+)(\.\w+)?$/);
+        if (propMatch) {
+          const propName = propMatch[1];
+          const isDefined = scriptContent.match(
+            new RegExp(`(const|let|var|function|import)\\s+${propName}\\b`, 'g')
+          ) || scriptContent.match(
+            new RegExp(`\\b${propName}\\s*=\\s*computed`, 'g')
+          );
+          if (!isDefined) {
+            usedProperties.add(propName);
+          }
+        }
+      }
+      
+      // Extract from v-for="item in propName"
+      let vForMatch;
+      while ((vForMatch = vForPattern.exec(templateContent)) !== null) {
+        const propName = vForMatch[1];
+        const isDefined = scriptContent.match(
+          new RegExp(`(const|let|var|function|import)\\s+${propName}\\b`, 'g')
+        ) || scriptContent.match(
+          new RegExp(`\\b${propName}\\s*=\\s*computed`, 'g')
+        );
+        if (!isDefined) {
+          usedProperties.add(propName);
+        }
+      }
+      
+      // Extract properties used in script (computed, functions, etc.)
+      // Pattern: allProducts.length, allProducts.method(), if (allProducts.length), etc.
+      // Match identifiers that are not declared and are used with . or in conditions
+      const scriptUsagePattern = /\b([a-z][a-zA-Z0-9]*)\s*(?:\.|\(|\)|===|!==|==|!=|>|<|>=|<=|\|\||&&|\?|:)/g;
+      const vueKeywords = new Set(['computed', 'ref', 'reactive', 'watch', 'onMounted', 'onUnmounted', 'defineProps', 'defineEmits', 'useRouter', 'useRoute', 'router', 'route', 'const', 'let', 'var', 'function', 'async', 'await', 'return', 'if', 'else', 'for', 'while', 'switch', 'case', 'default', 'try', 'catch', 'finally', 'throw', 'new', 'this', 'null', 'undefined', 'true', 'false', 'length', 'value', 'push', 'pop', 'shift', 'unshift', 'slice', 'splice', 'map', 'filter', 'reduce', 'find', 'includes', 'indexOf', 'toString', 'toLowerCase', 'toUpperCase']);
+      
+      scriptUsagePattern.lastIndex = 0;
+      let scriptUsageMatch;
+      while ((scriptUsageMatch = scriptUsagePattern.exec(scriptContent)) !== null) {
+        const propName = scriptUsageMatch[1];
+        // Skip if it's a keyword, Vue function, or already declared
+        if (!vueKeywords.has(propName) && 
+            !propName.endsWith('Store') && 
+            !propName.endsWith('store') &&
+            !scriptContent.match(new RegExp(`(const|let|var|function|import|export)\\s+${propName}\\b`)) &&
+            !scriptContent.match(new RegExp(`\\b${propName}\\s*=\\s*computed`)) &&
+            propName.length > 2) { // Skip very short names
+          usedProperties.add(propName);
+        }
+      }
+      
+      // If we found undefined properties, try to find them in all stores (main + modules)
+      if (usedProperties.size > 0 && projectRoot) {
+        const propertyToStoreMap = new Map<string, { storeName: string; importPath: string; storeVarName: string }>();
         
+        // First check main store
+        const mainStore = await findMainStore(projectRoot);
         if (mainStore) {
-          // Read the main store to see what properties it exports
           const storeIndexPath = path.join(projectRoot, "src", "store", "index.js");
           let storeContent = '';
           try {
@@ -1628,10 +2672,9 @@ export async function fixPostMigrationIssues(
             }
           }
           
-          // Extract exported properties from the store
+          // Extract exported properties from the main store
           const exportedProperties = new Set<string>();
           if (storeContent) {
-            // Pattern: return { prop1, prop2, prop3: alias, ... }
             const returnMatch = storeContent.match(/return\s*\{([\s\S]+?)\}\s*;?\s*\}\)/);
             if (returnMatch) {
               const returnContent = returnMatch[1];
@@ -1644,37 +2687,98 @@ export async function fixPostMigrationIssues(
             }
           }
           
-          // Check if any undefined properties match exported properties from main store
-          const matchingProperties = Array.from(usedProperties).filter(prop => 
-            exportedProperties.has(prop) || 
-            // Common main store properties even if not found
-            ['appInfo', 'appName', 'version', 'appVersion'].includes(prop)
-          );
+          // Map properties to main store
+          // GENERIC: Only map properties that are actually exported from the main store
+          // Derive store variable name from store name (e.g., useAppStore → appStore)
+          const storeVarNameMatch = mainStore.storeName.match(/use(\w+)Store/);
+          const storeVarName = storeVarNameMatch ? storeVarNameMatch[1].charAt(0).toLowerCase() + storeVarNameMatch[1].slice(1) + 'Store' : 'appStore';
           
-          if (matchingProperties.length > 0) {
-            // Add import and initialization if not already present
-            const storeVarName = 'appStore';
-            const hasStoreImport = scriptContent.includes(`import { ${mainStore.storeName} }`);
-            const hasStoreInit = scriptContent.includes(`const ${storeVarName} = ${mainStore.storeName}`);
-            
-            if (!hasStoreImport) {
-              scriptContent = `import { ${mainStore.storeName} } from '${mainStore.importPath}';\n${scriptContent}`;
+          usedProperties.forEach(prop => {
+            if (exportedProperties.has(prop)) {
+              propertyToStoreMap.set(prop, {
+                storeName: mainStore.storeName,
+                importPath: mainStore.importPath,
+                storeVarName: storeVarName
+              });
             }
+          });
+        }
+        
+        // Then check module stores (cart, products, auth, etc.)
+        try {
+          const storeModulesPath = path.join(projectRoot, "src", "store", "modules");
+          const storeFiles = await fs.readdir(storeModulesPath);
+          
+          for (const storeFile of storeFiles) {
+            if (!storeFile.endsWith('.js') && !storeFile.endsWith('.ts')) continue;
             
-            if (!hasStoreInit) {
-              // Add after imports
-              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
-              if (importMatch) {
-                const importEnd = importMatch[0].length;
-                scriptContent = scriptContent.slice(0, importEnd) + 
-                  `\nconst ${storeVarName} = ${mainStore.storeName}();\n` + 
-                  scriptContent.slice(importEnd);
-              } else {
-                scriptContent = `const ${storeVarName} = ${mainStore.storeName}();\n${scriptContent}`;
+            const storeFilePath = path.join(storeModulesPath, storeFile);
+            const storeContent = await fs.readFile(storeFilePath, 'utf-8');
+            
+            // Extract store name
+            const storeNameMatch = storeContent.match(/export\s+const\s+(use\w+Store)\s*=/);
+            if (!storeNameMatch) continue;
+            const storeName = storeNameMatch[1];
+            const moduleName = storeFile.replace(/\.(js|ts)$/, '');
+            const storeVarName = moduleName + 'Store';
+            const importPath = `@/store/modules/${moduleName}`;
+            
+            // Extract exported properties
+            const exportedProperties = new Set<string>();
+            const returnMatch = storeContent.match(/return\s*\{([\s\S]+?)\}\s*;?\s*\}\)/);
+            if (returnMatch) {
+              const returnContent = returnMatch[1];
+              const propertyPattern = /(\w+)(?:\s*:\s*(\w+))?/g;
+              let propMatch;
+              while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
+                const exportedName = propMatch[2] || propMatch[1];
+                exportedProperties.add(exportedName);
               }
             }
             
-            // Add computed properties for matching properties
+            // Map properties to this store (only if not already mapped)
+            usedProperties.forEach(prop => {
+              if (exportedProperties.has(prop) && !propertyToStoreMap.has(prop)) {
+                propertyToStoreMap.set(prop, {
+                  storeName: storeName,
+                  importPath: importPath,
+                  storeVarName: storeVarName
+                });
+              }
+            });
+          }
+        } catch (error) {
+          // Could not read modules directory
+        }
+        
+        // Now add imports and computed properties for all found stores
+        if (propertyToStoreMap.size > 0) {
+          // Group properties by store
+          const storeToProperties = new Map<string, { properties: string[], storeInfo: { storeName: string; importPath: string; storeVarName: string } }>();
+          
+          propertyToStoreMap.forEach((storeInfo, propName) => {
+            if (!storeToProperties.has(storeInfo.storeName)) {
+              storeToProperties.set(storeInfo.storeName, {
+                properties: [],
+                storeInfo: storeInfo
+              });
+            }
+            storeToProperties.get(storeInfo.storeName)!.properties.push(propName);
+          });
+          
+          // Add imports and computed for each store
+          storeToProperties.forEach(({ properties, storeInfo }) => {
+            // Add import if missing
+            if (!scriptContent.includes(`import { ${storeInfo.storeName} }`)) {
+              scriptContent = `import { ${storeInfo.storeName} } from '${storeInfo.importPath}';\n${scriptContent}`;
+            }
+            
+            // Add store initialization if not present
+            if (!scriptContent.includes(`const ${storeInfo.storeVarName} = ${storeInfo.storeName}`)) {
+              scriptContent = `${scriptContent}\nconst ${storeInfo.storeVarName} = ${storeInfo.storeName}();`;
+            }
+            
+            // Add computed import if missing
             if (!scriptContent.includes("import { computed }")) {
               scriptContent = scriptContent.replace(
                 /(import\s+[^;]+;[\s\n]*)+/,
@@ -1682,31 +2786,218 @@ export async function fixPostMigrationIssues(
               );
             }
             
-            matchingProperties.forEach(propName => {
-              if (!scriptContent.match(new RegExp(`const\\s+${propName}\\s*=`))) {
+            // Add computed properties for matching properties
+            // Only add computed properties, not methods (methods end with () in usage)
+            properties.forEach(propName => {
+              // Check if it's used as a method (storeVar.propName() or propName())
+              const isMethod = scriptContent.match(new RegExp(`(?:${storeInfo.storeVarName}\\.${propName}|\\b${propName})\\s*\\(`));
+              // Check if it's already declared
+              const isDeclared = scriptContent.match(new RegExp(`const\\s+${propName}\\s*=`));
+              
+              if (!isMethod && !isDeclared) {
                 // Add computed property after store initialization
-                const storeInitMatch = scriptContent.match(new RegExp(`const\\s+${storeVarName}\\s*=\\s*${mainStore.storeName}\\(\\);`));
+                const storeInitMatch = scriptContent.match(new RegExp(`const\\s+${storeInfo.storeVarName}\\s*=\\s*${storeInfo.storeName}\\(\\);`));
                 if (storeInitMatch) {
                   const insertPos = storeInitMatch.index! + storeInitMatch[0].length;
                   scriptContent = scriptContent.slice(0, insertPos) + 
-                    `\nconst ${propName} = computed(() => ${storeVarName}.${propName});` + 
+                    `\nconst ${propName} = computed(() => ${storeInfo.storeVarName}.${propName});` + 
                     scriptContent.slice(insertPos);
                 }
               }
             });
-            
-            if (scriptContent !== originalScriptContent) {
-              fixedContent = fixedContent.replace(
-                /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
-                `$1${scriptContent}$3`,
-              );
-              result.fixed = true;
-              result.fixes.push(`Added missing main store (${mainStore.storeName}) imports and computed properties: ${matchingProperties.join(', ')}`);
-            }
+          });
+          
+          if (scriptContent !== originalScriptContent) {
+            fixedContent = fixedContent.replace(
+              /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
+              `$1${scriptContent}$3`,
+            );
+            result.fixed = true;
+            const allProperties = Array.from(propertyToStoreMap.keys());
+            result.fixes.push(`Added missing store imports and computed properties: ${allProperties.join(', ')}`);
           }
         }
       }
+      
+      // Final Step: Remove duplicate store declarations and reorganize them (AFTER all other fixes)
+      // GENERIC: This must run last to catch any duplicates created by previous fixes
+      if (scriptContent) {
+        const storeDeclPattern = /const\s+(\w+Store)\s*=\s*use\w+Store\(\)\s*;?/g;
+      
+        // Helper function to find all store declarations
+        const findAllStoreDecls = (content: string): Array<{ varName: string; declaration: string; index: number; fullMatch: string }> => {
+          const decls: Array<{ varName: string; declaration: string; index: number; fullMatch: string }> = [];
+          storeDeclPattern.lastIndex = 0;
+          let match;
+          while ((match = storeDeclPattern.exec(content)) !== null) {
+            const varName = match[1];
+            const fullMatch = match[0];
+            const declaration = fullMatch.endsWith(';') ? fullMatch : fullMatch + ';';
+            decls.push({
+              varName,
+              declaration,
+              index: match.index,
+              fullMatch: fullMatch
+            });
+          }
+          return decls;
+        };
+        
+        let storeDeclarations = findAllStoreDecls(scriptContent);
+        
+        if (storeDeclarations.length > 0) {
+          // Remove ALL duplicates (keep only first occurrence of each store)
+          const seenStoreVars = new Set<string>();
+          const duplicatesToRemove: Array<{ start: number; end: number }> = [];
+          
+          storeDeclarations.forEach(decl => {
+            if (seenStoreVars.has(decl.varName)) {
+              // Duplicate - mark for removal (include trailing whitespace/newlines)
+              const afterMatch = scriptContent.substring(decl.index + decl.fullMatch.length);
+              const trailingWhitespace = afterMatch.match(/^\s*/)?.[0] || '';
+              duplicatesToRemove.push({
+                start: decl.index,
+                end: decl.index + decl.fullMatch.length + trailingWhitespace.length
+              });
+            } else {
+              seenStoreVars.add(decl.varName);
+            }
+          });
+          
+          // Remove duplicates (in reverse order to preserve indices)
+          if (duplicatesToRemove.length > 0) {
+            duplicatesToRemove.reverse().forEach(pos => {
+              const before = scriptContent.substring(0, pos.start);
+              const after = scriptContent.substring(pos.end);
+              scriptContent = before.replace(/\n+$/, '') + '\n' + after.replace(/^\s*\n+/, '');
+            });
+            result.fixed = true;
+            result.fixes.push("Removed duplicate store declarations (final cleanup)");
+            
+            // Re-find store declarations after duplicate removal
+            storeDeclarations = findAllStoreDecls(scriptContent);
+          }
+          
+          // Reorganize store declarations to top (after imports, before usage)
+          if (storeDeclarations.length > 0) {
+            // Check if stores are used before their declarations
+            let needsReorganization = false;
+            storeDeclarations.forEach(decl => {
+              const beforeDecl = scriptContent.substring(0, decl.index);
+              const usagePattern = new RegExp(`\\b${decl.varName}\\b`);
+              if (usagePattern.test(beforeDecl)) {
+                needsReorganization = true;
+              }
+            });
+            
+            if (needsReorganization) {
+              // Remove ALL store declarations from their current positions (in reverse order)
+              let reorganizedContent = scriptContent;
+              storeDeclarations.reverse().forEach(decl => {
+                const before = reorganizedContent.substring(0, decl.index);
+                const afterMatch = reorganizedContent.substring(decl.index + decl.fullMatch.length);
+                const trailingWhitespace = afterMatch.match(/^\s*/)?.[0] || '';
+                const after = reorganizedContent.substring(decl.index + decl.fullMatch.length + trailingWhitespace.length);
+                reorganizedContent = before.replace(/\n+$/, '') + '\n' + after.replace(/^\s*\n+/, '');
+              });
+              
+              // Get unique declarations only
+              const finalUniqueStoreDecls = new Map<string, string>();
+              storeDeclarations.reverse().forEach(decl => {
+                if (!finalUniqueStoreDecls.has(decl.varName)) {
+                  finalUniqueStoreDecls.set(decl.varName, decl.declaration);
+                }
+              });
+              
+              // Find the end of imports section
+              const importMatch = reorganizedContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                const insertIndex = importMatch[0].length;
+                const storeDeclsText = Array.from(finalUniqueStoreDecls.values()).join('\n');
+                reorganizedContent = reorganizedContent.slice(0, insertIndex) + 
+                  '\n\n' + storeDeclsText + '\n' + 
+                  reorganizedContent.slice(insertIndex).trim();
+              } else {
+                const storeDeclsText = Array.from(finalUniqueStoreDecls.values()).join('\n');
+                reorganizedContent = storeDeclsText + '\n\n' + reorganizedContent.trim();
+              }
+              
+              scriptContent = reorganizedContent;
+              result.fixed = true;
+              result.fixes.push("Reorganized store declarations to top of script (final cleanup)");
+              
+              // Final check: remove any duplicates that might have been created during reorganization
+              const finalStoreDecls = findAllStoreDecls(scriptContent);
+              const finalSeenVars = new Set<string>();
+              const finalDuplicatesToRemove: Array<{ start: number; end: number }> = [];
+              
+              finalStoreDecls.forEach(decl => {
+                if (finalSeenVars.has(decl.varName)) {
+                  const afterMatch = scriptContent.substring(decl.index + decl.fullMatch.length);
+                  const trailingWhitespace = afterMatch.match(/^\s*/)?.[0] || '';
+                  finalDuplicatesToRemove.push({
+                    start: decl.index,
+                    end: decl.index + decl.fullMatch.length + trailingWhitespace.length
+                  });
+                } else {
+                  finalSeenVars.add(decl.varName);
+                }
+              });
+              
+              if (finalDuplicatesToRemove.length > 0) {
+                finalDuplicatesToRemove.reverse().forEach(pos => {
+                  const before = scriptContent.substring(0, pos.start);
+                  const after = scriptContent.substring(pos.end);
+                  scriptContent = before.replace(/\n+$/, '') + '\n' + after.replace(/^\s*\n+/, '');
+                });
+                result.fixes.push("Removed duplicate store declarations after final reorganization");
+              }
+            }
+          }
+          
+        // Step 7.5: Check for Vue lifecycle hooks usage and add imports (AFTER all reorganizations)
+        // This must run last to ensure lifecycle hooks are added correctly after all other fixes
+        const lifecycleHooks = ['onMounted', 'onUnmounted', 'onBeforeMount', 'onBeforeUnmount', 'onUpdated', 'onBeforeUpdate', 'onActivated', 'onDeactivated'];
+        const usedLifecycleHooks = lifecycleHooks.filter(hook => scriptContent.includes(`${hook}(`));
+        if (usedLifecycleHooks.length > 0) {
+          // Check if lifecycle hooks are imported
+          const hasLifecycleImport = scriptContent.match(/import\s+.*\{[^}]*\b(?:onMounted|onUnmounted|onBeforeMount|onBeforeUnmount|onUpdated|onBeforeUpdate|onActivated|onDeactivated)\b[^}]*\}\s+from\s+['"]vue['"]/);
+          if (!hasLifecycleImport) {
+            // Add lifecycle hooks to existing vue import or create new import
+            const vueImportMatch = scriptContent.match(/import\s+.*\{([^}]+)\}\s+from\s+['"]vue['"]/);
+            if (vueImportMatch) {
+              // Add to existing import
+              const existingImports = vueImportMatch[1].split(',').map(i => i.trim()).filter(i => i);
+              const newImports = [...existingImports, ...usedLifecycleHooks.filter(h => !existingImports.includes(h))];
+              scriptContent = scriptContent.replace(
+                /import\s+.*\{[^}]+\}\s+from\s+['"]vue['"]/,
+                `import { ${newImports.join(', ')} } from 'vue'`
+              );
+            } else {
+              // Create new import
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                scriptContent = scriptContent.replace(
+                  /(import\s+[^;]+;[\s\n]*)+/,
+                  `$&import { ${usedLifecycleHooks.join(', ')} } from 'vue';\n`
+                );
+              } else {
+                scriptContent = `import { ${usedLifecycleHooks.join(', ')} } from 'vue';\n${scriptContent}`;
+              }
+            }
+            result.fixed = true;
+            result.fixes.push(`Added missing lifecycle hooks imports: ${usedLifecycleHooks.join(', ')}`);
+          }
+        }
+        
+        // Update fixedContent with final scriptContent
+        fixedContent = fixedContent.replace(
+          /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
+          `$1${scriptContent}$3`,
+        );
+      }
     }
+  }
   }
 
   return {

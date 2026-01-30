@@ -14,7 +14,7 @@ import {
 } from "../utils/safety";
 import { RollbackManager } from "../utils/safety";
 import { migratePackageJson } from "../utils/migration";
-import { migrateWebpackConfig } from "../utils/migration/webpack-config-migrator";
+import { migrateWebpackConfig, migrateVueConfig } from "../utils/migration/webpack-config-migrator";
 import { validateMigration } from "../utils/migration";
 import {
   fixPostMigrationIssues,
@@ -584,6 +584,29 @@ export async function migrate(
       }
     }
 
+    // Migrate vue.config.js for Vue CLI projects
+    try {
+      const vueConfigPath = path.join(projectPath, "vue.config.js");
+      // Backup vue.config.js before migration if not already backed up
+      if (rollbackManager && !dryRun) {
+        try {
+          await rollbackManager.backupFile(vueConfigPath);
+        } catch {
+          // Already backed up or doesn't exist
+        }
+      }
+
+      const vueConfigResult = await migrateVueConfig(projectPath, dryRun);
+      if (vueConfigResult.modified) {
+        result.warnings.push(
+          ...vueConfigResult.changes.map((c) => `Vue Config: ${c}`),
+        );
+        result.warnings.push(...vueConfigResult.warnings);
+      }
+    } catch (error) {
+      // vue.config.js doesn't exist or error, that's fine
+    }
+
     // Migrate webpack.config.js if it exists
     try {
       const webpackConfigPath = path.join(projectPath, "webpack.config.js");
@@ -619,6 +642,76 @@ export async function migrate(
       } catch (error) {
         result.warnings.push(
           `Validation error: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    // Second pass: Fix remaining issues after all stores are migrated
+    // GENERIC: This ensures store analysis works correctly after all stores are migrated
+    if (!dryRun && result.filesModified > 0) {
+      try {
+        // Clear the store analysis cache to force re-analysis with migrated stores
+        const { clearStoreAnalysisCache } = await import("../utils/migration/post-migration-fixer");
+        if (clearStoreAnalysisCache) {
+          clearStoreAnalysisCache();
+        }
+
+        // Re-process Vue files to fix remaining issues (missing store imports, etc.)
+        const vueFilesToFix = vueFiles.filter(file => 
+          file.endsWith('.vue') && 
+          !file.includes('node_modules') &&
+          !file.includes('dist')
+        );
+
+        for (const filePath of vueFilesToFix) {
+          try {
+            const content = await safeReadFile(filePath);
+            if (content) {
+              const fixResult = await fixPostMigrationIssues(
+                filePath,
+                content,
+                options.enableTypeScript || false,
+                projectPath,
+              );
+              if (fixResult.fixed && fixResult.fixes.length > 0) {
+                await safeWriteFile(filePath, fixResult.content);
+                result.warnings.push(
+                  `Second pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`,
+                );
+              }
+            }
+          } catch (error) {
+            // Skip files that can't be read or fixed
+          }
+        }
+
+        // Third pass: Clean up duplicates and final fixes
+        // GENERIC: Final cleanup pass to remove any remaining duplicates or issues
+        for (const filePath of vueFilesToFix) {
+          try {
+            const content = await safeReadFile(filePath);
+            if (content) {
+              const fixResult = await fixPostMigrationIssues(
+                filePath,
+                content,
+                options.enableTypeScript || false,
+                projectPath,
+              );
+              if (fixResult.fixed && fixResult.fixes.length > 0) {
+                await safeWriteFile(filePath, fixResult.content);
+                result.warnings.push(
+                  `Third pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`,
+                );
+              }
+            }
+          } catch (error) {
+            // Skip files that can't be read or fixed
+          }
+        }
+      } catch (error) {
+        // Pass failed, but don't fail the entire migration
+        result.warnings.push(
+          `Post-migration pass error: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }

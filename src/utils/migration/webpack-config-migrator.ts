@@ -8,6 +8,109 @@ export interface WebpackConfigMigrationResult {
 }
 
 /**
+ * Migrate vue.config.js for Vue 3 compatibility
+ * - Add support for .mjs files (ESM modules from Vue Router 4)
+ * - Update Vue CLI configuration
+ */
+export async function migrateVueConfig(
+  projectPath: string,
+  dryRun: boolean = false,
+): Promise<WebpackConfigMigrationResult> {
+  const result: WebpackConfigMigrationResult = {
+    modified: false,
+    changes: [],
+    warnings: [],
+  };
+
+  const vueConfigPath = path.join(projectPath, "vue.config.js");
+
+  try {
+    let content = await fs.readFile(vueConfigPath, "utf-8");
+    let modifiedContent = content;
+
+    // Check if .mjs support is already configured
+    const hasMjsSupport = 
+      content.includes('.mjs') || 
+      content.includes('javascript/auto') ||
+      content.includes('chainWebpack');
+
+    if (!hasMjsSupport) {
+      // Add support for .mjs files to handle Vue Router 4 ESM modules
+      // This is needed for Vue CLI 4 which doesn't handle .mjs files by default
+      
+      // Check if configureWebpack exists
+      if (content.includes('configureWebpack')) {
+        // Add module rules to existing configureWebpack
+        if (!content.includes('module:')) {
+          // Find configureWebpack and add module configuration
+          modifiedContent = modifiedContent.replace(
+            /(configureWebpack:\s*\{)/,
+            `$1\n    module: {\n      rules: [\n        {\n          test: /\\.mjs$/,\n          include: /node_modules/,\n          type: 'javascript/auto'\n        }\n      ]\n    },`
+          );
+        } else {
+          // Add rule to existing module.rules
+          modifiedContent = modifiedContent.replace(
+            /(module:\s*\{[^}]*rules:\s*\[)/,
+            `$1\n        {\n          test: /\\.mjs$/,\n          include: /node_modules/,\n          type: 'javascript/auto'\n        },`
+          );
+        }
+      } else {
+        // Add configureWebpack if it doesn't exist
+        if (content.includes('module.exports')) {
+          modifiedContent = modifiedContent.replace(
+            /(module\.exports\s*=\s*\{)/,
+            `$1\n  configureWebpack: {\n    module: {\n      rules: [\n        {\n          test: /\\.mjs$/,\n          include: /node_modules/,\n          type: 'javascript/auto'\n        }\n      ]\n    }\n  },`
+          );
+        } else {
+          // Add entire configuration
+          modifiedContent = `const path = require('path')\n\nmodule.exports = {\n  configureWebpack: {\n    module: {\n      rules: [\n        {\n          test: /\\.mjs$/,\n          include: /node_modules/,\n          type: 'javascript/auto'\n        }\n      ]\n    }\n  }\n}\n${modifiedContent}`;
+        }
+      }
+
+      // Also add chainWebpack configuration as fallback
+      if (!content.includes('chainWebpack')) {
+        modifiedContent = modifiedContent.replace(
+          /(module\.exports\s*=\s*\{)/,
+          `$1\n  chainWebpack: config => {\n    config.module\n      .rule('mjs')\n      .test(/\\.mjs$/)\n      .include\n        .add(/node_modules/)\n        .end()\n      .type('javascript/auto')\n  },`
+        );
+      }
+
+      result.modified = true;
+      result.changes.push("Added .mjs file support for Vue Router 4 ESM modules");
+    }
+
+    // Update Vue CLI version recommendation if using Vue CLI 4
+    if (content.includes('@vue/cli-service') && content.includes('^4.')) {
+      result.warnings.push(
+        "Consider upgrading to @vue/cli-service ^5.0.0 for better ESM support"
+      );
+    }
+
+    if (modifiedContent !== content && !dryRun) {
+      await fs.writeFile(vueConfigPath, modifiedContent, "utf-8");
+    }
+
+    return result;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("ENOENT")) {
+      // vue.config.js doesn't exist, create it
+      if (!dryRun) {
+        const defaultConfig = `const path = require('path')\n\nmodule.exports = {\n  configureWebpack: {\n    resolve: {\n      alias: {\n        '@': path.resolve(__dirname, 'src')\n      }\n    },\n    module: {\n      rules: [\n        {\n          test: /\\.mjs$/,\n          include: /node_modules/,\n          type: 'javascript/auto'\n        }\n      ]\n    }\n  },\n  chainWebpack: config => {\n    config.module\n      .rule('mjs')\n      .test(/\\.mjs$/)\n      .include\n        .add(/node_modules/)\n        .end()\n      .type('javascript/auto')\n  }\n}\n`;
+        await fs.writeFile(vueConfigPath, defaultConfig, "utf-8");
+        result.modified = true;
+        result.changes.push("Created vue.config.js with .mjs support");
+      }
+      return result;
+    } else {
+      result.warnings.push(
+        `Error migrating vue.config.js: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return result;
+    }
+  }
+}
+
+/**
  * Migrate webpack.config.js for Vue 3 compatibility
  * - Remove Vue 2 specific alias (vue$: "vue/dist/vue.esm.js")
  * - Update vue-loader configuration if needed
