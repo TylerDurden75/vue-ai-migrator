@@ -139,6 +139,25 @@ export const routerTransform: Transform = (fileInfo: FileInfo, api: API) => {
     }
   });
 
+  // Transform catch-all routes: path: '*' → path: '/:pathMatch(.*)*'
+  // Vue Router 4 requires catch-all routes to use a param with custom regexp
+  root.find(j.ObjectExpression).forEach((path: any) => {
+    const properties = path.value.properties || [];
+    properties.forEach((prop: any) => {
+      if (
+        prop.key &&
+        prop.key.name === "path" &&
+        prop.value &&
+        prop.value.type === "Literal" &&
+        prop.value.value === "*"
+      ) {
+        // Replace path: '*' with path: '/:pathMatch(.*)*'
+        prop.value.value = "/:pathMatch(.*)*";
+        hasChanges = true;
+      }
+    });
+  });
+
   // Transform router-link props
   // router-link :to="{ name: 'route' }" → router-link :to="{ name: 'route' }" (same, but handle v-slot)
   // This is mostly handled in templates, but we can detect router-link usage in JS

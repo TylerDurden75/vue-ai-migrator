@@ -16,6 +16,70 @@ export interface FixResult {
  * - Removes Vuex imports
  */
 /**
+ * Find the main store (store/index.js or stores/index.js) and return its store name
+ */
+async function findMainStore(projectRoot: string): Promise<{ storeName: string; importPath: string } | null> {
+  try {
+    // Try src/store/index.js first
+    const storeIndexPath = path.join(projectRoot, "src", "store", "index.js");
+    try {
+      const storeContent = await fs.readFile(storeIndexPath, 'utf-8');
+      const storeNameMatch = storeContent.match(/export\s+const\s+(use\w+Store)\s*=/);
+      if (storeNameMatch) {
+        return {
+          storeName: storeNameMatch[1],
+          importPath: '@/store/index'
+        };
+      }
+    } catch (error) {
+      // Try src/store/index.ts
+      try {
+        const storeIndexPathTs = path.join(projectRoot, "src", "store", "index.ts");
+        const storeContent = await fs.readFile(storeIndexPathTs, 'utf-8');
+        const storeNameMatch = storeContent.match(/export\s+const\s+(use\w+Store)\s*=/);
+        if (storeNameMatch) {
+          return {
+            storeName: storeNameMatch[1],
+            importPath: '@/store/index'
+          };
+        }
+      } catch (error2) {
+        // Try src/stores/index.js
+        try {
+          const storesIndexPath = path.join(projectRoot, "src", "stores", "index.js");
+          const storeContent = await fs.readFile(storesIndexPath, 'utf-8');
+          const storeNameMatch = storeContent.match(/export\s+const\s+(use\w+Store)\s*=/);
+          if (storeNameMatch) {
+            return {
+              storeName: storeNameMatch[1],
+              importPath: '@/stores/index'
+            };
+          }
+        } catch (error3) {
+          // Try src/stores/index.ts
+          try {
+            const storesIndexPathTs = path.join(projectRoot, "src", "stores", "index.ts");
+            const storeContent = await fs.readFile(storesIndexPathTs, 'utf-8');
+            const storeNameMatch = storeContent.match(/export\s+const\s+(use\w+Store)\s*=/);
+            if (storeNameMatch) {
+              return {
+                storeName: storeNameMatch[1],
+                importPath: '@/stores/index'
+              };
+            }
+          } catch (error4) {
+            // No main store found
+          }
+        }
+      }
+    }
+  } catch (error) {
+    // Error reading directory
+  }
+  return null;
+}
+
+/**
  * Analyze Pinia stores to build a dynamic map of methods/getters → store modules
  * This makes store detection generic for any project
  */
@@ -638,22 +702,23 @@ export async function fixPostMigrationIssues(
           const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
           storesToImport.set(moduleName, storeName);
           
-          // Replace router.app.$store.getters['module/prop'] with store().prop
-          const storeVarName = `${moduleName}Store`;
-          let replacement: string;
-          
-          if (type === 'getters') {
-            replacement = `${storeVarName}.${propertyName}`;
-          } else if (type === 'dispatch') {
-            replacement = `${storeVarName}.${propertyName}()`;
-          } else {
-            // state
-            replacement = `${storeVarName}.${propertyName}`;
-          }
-          
-          // Replace the pattern
-          const patternToReplace = match[0];
-          scriptContent = scriptContent.replace(patternToReplace, replacement);
+              // Replace router.app.$store.getters['module/prop'] with store().prop
+              // Note: Store will be initialized inside beforeEach guard
+              const storeVarName = `${moduleName}Store`;
+              let replacement: string;
+              
+              if (type === 'getters') {
+                replacement = `${storeVarName}.${propertyName}`;
+              } else if (type === 'dispatch') {
+                replacement = `${storeVarName}.${propertyName}()`;
+              } else {
+                // state
+                replacement = `${storeVarName}.${propertyName}`;
+              }
+              
+              // Replace the pattern
+              const patternToReplace = match[0];
+              scriptContent = scriptContent.replace(patternToReplace, replacement);
         });
         
         // Add store imports if needed
@@ -668,21 +733,45 @@ export async function fixPostMigrationIssues(
               scriptContent = importLine + scriptContent;
             }
             
-            // Initialize store if not already done
+            // Initialize store INSIDE router.beforeEach guard, not at module level
+            // This is because Pinia must be initialized before stores can be used
             const storeVarName = `${moduleName}Store`;
             const initPattern = new RegExp(`const\\s+${storeVarName}\\s*=`, 'g');
-            if (!initPattern.test(scriptContent)) {
-              // Add store initialization before router.beforeEach
-              const initLine = `const ${storeVarName} = ${storeName}();\n\n`;
-              const beforeEachMatch = scriptContent.match(/router\.beforeEach/);
+            const insideBeforeEachPattern = new RegExp(`router\\.beforeEach[^}]*const\\s+${storeVarName}`, 's');
+            
+            if (!initPattern.test(scriptContent) || !insideBeforeEachPattern.test(scriptContent)) {
+              // Check if router.beforeEach exists
+              const beforeEachMatch = scriptContent.match(/router\.beforeEach\s*\([^)]*\)\s*=>\s*\{/);
               if (beforeEachMatch) {
-                const index = scriptContent.indexOf('router.beforeEach');
-                scriptContent = scriptContent.substring(0, index) + 
-                              initLine + 
-                              scriptContent.substring(index);
+                // Check if guard is already async
+                const isAsync = beforeEachMatch[0].includes('async');
+                const asyncKeyword = isAsync ? '' : 'async ';
+                
+                // Add store import and initialization INSIDE the beforeEach guard
+                const initLine = `    const { ${storeName} } = await import('${importPath}');\n    const ${storeVarName} = ${storeName}();\n`;
+                
+                // Make guard async if not already
+                if (!isAsync) {
+                  scriptContent = scriptContent.replace(
+                    /(router\.beforeEach\s*\()([^)]*)(\)\s*=>\s*\{)/,
+                    `$1${asyncKeyword}$2$3`
+                  );
+                }
+                
+                // Add store initialization inside guard
+                scriptContent = scriptContent.replace(
+                  /(router\.beforeEach\s*\([^)]*\)\s*=>\s*\{)/,
+                  `$1\n${initLine}`
+                );
               } else {
-                // Add at the end before export
-                scriptContent = scriptContent.replace(/export\s+default/, `${initLine}export default`);
+                // If no beforeEach, create one
+                const beforeEachCode = `router.beforeEach(async (to, from, next) => {
+  const { ${storeName} } = await import('${importPath}');
+  const ${storeVarName} = ${storeName}();
+  // Add your guard logic here
+  next();
+});\n\n`;
+                scriptContent = scriptContent.replace(/export\s+default/, `${beforeEachCode}export default`);
               }
             }
           });
@@ -1067,6 +1156,27 @@ export async function fixPostMigrationIssues(
       
       // Find all store method/getter calls
       const usedMethods = new Set<string>();
+      const usedModules = new Set<string>(); // Track modules from this.$store patterns
+      
+      // First, detect this.$store.dispatch('module/method') or this.$store.getters['module/getter']
+      const vuexDispatchPattern = /this\.\$store\.dispatch\(['"]([^'"]+)\/([^'"]+)['"]/g;
+      const vuexGettersPattern = /this\.\$store\.getters\[['"]([^'"]+)\/([^'"]+)['"]/g;
+      
+      let dispatchMatch;
+      while ((dispatchMatch = vuexDispatchPattern.exec(scriptContent)) !== null) {
+        const [, module, method] = dispatchMatch;
+        usedModules.add(module);
+        usedMethods.add(method);
+      }
+      
+      let gettersMatch;
+      while ((gettersMatch = vuexGettersPattern.exec(scriptContent)) !== null) {
+        const [, module, getter] = gettersMatch;
+        usedModules.add(module);
+        usedMethods.add(getter);
+      }
+      
+      // Then detect direct method/getter calls
       Object.keys(storeMethodMap).forEach(method => {
         // Pattern 1: storeName.method() - explicit store call
         // Pattern 2: method() - direct method call (if it's a store method)
@@ -1089,6 +1199,13 @@ export async function fixPostMigrationIssues(
       
       // Determine which store should be used based on methods
       const storeUsage = new Map<string, number>(); // module → count
+      
+      // First, add modules detected from this.$store patterns (high priority)
+      usedModules.forEach(module => {
+        storeUsage.set(module, (storeUsage.get(module) || 0) + 10); // Higher weight for explicit module references
+      });
+      
+      // Then add modules from method calls
       usedMethods.forEach(method => {
         const module = storeMethodMap[method];
         if (module) {
@@ -1444,6 +1561,150 @@ export async function fixPostMigrationIssues(
         );
         result.fixed = true;
         result.fixes.push("Fixed props references in watchers and computed");
+      }
+    }
+  }
+
+  // Fix 12: Detect undefined properties in <script setup> that might be from main store
+  // This handles cases like appInfo, appName, version that come from the main store
+  if (isVueFile && fixedContent.includes("<script setup") && projectRoot) {
+    const scriptSetupMatch = fixedContent.match(
+      /<script\s+setup[^>]*>([\s\S]*?)<\/script>/,
+    );
+    const templateMatch = fixedContent.match(
+      /<template>([\s\S]*?)<\/template>/,
+    );
+    
+    if (scriptSetupMatch && templateMatch) {
+      let scriptContent = scriptSetupMatch[1];
+      const templateContent = templateMatch[1];
+      const originalScriptContent = scriptContent;
+      
+      // Find properties used in template but not defined in script
+      // Common main store properties: appInfo, appName, version, etc.
+      const mainStorePropertyPattern = /\{\{\s*(\w+)\s*\}\}/g;
+      const usedProperties = new Set<string>();
+      let templateMatch2;
+      while ((templateMatch2 = mainStorePropertyPattern.exec(templateContent)) !== null) {
+        const propName = templateMatch2[1];
+        // Check if property is defined in script
+        const isDefined = scriptContent.match(
+          new RegExp(`(const|let|var|function|import)\\s+${propName}\\b`, 'g')
+        ) || scriptContent.match(
+          new RegExp(`\\b${propName}\\s*=\\s*computed`, 'g')
+        );
+        
+        if (!isDefined && !['v-if', 'v-for', 'v-show', 'v-model'].some(v => templateContent.includes(`${v}="${propName}"`))) {
+          usedProperties.add(propName);
+        }
+      }
+      
+      // If we found undefined properties, try to find the main store
+      if (usedProperties.size > 0) {
+        const mainStore = await findMainStore(projectRoot);
+        
+        if (mainStore) {
+          // Read the main store to see what properties it exports
+          const storeIndexPath = path.join(projectRoot, "src", "store", "index.js");
+          let storeContent = '';
+          try {
+            storeContent = await fs.readFile(storeIndexPath, 'utf-8');
+          } catch (error) {
+            try {
+              const storeIndexPathTs = path.join(projectRoot, "src", "store", "index.ts");
+              storeContent = await fs.readFile(storeIndexPathTs, 'utf-8');
+            } catch (error2) {
+              try {
+                const storesIndexPath = path.join(projectRoot, "src", "stores", "index.js");
+                storeContent = await fs.readFile(storesIndexPath, 'utf-8');
+              } catch (error3) {
+                try {
+                  const storesIndexPathTs = path.join(projectRoot, "src", "stores", "index.ts");
+                  storeContent = await fs.readFile(storesIndexPathTs, 'utf-8');
+                } catch (error4) {
+                  // Could not read store
+                }
+              }
+            }
+          }
+          
+          // Extract exported properties from the store
+          const exportedProperties = new Set<string>();
+          if (storeContent) {
+            // Pattern: return { prop1, prop2, prop3: alias, ... }
+            const returnMatch = storeContent.match(/return\s*\{([\s\S]+?)\}\s*;?\s*\}\)/);
+            if (returnMatch) {
+              const returnContent = returnMatch[1];
+              const propertyPattern = /(\w+)(?:\s*:\s*(\w+))?/g;
+              let propMatch;
+              while ((propMatch = propertyPattern.exec(returnContent)) !== null) {
+                const exportedName = propMatch[2] || propMatch[1];
+                exportedProperties.add(exportedName);
+              }
+            }
+          }
+          
+          // Check if any undefined properties match exported properties from main store
+          const matchingProperties = Array.from(usedProperties).filter(prop => 
+            exportedProperties.has(prop) || 
+            // Common main store properties even if not found
+            ['appInfo', 'appName', 'version', 'appVersion'].includes(prop)
+          );
+          
+          if (matchingProperties.length > 0) {
+            // Add import and initialization if not already present
+            const storeVarName = 'appStore';
+            const hasStoreImport = scriptContent.includes(`import { ${mainStore.storeName} }`);
+            const hasStoreInit = scriptContent.includes(`const ${storeVarName} = ${mainStore.storeName}`);
+            
+            if (!hasStoreImport) {
+              scriptContent = `import { ${mainStore.storeName} } from '${mainStore.importPath}';\n${scriptContent}`;
+            }
+            
+            if (!hasStoreInit) {
+              // Add after imports
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                const importEnd = importMatch[0].length;
+                scriptContent = scriptContent.slice(0, importEnd) + 
+                  `\nconst ${storeVarName} = ${mainStore.storeName}();\n` + 
+                  scriptContent.slice(importEnd);
+              } else {
+                scriptContent = `const ${storeVarName} = ${mainStore.storeName}();\n${scriptContent}`;
+              }
+            }
+            
+            // Add computed properties for matching properties
+            if (!scriptContent.includes("import { computed }")) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$1import { computed } from 'vue';\n`
+              );
+            }
+            
+            matchingProperties.forEach(propName => {
+              if (!scriptContent.match(new RegExp(`const\\s+${propName}\\s*=`))) {
+                // Add computed property after store initialization
+                const storeInitMatch = scriptContent.match(new RegExp(`const\\s+${storeVarName}\\s*=\\s*${mainStore.storeName}\\(\\);`));
+                if (storeInitMatch) {
+                  const insertPos = storeInitMatch.index! + storeInitMatch[0].length;
+                  scriptContent = scriptContent.slice(0, insertPos) + 
+                    `\nconst ${propName} = computed(() => ${storeVarName}.${propName});` + 
+                    scriptContent.slice(insertPos);
+                }
+              }
+            });
+            
+            if (scriptContent !== originalScriptContent) {
+              fixedContent = fixedContent.replace(
+                /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
+                `$1${scriptContent}$3`,
+              );
+              result.fixed = true;
+              result.fixes.push(`Added missing main store (${mainStore.storeName}) imports and computed properties: ${matchingProperties.join(', ')}`);
+            }
+          }
+        }
       }
     }
   }
