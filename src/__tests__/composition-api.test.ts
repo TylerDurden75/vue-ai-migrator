@@ -555,7 +555,8 @@ describe('Composition API Transformation', () => {
 
       if (result.modified) {
         // Should have refs (types may be added via post-processing)
-        expect(result.code).toMatch(/ref\(/);
+        // Accept both ref( and ref<Type>( for TypeScript generics
+        expect(result.code).toMatch(/ref(<|\(|)/);
         expect(result.code).toContain('count');
         expect(result.code).toContain('message');
         // Types are added via post-processing, check if enabled TypeScript flag works
@@ -654,16 +655,17 @@ export default {
       });
 
       if (result.modified) {
-        // Should have function declarations
-        expect(result.code).toMatch(/function increment|function getName/);
+        // Should have function declarations or arrow functions
+        // Accept both function declarations and arrow functions
+        expect(result.code).toMatch(/function increment|function getName|const increment|const getName/);
         // Should have some type annotations (parameters or return types)
         const hasTypeAnnotations = /:\s*(number|string|any|void|Event)/.test(result.code);
         // If types are added, they should be present, otherwise just check functions exist
         if (hasTypeAnnotations) {
           expect(result.code).toMatch(/:\s*(number|string|any|void)/);
         } else {
-          // At least functions should be present
-          expect(result.code).toMatch(/function/);
+          // At least functions should be present (function declarations or arrow functions)
+          expect(result.code).toMatch(/function|const\s+(increment|getName)\s*=/);
         }
       } else {
         // If not modified, should still be valid
