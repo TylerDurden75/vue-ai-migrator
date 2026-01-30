@@ -46,6 +46,16 @@ export async function migrateWebpackConfig(
       "",
     );
 
+    // Fix syntax errors: remove empty alias objects with trailing commas
+    // Pattern: alias: { , } or alias: { }
+    modifiedContent = modifiedContent.replace(/alias:\s*{\s*,\s*}/g, "");
+
+    // Pattern: alias: { } with trailing comma
+    modifiedContent = modifiedContent.replace(/alias:\s*{\s*}\s*,/g, "");
+
+    // Pattern: alias: { } without trailing comma
+    modifiedContent = modifiedContent.replace(/alias:\s*{\s*}/g, "");
+
     // Clean up empty alias object if it becomes empty
     modifiedContent = modifiedContent.replace(
       /resolve:\s*{\s*alias:\s*{\s*},\s*extensions:/g,
@@ -57,6 +67,42 @@ export async function migrateWebpackConfig(
       /resolve:\s*{\s*alias:\s*{\s*},\s*}/g,
       "resolve: {}",
     );
+
+    // Clean up double commas that might result from alias removal
+    modifiedContent = modifiedContent.replace(/,(\s*,)+/g, ",");
+    modifiedContent = modifiedContent.replace(/{\s*,/g, "{");
+    modifiedContent = modifiedContent.replace(/,\s*}/g, "}");
+
+    // Fix duplicate alias properties - keep only the first valid one
+    const aliasMatches = modifiedContent.match(/alias:\s*{([^}]*)}/g);
+    if (aliasMatches && aliasMatches.length > 1) {
+      // Find the first alias with actual content
+      let validAlias = "";
+      for (const match of aliasMatches) {
+        const aliasContent = match.match(/alias:\s*{([^}]*)}/)?.[1] || "";
+        if (aliasContent.trim() && !aliasContent.match(/^[\s,]*$/)) {
+          validAlias = match;
+          break;
+        }
+      }
+
+      // Remove all alias blocks
+      modifiedContent = modifiedContent.replace(/alias:\s*{[^}]*},?\s*/g, "");
+
+      // Add back the valid alias if we found one
+      if (validAlias) {
+        // Find resolve: { and add alias before extensions or closing brace
+        modifiedContent = modifiedContent.replace(
+          /(resolve:\s*{)/,
+          `$1\n    ${validAlias.replace(/alias:\s*{/, "alias: {").replace(/\n/g, "\n    ")},\n`,
+        );
+        result.changes.push("Fixed duplicate alias properties");
+        result.modified = true;
+      }
+    }
+
+    // Fix syntax errors: remove alias blocks with only commas or invalid syntax
+    modifiedContent = modifiedContent.replace(/alias:\s*{\s*,\s*},?\s*/g, "");
 
     // Add @ alias for src directory if not present (common Vue 3 pattern)
     if (

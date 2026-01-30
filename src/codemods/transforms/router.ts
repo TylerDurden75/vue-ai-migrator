@@ -1,4 +1,4 @@
-import { Transform, FileInfo, API } from 'jscodeshift';
+import { Transform, FileInfo, API } from "jscodeshift";
 
 /**
  * Transforms Vue Router 3 to Vue Router 4
@@ -14,68 +14,125 @@ export const routerTransform: Transform = (fileInfo: FileInfo, api: API) => {
 
   let hasChanges = false;
 
-  // Transform new Router({ ... }) to createRouter({ ... })
-  root.find(j.NewExpression).forEach((path: any) => {
+  // Remove Vue.use(VueRouter) calls
+  root.find(j.CallExpression).forEach((path: any) => {
+    const callee = path.value.callee;
     if (
-      path.value.callee.type === 'Identifier' &&
-      path.value.callee.name === 'Router'
+      callee.type === "MemberExpression" &&
+      callee.object.type === "Identifier" &&
+      callee.object.name === "Vue" &&
+      callee.property.type === "Identifier" &&
+      callee.property.name === "use" &&
+      path.value.arguments.length > 0 &&
+      path.value.arguments[0].type === "Identifier" &&
+      path.value.arguments[0].name === "VueRouter"
     ) {
+      // Remove the entire statement
+      let statement = path.parent;
+      // Find the ExpressionStatement parent
+      while (
+        statement &&
+        statement.value &&
+        statement.value.type !== "ExpressionStatement" &&
+        statement.value.type !== "VariableDeclarator"
+      ) {
+        statement = statement.parent;
+      }
+      if (
+        statement &&
+        statement.value &&
+        statement.value.type === "ExpressionStatement"
+      ) {
+        j(statement).remove();
+        hasChanges = true;
+      }
+    }
+  });
+
+  // Transform new VueRouter({ ... }) or new Router({ ... }) to createRouter({ ... })
+  root.find(j.NewExpression).forEach((path: any) => {
+    const callee = path.value.callee;
+    const isVueRouter =
+      (callee.type === "Identifier" &&
+        (callee.name === "Router" || callee.name === "VueRouter")) ||
+      (callee.type === "MemberExpression" &&
+        callee.object.type === "Identifier" &&
+        callee.object.name === "VueRouter" &&
+        callee.property.type === "Identifier" &&
+        callee.property.name === "Router");
+
+    if (isVueRouter) {
       const args = path.value.arguments;
-      
-      if (args.length > 0 && args[0].type === 'ObjectExpression') {
+
+      if (args.length > 0 && args[0].type === "ObjectExpression") {
         const config = args[0];
         const properties = config.properties || [];
-        
+
         // Transform mode to history
-        properties.forEach((prop: any) => {
-          if (prop.key && prop.key.name === 'mode') {
-            const modeValue = prop.value.value;
-            
-            if (modeValue === 'history' || modeValue === 'hash' || modeValue === 'abstract') {
-              // Remove mode property
-              j(prop).remove();
-              
-              // Add history property
-              const historyFunction = modeValue === 'history' 
-                ? 'createWebHistory'
-                : modeValue === 'hash'
-                ? 'createWebHashHistory'
-                : 'createMemoryHistory';
-              
-              // Check if base exists
-              const baseProp = properties.find((p: any) => p.key && p.key.name === 'base');
-              let historyArgs: any[] = [];
-              
-              if (baseProp) {
-                // Combine base into history
-                historyArgs = [
-                  j.objectExpression([
-                    j.property('init', j.identifier('base'), baseProp.value)
-                  ])
-                ];
-                j(baseProp).remove();
-              }
-              
-              const historyCall = j.callExpression(
-                j.identifier(historyFunction),
-                historyArgs
-              );
-              
-              config.properties.push(
-                j.property('init', j.identifier('history'), historyCall)
-              );
-              
-              hasChanges = true;
+        const modeProp = properties.find(
+          (p: any) => p.key && p.key.name === "mode",
+        );
+        const baseProp = properties.find(
+          (p: any) => p.key && p.key.name === "base",
+        );
+
+        if (modeProp && modeProp.value) {
+          const modeValue = modeProp.value.value;
+
+          if (
+            modeValue === "history" ||
+            modeValue === "hash" ||
+            modeValue === "abstract"
+          ) {
+            // Remove mode property by filtering it out
+            const modeIndex = properties.indexOf(modeProp);
+            if (modeIndex !== -1) {
+              properties.splice(modeIndex, 1);
             }
+
+            // Add history property
+            const historyFunction =
+              modeValue === "history"
+                ? "createWebHistory"
+                : modeValue === "hash"
+                  ? "createWebHashHistory"
+                  : "createMemoryHistory";
+
+            let historyArgs: any[] = [];
+
+            if (baseProp) {
+              // Combine base into history
+              historyArgs = [
+                j.objectExpression([
+                  j.property("init", j.identifier("base"), baseProp.value),
+                ]),
+              ];
+              // Remove base property
+              const baseIndex = properties.indexOf(baseProp);
+              if (baseIndex !== -1) {
+                properties.splice(baseIndex, 1);
+              }
+            }
+
+            const historyCall = j.callExpression(
+              j.identifier(historyFunction),
+              historyArgs,
+            );
+
+            config.properties.push(
+              j.property("init", j.identifier("history"), historyCall),
+            );
+
+            hasChanges = true;
           }
-        });
-        
+        }
+
         // Transform to createRouter call
         const createRouterCall = j.callExpression(
-          j.identifier('createRouter'),
-          [config]
+          j.identifier("createRouter"),
+          [config],
         );
-        
+
         j(path).replaceWith(createRouterCall);
         hasChanges = true;
       }
@@ -89,22 +146,26 @@ export const routerTransform: Transform = (fileInfo: FileInfo, api: API) => {
   // Transform router.push/replace with string to object
   root.find(j.CallExpression).forEach((path: any) => {
     const callee = path.value.callee;
-    
+
     if (
-      callee.type === 'MemberExpression' &&
-      callee.property.type === 'Identifier' &&
-      ['push', 'replace'].includes(callee.property.name)
+      callee.type === "MemberExpression" &&
+      callee.property.type === "Identifier" &&
+      ["push", "replace"].includes(callee.property.name)
     ) {
       const args = path.value.arguments;
-      
+
       // If first arg is a string literal, convert to object with path
-      if (args.length > 0 && args[0].type === 'Literal' && typeof args[0].value === 'string') {
+      if (
+        args.length > 0 &&
+        args[0].type === "Literal" &&
+        typeof args[0].value === "string"
+      ) {
         const pathValue = args[0].value;
-        
+
         // Only convert if it looks like a path (starts with /)
-        if (pathValue.startsWith('/')) {
+        if (pathValue.startsWith("/")) {
           args[0] = j.objectExpression([
-            j.property('init', j.identifier('path'), args[0])
+            j.property("init", j.identifier("path"), args[0]),
           ]);
           hasChanges = true;
         }
@@ -112,33 +173,123 @@ export const routerTransform: Transform = (fileInfo: FileInfo, api: API) => {
     }
   });
 
-  // Add import for createRouter and history functions if needed
+  // Update imports: remove Vue and VueRouter default imports, add createRouter and createWebHistory
   if (hasChanges) {
-    const imports = root.find(j.ImportDeclaration);
+    let needsCreateWebHistory = false;
+
+    // Check if we need createWebHistory (if mode was 'history')
+    const source = root.toSource();
+    if (
+      source.includes("createWebHistory") ||
+      source.includes('mode: "history"')
+    ) {
+      needsCreateWebHistory = true;
+    }
+
+    // Collect imports to modify (avoid modifying collection while iterating)
+    const importsToModify: any[] = [];
+    const importsToRemove: any[] = [];
     let hasRouterImport = false;
-    
-    imports.forEach((path: any) => {
-      if (path.value.source.value === 'vue-router') {
-        hasRouterImport = true;
+
+    root.find(j.ImportDeclaration).forEach((path: any) => {
+      if (!path.value || !path.value.source) {
+        return;
+      }
+
+      // Remove Vue default import if present
+      if (path.value.source.value === "vue") {
         const specifiers = path.value.specifiers || [];
-        
-        // Check if createRouter is already imported
-        const hasCreateRouter = specifiers.some((s: any) => 
-          s.imported && s.imported.name === 'createRouter'
+        const defaultSpec = specifiers.find(
+          (s: any) => s && s.type === "ImportDefaultSpecifier",
         );
-        
-        if (!hasCreateRouter) {
-          specifiers.push(j.importSpecifier(j.identifier('createRouter')));
-          path.value.specifiers = specifiers;
+        if (defaultSpec && specifiers.length === 1) {
+          // Remove entire import if only default Vue
+          importsToRemove.push(path);
+        } else if (defaultSpec) {
+          // Remove default specifier but keep others
+          importsToModify.push({ path, action: "removeDefaultVue" });
         }
       }
+
+      // Update vue-router imports
+      if (path.value.source.value === "vue-router") {
+        hasRouterImport = true;
+        importsToModify.push({
+          path,
+          action: "updateRouter",
+          needsCreateWebHistory,
+        });
+      }
     });
-    
+
+    // Remove imports
+    importsToRemove.forEach((path) => {
+      j(path).remove();
+    });
+
+    // Modify imports
+    importsToModify.forEach(
+      ({ path, action, needsCreateWebHistory: needsHistory }) => {
+        if (action === "removeDefaultVue") {
+          const specifiers = path.value.specifiers || [];
+          path.value.specifiers = specifiers.filter(
+            (s: any) => s && s.type !== "ImportDefaultSpecifier",
+          );
+        } else if (action === "updateRouter") {
+          const specifiers = path.value.specifiers || [];
+
+          // Remove VueRouter default import
+          const vueRouterDefault = specifiers.find(
+            (s: any) =>
+              s &&
+              (s.type === "ImportDefaultSpecifier" ||
+                (s.imported && s.imported.name === "VueRouter")),
+          );
+          if (vueRouterDefault) {
+            path.value.specifiers = specifiers.filter(
+              (s: any) => s && s !== vueRouterDefault,
+            );
+          }
+
+          // Add createRouter if not present
+          const hasCreateRouter = specifiers.some(
+            (s: any) => s && s.imported && s.imported.name === "createRouter",
+          );
+          if (!hasCreateRouter) {
+            path.value.specifiers.push(
+              j.importSpecifier(j.identifier("createRouter")),
+            );
+          }
+
+          // Add createWebHistory if needed
+          if (needsHistory) {
+            const hasCreateWebHistory = specifiers.some(
+              (s: any) =>
+                s && s.imported && s.imported.name === "createWebHistory",
+            );
+            if (!hasCreateWebHistory) {
+              path.value.specifiers.push(
+                j.importSpecifier(j.identifier("createWebHistory")),
+              );
+            }
+          }
+        }
+      },
+    );
+
     // Add import if it doesn't exist
     if (!hasRouterImport) {
+      const importSpecifiers = [
+        j.importSpecifier(j.identifier("createRouter")),
+      ];
+      if (needsCreateWebHistory) {
+        importSpecifiers.push(
+          j.importSpecifier(j.identifier("createWebHistory")),
+        );
+      }
       const importStatement = j.importDeclaration(
-        [j.importSpecifier(j.identifier('createRouter'))],
-        j.literal('vue-router')
+        importSpecifiers,
+        j.literal("vue-router"),
       );
       root.get().node.program.body.unshift(importStatement);
     }
@@ -146,4 +297,3 @@ export const routerTransform: Transform = (fileInfo: FileInfo, api: API) => {
 
   return hasChanges ? root.toSource() : fileInfo.source;
 };
-

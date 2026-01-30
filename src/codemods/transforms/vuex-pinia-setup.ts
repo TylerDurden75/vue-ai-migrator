@@ -30,6 +30,19 @@ export const vuexPiniaSetupTransform: Transform = (
   const objectPropertyDetails = new Map<string, any>(); // Property name → object AST for interface generation
   const computedReturnTypes = new Map<string, string>(); // Computed name → inferred return type
 
+  // First, detect and extract const declarations for state, getters, mutations, actions
+  // These are often defined before export default { state, getters, mutations, actions }
+  const vuexConstDeclarations = new Map<string, any>(); // name → AST node
+  root.find(j.VariableDeclarator).forEach((path: any) => {
+    const id = path.value.id;
+    if (id && id.type === "Identifier") {
+      const varName = id.name;
+      if (["state", "getters", "mutations", "actions"].includes(varName)) {
+        vuexConstDeclarations.set(varName, path.value.init);
+      }
+    }
+  });
+
   // Also detect Vuex modules (export default { namespaced: true, state, getters, mutations, actions })
   // These should be transformed to separate Pinia stores
   root.find(j.ExportDefaultDeclaration).forEach((path: any) => {
@@ -78,13 +91,35 @@ export const vuexPiniaSetupTransform: Transform = (
         const localFunctionNames = new Set<string>();
         const returnProperties: string[] = [];
 
-        // Extract state
+        // Extract state - check both export default and const declaration
+        let stateValue: any = null;
         const stateProp = properties.find(
           (p: any) => p.key && p.key.name === "state",
         );
         if (stateProp && stateProp.value) {
-          if (stateProp.value.type === "ObjectExpression") {
-            const stateProps = stateProp.value.properties || [];
+          // If stateProp.value is an Identifier (reference to const state), resolve it
+          if (stateProp.value.type === "Identifier") {
+            const varName = stateProp.value.name;
+            if (vuexConstDeclarations.has(varName)) {
+              stateValue = vuexConstDeclarations.get(varName);
+            } else {
+              // Try to find the variable declaration in the AST
+              root.find(j.VariableDeclarator).forEach((varPath: any) => {
+                if (varPath.value.id && varPath.value.id.name === varName) {
+                  stateValue = varPath.value.init;
+                }
+              });
+            }
+          } else {
+            stateValue = stateProp.value;
+          }
+        } else if (vuexConstDeclarations.has("state")) {
+          stateValue = vuexConstDeclarations.get("state");
+        }
+
+        if (stateValue) {
+          if (stateValue.type === "ObjectExpression") {
+            const stateProps = stateValue.properties || [];
             stateProps.forEach((prop: any) => {
               if (prop && prop.key) {
                 const propName = prop.key.name || prop.key.value;
@@ -125,9 +160,9 @@ export const vuexPiniaSetupTransform: Transform = (
                 }
               }
             });
-          } else if (stateProp.value.type === "FunctionExpression") {
+          } else if (stateValue.type === "FunctionExpression") {
             // state is a function - execute it
-            const stateCall = j.callExpression(stateProp.value, []);
+            const stateCall = j.callExpression(stateValue, []);
             setupStatements.push(
               j.variableDeclaration("const", [
                 j.variableDeclarator(j.identifier("state"), stateCall),
@@ -139,66 +174,206 @@ export const vuexPiniaSetupTransform: Transform = (
           hasChanges = true;
         }
 
-        // Extract getters
+        // Extract getters - check both export default and const declaration
+        let gettersValue: any = null;
         const gettersProp = properties.find(
           (p: any) => p.key && p.key.name === "getters",
         );
-        if (
-          gettersProp &&
-          gettersProp.value &&
-          gettersProp.value.type === "ObjectExpression"
-        ) {
-          const getterProps = gettersProp.value.properties || [];
+        if (gettersProp && gettersProp.value) {
+          // If gettersProp.value is an Identifier (reference to const getters), resolve it
+          if (gettersProp.value.type === "Identifier") {
+            const varName = gettersProp.value.name;
+            if (vuexConstDeclarations.has(varName)) {
+              gettersValue = vuexConstDeclarations.get(varName);
+            } else {
+              // Try to find the variable declaration in the AST
+              root.find(j.VariableDeclarator).forEach((varPath: any) => {
+                if (varPath.value.id && varPath.value.id.name === varName) {
+                  gettersValue = varPath.value.init;
+                }
+              });
+            }
+          } else {
+            gettersValue = gettersProp.value;
+          }
+        } else if (vuexConstDeclarations.has("getters")) {
+          gettersValue = vuexConstDeclarations.get("getters");
+        }
+
+        if (gettersValue && gettersValue.type === "ObjectExpression") {
+          const getterProps = gettersValue.properties || [];
           getterProps.forEach((getterProp: any) => {
             if (getterProp && getterProp.key) {
               const getterName = getterProp.key.name || getterProp.key.value;
               if (getterName) {
-                localComputedProperties.add(getterName);
-                computedProperties.add(getterName);
-                returnProperties.push(getterName);
+                // Check if this getter name conflicts with a state property
+                const conflictsWithState = stateProperties.has(getterName);
 
-                // Transform getter to computed
-                let getterValue: any = getterProp.value;
-                let getterBody: any = null;
-
-                if (
-                  getterValue.type === "FunctionExpression" ||
-                  getterValue.type === "ArrowFunctionExpression"
-                ) {
-                  getterBody = getterValue.body;
-
-                  // Transform state references
-                  if (getterBody.type === "BlockStatement") {
-                    const returnStmt = getterBody.body.find(
-                      (stmt: any) => stmt.type === "ReturnStatement",
+                // If it conflicts, check if the getter is just returning state.xxx
+                // If so, we can skip it and use the state property directly
+                let shouldSkipGetter = false;
+                if (conflictsWithState) {
+                  const getterValue: any = getterProp.value;
+                  if (getterValue) {
+                    const getterCode = j(getterValue).toSource();
+                    // Check if getter is just: (state) => state.getterName
+                    const simpleReturnPattern = new RegExp(
+                      `\\(state\\)\\s*=>\\s*state\\.${getterName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
                     );
-                    if (returnStmt && returnStmt.argument) {
-                      const returnExpr = returnStmt.argument;
-                      const arrowFn = j.arrowFunctionExpression([], returnExpr);
-                      setupStatements.push(
-                        j.variableDeclaration("const", [
-                          j.variableDeclarator(
-                            j.identifier(getterName),
-                            j.callExpression(j.identifier("computed"), [
-                              arrowFn,
-                            ]),
-                          ),
-                        ]),
-                      );
-                      imports.add("computed");
+                    if (simpleReturnPattern.test(getterCode)) {
+                      shouldSkipGetter = true;
                     }
-                  } else {
-                    // Arrow function with expression body
-                    const arrowFn = j.arrowFunctionExpression([], getterBody);
-                    setupStatements.push(
-                      j.variableDeclaration("const", [
-                        j.variableDeclarator(
+                  }
+                }
+
+                if (!shouldSkipGetter) {
+                  localComputedProperties.add(getterName);
+                  computedProperties.add(getterName);
+                  // Only add to returnProperties if it doesn't conflict with state
+                  if (
+                    !conflictsWithState ||
+                    !returnProperties.includes(getterName)
+                  ) {
+                    returnProperties.push(getterName);
+                  }
+
+                  // Transform getter to computed or function
+                  let getterValue: any = getterProp.value;
+                  let getterBody: any = null;
+
+                  if (
+                    getterValue &&
+                    (getterValue.type === "FunctionExpression" ||
+                      getterValue.type === "ArrowFunctionExpression")
+                  ) {
+                    getterBody = getterValue.body;
+
+                    // Check if getter returns a function (e.g., userById: (state) => (id) => ...)
+                    // In this case, it should be a regular function, not a computed
+                    let returnsFunction = false;
+                    let returnedFunction: any = null;
+                    if (getterBody && getterBody.type === "BlockStatement") {
+                      const returnStmt = getterBody.body.find(
+                        (stmt: any) => stmt.type === "ReturnStatement",
+                      );
+                      if (
+                        returnStmt &&
+                        returnStmt.argument &&
+                        (returnStmt.argument.type ===
+                          "ArrowFunctionExpression" ||
+                          returnStmt.argument.type === "FunctionExpression")
+                      ) {
+                        returnsFunction = true;
+                        returnedFunction = returnStmt.argument;
+                      }
+                    } else if (
+                      getterBody &&
+                      (getterBody.type === "ArrowFunctionExpression" ||
+                        getterBody.type === "FunctionExpression")
+                    ) {
+                      returnsFunction = true;
+                      returnedFunction = getterBody;
+                    }
+
+                    if (returnsFunction && returnedFunction) {
+                      // This is a getter that returns a function - convert to regular function
+                      // Extract the returned function's parameters and body
+                      const returnedFunctionParams =
+                        returnedFunction.params || [];
+                      const returnedFunctionBody = returnedFunction.body;
+
+                      // Transform state references in the returned function body
+                      let transformedBody = returnedFunctionBody;
+                      if (
+                        returnedFunctionBody &&
+                        returnedFunctionBody.type === "BlockStatement"
+                      ) {
+                        transformedBody = transformStateReferencesInBody(
+                          j,
+                          returnedFunctionBody,
+                          stateProperties,
+                        );
+                      } else if (returnedFunctionBody) {
+                        // Expression body - wrap in return statement
+                        const transformedExpr =
+                          transformStateReferencesInExpression(
+                            j,
+                            returnedFunctionBody,
+                            stateProperties,
+                          );
+                        transformedBody = j.blockStatement([
+                          j.returnStatement(transformedExpr),
+                        ]);
+                      }
+
+                      setupStatements.push(
+                        j.functionDeclaration(
                           j.identifier(getterName),
-                          j.callExpression(j.identifier("computed"), [arrowFn]),
+                          returnedFunctionParams,
+                          transformedBody || j.blockStatement([]),
                         ),
-                      ]),
-                    );
-                    imports.add("computed");
+                      );
+                      // Remove from computed properties since it's now a function
+                      localComputedProperties.delete(getterName);
+                      computedProperties.delete(getterName);
+                      localFunctionNames.add(getterName);
+                      functionNames.add(getterName);
+                    } else {
+                      // Regular getter - convert to computed
+                      // Transform state references in getter body
+                      if (getterBody && getterBody.type === "BlockStatement") {
+                        const returnStmt = getterBody.body.find(
+                          (stmt: any) => stmt.type === "ReturnStatement",
+                        );
+                        if (returnStmt && returnStmt.argument) {
+                          let returnExpr = returnStmt.argument;
+                          // Transform state references in return expression
+                          returnExpr = transformStateReferencesInExpression(
+                            j,
+                            returnExpr,
+                            stateProperties,
+                          );
+                          const arrowFn = j.arrowFunctionExpression(
+                            [],
+                            returnExpr,
+                          );
+                          setupStatements.push(
+                            j.variableDeclaration("const", [
+                              j.variableDeclarator(
+                                j.identifier(getterName),
+                                j.callExpression(j.identifier("computed"), [
+                                  arrowFn,
+                                ]),
+                              ),
+                            ]),
+                          );
+                          imports.add("computed");
+                        }
+                      } else if (getterBody) {
+                        // Arrow function with expression body
+                        let transformedBody =
+                          transformStateReferencesInExpression(
+                            j,
+                            getterBody,
+                            stateProperties,
+                          );
+                        const arrowFn = j.arrowFunctionExpression(
+                          [],
+                          transformedBody,
+                        );
+                        setupStatements.push(
+                          j.variableDeclaration("const", [
+                            j.variableDeclarator(
+                              j.identifier(getterName),
+                              j.callExpression(j.identifier("computed"), [
+                                arrowFn,
+                              ]),
+                            ),
+                          ]),
+                        );
+                        imports.add("computed");
+                      }
+                    }
                   }
                 }
               }
@@ -207,116 +382,280 @@ export const vuexPiniaSetupTransform: Transform = (
           hasChanges = true;
         }
 
-        // Extract mutations
+        // Extract mutations - check both export default and const declaration
+        let mutationsValue: any = null;
         const mutationsProp = properties.find(
           (p: any) => p.key && p.key.name === "mutations",
         );
-        if (
-          mutationsProp &&
-          mutationsProp.value &&
-          mutationsProp.value.type === "ObjectExpression"
-        ) {
-          const mutProps = mutationsProp.value.properties || [];
-          mutProps.forEach((mutProp: any) => {
-            if (mutProp && mutProp.key) {
-              const mutName = mutProp.key.name || mutProp.key.value;
-              if (mutName) {
-                localFunctionNames.add(mutName);
-                functionNames.add(mutName);
-                returnProperties.push(mutName);
-
-                let mutValue: any = mutProp.value;
-                let mutBody: any = null;
-                let mutParams: any[] = [];
-
-                if (
-                  mutValue.type === "FunctionExpression" ||
-                  mutValue.type === "ArrowFunctionExpression"
-                ) {
-                  mutBody = mutValue.body;
-                  mutParams = mutValue.params || [];
+        if (mutationsProp && mutationsProp.value) {
+          // If mutationsProp.value is an Identifier (reference to const mutations), resolve it
+          if (mutationsProp.value.type === "Identifier") {
+            const varName = mutationsProp.value.name;
+            if (vuexConstDeclarations.has(varName)) {
+              mutationsValue = vuexConstDeclarations.get(varName);
+            } else {
+              // Try to find the variable declaration in the AST
+              root.find(j.VariableDeclarator).forEach((varPath: any) => {
+                if (varPath.value.id && varPath.value.id.name === varName) {
+                  mutationsValue = varPath.value.init;
                 }
+              });
+            }
+          } else {
+            mutationsValue = mutationsProp.value;
+          }
+        } else if (vuexConstDeclarations.has("mutations")) {
+          mutationsValue = vuexConstDeclarations.get("mutations");
+        }
 
-                // Remove state parameter
-                const newParams =
-                  mutParams.length > 0 &&
-                  mutParams[0] &&
-                  mutParams[0].name === "state"
-                    ? mutParams.slice(1)
-                    : mutParams;
+        if (mutationsValue && mutationsValue.type === "ObjectExpression") {
+          const mutProps = mutationsValue.properties || [];
+          mutProps.forEach((mutProp: any) => {
+            if (!mutProp || !mutProp.key) return;
 
-                setupStatements.push(
-                  j.functionDeclaration(
-                    j.identifier(mutName),
-                    newParams,
-                    mutBody || j.blockStatement([]),
-                  ),
-                );
+            const mutName = mutProp.key.name || mutProp.key.value;
+            if (!mutName) return;
+
+            // Handle both ObjectMethod (shorthand: SET_AUTHENTICATED(state, value) { ... })
+            // and ObjectProperty with value (SET_AUTHENTICATED: function(state, value) { ... })
+            let mutValue: any = null;
+            let mutBody: any = null;
+            let mutParams: any[] = [];
+
+            if (mutProp.type === "ObjectMethod") {
+              // Shorthand method
+              mutValue = mutProp;
+              mutBody = mutProp.body;
+              mutParams = mutProp.params || [];
+            } else if (mutProp.value) {
+              // Property with value
+              mutValue = mutProp.value;
+              if (
+                mutValue.type === "FunctionExpression" ||
+                mutValue.type === "ArrowFunctionExpression"
+              ) {
+                mutBody = mutValue.body;
+                mutParams = mutValue.params || [];
+              } else if (mutValue.type === "ObjectMethod") {
+                mutBody = mutValue.body;
+                mutParams = mutValue.params || [];
               }
+            }
+
+            if (mutBody) {
+              localFunctionNames.add(mutName);
+              functionNames.add(mutName);
+              returnProperties.push(mutName);
+
+              // Remove state parameter
+              const newParams =
+                mutParams.length > 0 &&
+                mutParams[0] &&
+                mutParams[0].name === "state"
+                  ? mutParams.slice(1)
+                  : mutParams;
+
+              // Check for parameter name conflicts with state properties
+              // If a parameter name conflicts, we need to rename it in the body
+              const paramConflicts = new Map<string, string>();
+              const newParamsCopy = newParams.map((param: any) => {
+                if (param && param.type === "Identifier") {
+                  const paramName = param.name;
+                  if (stateProperties.has(paramName)) {
+                    // Rename parameter to avoid conflict
+                    const newParamName = `${paramName}Param`;
+                    paramConflicts.set(paramName, newParamName);
+                    // Create a new identifier to avoid mutating the original
+                    return j.identifier(newParamName);
+                  }
+                }
+                return param;
+              });
+
+              // Transform state references in mutation body
+              let transformedBody = mutBody;
+              if (mutBody && mutBody.type === "BlockStatement") {
+                transformedBody = transformStateReferencesInBody(
+                  j,
+                  mutBody,
+                  stateProperties,
+                );
+
+                // Rename conflicting parameters in the body
+                if (paramConflicts.size > 0) {
+                  const bodyCode = j(transformedBody).toSource();
+                  let transformedCode = bodyCode;
+                  paramConflicts.forEach((newName, oldName) => {
+                    // Replace parameter references but not state property references
+                    // Use word boundaries and negative lookbehind to avoid replacing property accesses
+                    const escapedOldName = oldName.replace(
+                      /[.*+?^${}()|[\]\\]/g,
+                      "\\$&",
+                    );
+                    // Match the parameter name but not if it's part of a property access (e.g., users.value)
+                    // Pattern: word boundary, not preceded by a dot, followed by word boundary or assignment
+                    const paramPattern = new RegExp(
+                      `(?<!\\.)\\b${escapedOldName}\\b(?!\\.)`,
+                      "g",
+                    );
+                    transformedCode = transformedCode.replace(
+                      paramPattern,
+                      newName,
+                    );
+                  });
+                  try {
+                    const newRoot = j(transformedCode);
+                    const program = newRoot.find(j.Program).paths()[0];
+                    if (
+                      program &&
+                      program.value.body &&
+                      program.value.body.length > 0
+                    ) {
+                      const statements = program.value.body;
+                      const cleanedStatements: any[] = [];
+                      statements.forEach((stmt: any) => {
+                        if (stmt.type === "BlockStatement" && stmt.body) {
+                          stmt.body.forEach((innerStmt: any) => {
+                            cleanedStatements.push(innerStmt);
+                          });
+                        } else if (stmt.type !== "EmptyStatement") {
+                          cleanedStatements.push(stmt);
+                        }
+                      });
+                      transformedBody = j.blockStatement(
+                        cleanedStatements.length > 0
+                          ? cleanedStatements
+                          : transformedBody.body,
+                      );
+                    }
+                  } catch (e) {
+                    // If parsing fails, keep original body
+                  }
+                }
+              }
+
+              setupStatements.push(
+                j.functionDeclaration(
+                  j.identifier(mutName),
+                  paramConflicts.size > 0 ? newParamsCopy : newParams,
+                  transformedBody,
+                ),
+              );
             }
           });
           hasChanges = true;
         }
 
-        // Extract actions
+        // Extract actions - check both export default and const declaration
+        let actionsValue: any = null;
         const actionsProp = properties.find(
           (p: any) => p.key && p.key.name === "actions",
         );
-        if (
-          actionsProp &&
-          actionsProp.value &&
-          actionsProp.value.type === "ObjectExpression"
-        ) {
-          const actionProps = actionsProp.value.properties || [];
-          actionProps.forEach((actionProp: any) => {
-            if (actionProp && actionProp.key) {
-              const actionName = actionProp.key.name || actionProp.key.value;
-              if (actionName && !localFunctionNames.has(actionName)) {
-                localFunctionNames.add(actionName);
-                functionNames.add(actionName);
-                returnProperties.push(actionName);
-
-                let actionValue: any = actionProp.value;
-                let actionBody: any = null;
-                let actionParams: any[] = [];
-
-                if (
-                  actionValue.type === "FunctionExpression" ||
-                  actionValue.type === "ArrowFunctionExpression"
-                ) {
-                  actionBody = actionValue.body;
-                  actionParams = actionValue.params || [];
+        if (actionsProp && actionsProp.value) {
+          // If actionsProp.value is an Identifier (reference to const actions), resolve it
+          if (actionsProp.value.type === "Identifier") {
+            const varName = actionsProp.value.name;
+            if (vuexConstDeclarations.has(varName)) {
+              actionsValue = vuexConstDeclarations.get(varName);
+            } else {
+              // Try to find the variable declaration in the AST
+              root.find(j.VariableDeclarator).forEach((varPath: any) => {
+                if (varPath.value.id && varPath.value.id.name === varName) {
+                  actionsValue = varPath.value.init;
                 }
+              });
+            }
+          } else {
+            actionsValue = actionsProp.value;
+          }
+        } else if (vuexConstDeclarations.has("actions")) {
+          actionsValue = vuexConstDeclarations.get("actions");
+        }
 
-                // Remove Vuex context parameters
-                const cleanedParams = actionParams.filter((param: any) => {
-                  if (param.type === "ObjectPattern") {
-                    const properties = param.properties || [];
-                    const vuexContextProps = [
-                      "commit",
-                      "dispatch",
-                      "state",
-                      "getters",
-                      "rootState",
-                      "rootGetters",
-                    ];
-                    const hasOnlyVuexProps = properties.every((p: any) => {
-                      const keyName = p.key?.name || p.key?.value;
-                      return vuexContextProps.includes(keyName);
-                    });
-                    return !hasOnlyVuexProps;
-                  }
-                  return true;
-                });
+        if (actionsValue && actionsValue.type === "ObjectExpression") {
+          const actionProps = actionsValue.properties || [];
+          actionProps.forEach((actionProp: any) => {
+            if (!actionProp || !actionProp.key) return;
 
-                setupStatements.push(
-                  j.functionDeclaration(
-                    j.identifier(actionName),
-                    cleanedParams,
-                    actionBody || j.blockStatement([]),
-                  ),
+            const actionName = actionProp.key.name || actionProp.key.value;
+            if (!actionName || localFunctionNames.has(actionName)) return;
+
+            // Handle both ObjectMethod (shorthand: login({ commit }) { ... })
+            // and ObjectProperty with value (login: function({ commit }) { ... })
+            let actionValueForTransform: any = null;
+            let actionBody: any = null;
+            let actionParams: any[] = [];
+
+            if (actionProp.type === "ObjectMethod") {
+              // Shorthand method
+              actionValueForTransform = actionProp;
+              actionBody = actionProp.body;
+              actionParams = actionProp.params || [];
+            } else if (actionProp.value) {
+              // Property with value
+              actionValueForTransform = actionProp.value;
+              if (
+                actionValueForTransform.type === "FunctionExpression" ||
+                actionValueForTransform.type === "ArrowFunctionExpression"
+              ) {
+                actionBody = actionValueForTransform.body;
+                actionParams = actionValueForTransform.params || [];
+              } else if (actionValueForTransform.type === "ObjectMethod") {
+                actionBody = actionValueForTransform.body;
+                actionParams = actionValueForTransform.params || [];
+              }
+            }
+
+            if (actionBody) {
+              localFunctionNames.add(actionName);
+              functionNames.add(actionName);
+              returnProperties.push(actionName);
+
+              // Remove Vuex context parameters
+              const cleanedParams = actionParams.filter((param: any) => {
+                if (param.type === "ObjectPattern") {
+                  const properties = param.properties || [];
+                  const vuexContextProps = [
+                    "commit",
+                    "dispatch",
+                    "state",
+                    "getters",
+                    "rootState",
+                    "rootGetters",
+                  ];
+                  const hasOnlyVuexProps = properties.every((p: any) => {
+                    const keyName = p.key?.name || p.key?.value;
+                    return vuexContextProps.includes(keyName);
+                  });
+                  return !hasOnlyVuexProps;
+                }
+                return true;
+              });
+
+              // Transform commit() calls and state references in action body
+              let transformedBody = actionBody;
+              if (actionBody && actionBody.type === "BlockStatement") {
+                // First transform commit() calls to direct function calls
+                transformedBody = transformCommitCalls(
+                  j,
+                  actionBody,
+                  localFunctionNames,
+                );
+                // Then transform state references
+                transformedBody = transformStateReferencesInBody(
+                  j,
+                  transformedBody,
+                  stateProperties,
                 );
               }
+
+              setupStatements.push(
+                j.functionDeclaration(
+                  j.identifier(actionName),
+                  cleanedParams,
+                  transformedBody,
+                ),
+              );
             }
           });
           hasChanges = true;
@@ -353,6 +692,52 @@ export const vuexPiniaSetupTransform: Transform = (
       }
     }
   });
+
+  // Remove const declarations for state, getters, mutations, actions if they were used
+  // This must happen after the export default transformation
+  if (hasChanges) {
+    const declarationsToRemove = new Set<string>();
+    root.find(j.VariableDeclarator).forEach((varPath: any) => {
+      const id = varPath.value.id;
+      if (id && id.type === "Identifier") {
+        const varName = id.name;
+        if (["state", "getters", "mutations", "actions"].includes(varName)) {
+          declarationsToRemove.add(varName);
+        }
+      }
+    });
+
+    // Remove the declarations
+    declarationsToRemove.forEach((varName) => {
+      root.find(j.VariableDeclaration).forEach((declPath: any) => {
+        const declarations = declPath.value.declarations || [];
+        if (declarations.length === 1) {
+          const declarator = declarations[0];
+          if (
+            declarator.id &&
+            declarator.id.type === "Identifier" &&
+            declarator.id.name === varName
+          ) {
+            j(declPath).remove();
+            hasChanges = true;
+          }
+        } else {
+          // Multiple declarations - remove just this one
+          const filtered = declarations.filter((d: any) => {
+            return !(
+              d.id &&
+              d.id.type === "Identifier" &&
+              d.id.name === varName
+            );
+          });
+          if (filtered.length < declarations.length) {
+            declPath.value.declarations = filtered;
+            hasChanges = true;
+          }
+        }
+      });
+    });
+  }
 
   // Transform new Vuex.Store({ ... }) to defineStore('name', () => { ... })
   root.find(j.NewExpression).forEach((path: any) => {
@@ -1027,6 +1412,85 @@ export const vuexPiniaSetupTransform: Transform = (
 
   return resultCode;
 };
+
+/**
+ * Transform state references in an expression
+ */
+function transformStateReferencesInExpression(
+  j: any,
+  expression: any,
+  stateProperties: Map<string, { isObject: boolean; value: any }>,
+): any {
+  if (!expression) return expression;
+
+  // Transform the expression as a string, then parse back
+  const exprCode = j(expression).toSource();
+  let transformedCode = exprCode;
+
+  // Replace state references - handle nested properties first
+  // Process in order: longest matches first (nested properties), then simple properties
+  const sortedProps = Array.from(stateProperties.entries()).sort((a, b) => {
+    // Sort by depth (objects first, then refs)
+    if (a[1].isObject && !b[1].isObject) return -1;
+    if (!a[1].isObject && b[1].isObject) return 1;
+    return 0;
+  });
+
+  sortedProps.forEach(([propName, info]) => {
+    // Escape propName for regex
+    const escapedName = propName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    if (info.isObject) {
+      // For reactive objects: state.user.name → user.name
+      const nestedPattern = new RegExp(
+        `state\\.${escapedName}(\\.([a-zA-Z_$][a-zA-Z0-9_$]*))+`,
+        "g",
+      );
+      transformedCode = transformedCode.replace(
+        nestedPattern,
+        (match: string) => {
+          return match.replace(/^state\./, "");
+        },
+      );
+      // Also handle direct state.user → user
+      transformedCode = transformedCode.replace(
+        new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
+        propName,
+      );
+    } else {
+      // For refs: state.count → count.value
+      transformedCode = transformedCode.replace(
+        new RegExp(`state\\.${escapedName}\\.`, "g"),
+        `${propName}.value.`,
+      );
+      transformedCode = transformedCode.replace(
+        new RegExp(`state\\.${escapedName}(?!\\.)`, "g"),
+        `${propName}.value`,
+      );
+    }
+  });
+
+  // Parse back to expression
+  try {
+    const newRoot = j(transformedCode);
+    const program = newRoot.find(j.Program).paths()[0];
+    if (program && program.value.body && program.value.body.length > 0) {
+      const firstStmt = program.value.body[0];
+      if (firstStmt.type === "ExpressionStatement") {
+        return firstStmt.expression;
+      }
+      // If it's a return statement, extract the expression
+      if (firstStmt.type === "ReturnStatement" && firstStmt.argument) {
+        return firstStmt.argument;
+      }
+    }
+  } catch (e) {
+    // If parsing fails, return original expression
+    return expression;
+  }
+
+  return expression;
+}
 
 /**
  * Transform state references in a BlockStatement body

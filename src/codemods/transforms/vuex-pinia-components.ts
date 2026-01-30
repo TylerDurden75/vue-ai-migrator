@@ -136,37 +136,81 @@ export const vuexPiniaComponentsTransform: Transform = (
                         getter.value ||
                         (getter.type === "Literal" ? getter.value : null);
                       if (getterName) {
-                        // Create computed property from store getter
-                        const computedCall = j.callExpression(
-                          j.identifier("computed"),
-                          [
-                            j.arrowFunctionExpression(
-                              [],
-                              j.memberExpression(
-                                j.identifier(storeVarName),
+                        // Check if this getter is used as a function (like userById(id))
+                        // If it's used in a computed property that calls it, it's a function getter
+                        const isFunctionGetter = computedProps.some(
+                          (cp: any) => {
+                            if (
+                              cp.key &&
+                              cp.value &&
+                              cp.value.type === "FunctionExpression"
+                            ) {
+                              const body = cp.value.body;
+                              if (body && body.type === "BlockStatement") {
+                                const bodyStr = j(cp.value).toSource();
+                                return (
+                                  bodyStr.includes(`${getterName}(`) ||
+                                  bodyStr.includes(`this.${getterName}(`)
+                                );
+                              }
+                            }
+                            return false;
+                          },
+                        );
+
+                        if (isFunctionGetter) {
+                          // Function getter: const userById = usersStore.userById;
+                          setupStatements.push(
+                            j.variableDeclaration("const", [
+                              j.variableDeclarator(
                                 j.identifier(getterName),
+                                j.memberExpression(
+                                  j.identifier(storeVarName),
+                                  j.identifier(getterName),
+                                ),
                               ),
-                            ),
-                          ],
-                        );
-
-                        setupStatements.push(
-                          j.variableDeclaration("const", [
-                            j.variableDeclarator(
+                            ]),
+                          );
+                          returnProperties.push(
+                            j.property(
+                              "init",
                               j.identifier(getterName),
-                              computedCall,
+                              j.identifier(getterName),
                             ),
-                          ]),
-                        );
+                          );
+                        } else {
+                          // Regular getter: const isAuthenticated = computed(() => authStore.isAuthenticated);
+                          const computedCall = j.callExpression(
+                            j.identifier("computed"),
+                            [
+                              j.arrowFunctionExpression(
+                                [],
+                                j.memberExpression(
+                                  j.identifier(storeVarName),
+                                  j.identifier(getterName),
+                                ),
+                              ),
+                            ],
+                          );
 
-                        returnProperties.push(
-                          j.property(
-                            "init",
-                            j.identifier(getterName),
-                            j.identifier(getterName),
-                          ),
-                        );
-                        vueImports.add("computed");
+                          setupStatements.push(
+                            j.variableDeclaration("const", [
+                              j.variableDeclarator(
+                                j.identifier(getterName),
+                                computedCall,
+                              ),
+                            ]),
+                          );
+
+                          returnProperties.push(
+                            j.property(
+                              "init",
+                              j.identifier(getterName),
+                              j.identifier(getterName),
+                            ),
+                          );
+                          vueImports.add("computed");
+                        }
                       }
                     });
                   }
@@ -291,7 +335,8 @@ export const vuexPiniaComponentsTransform: Transform = (
                 }
               }
             } else if (prop.key && prop.value) {
-              // Regular method - keep it
+              // Regular method - keep it as is
+              // The post-migration-fixer will handle this. references
               const methodName = prop.key.name;
               const methodValue = prop.value;
 

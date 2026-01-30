@@ -71,6 +71,21 @@ export class CodemodRunner {
     let transformationsToApply =
       options.transformations || Object.keys(AVAILABLE_TRANSFORMS);
 
+    // Ensure router transform runs early (before plugins transform that might modify imports)
+    // Router transform should run before plugins to avoid conflicts with Vue.use() removal
+    if (
+      transformationsToApply.includes("router") &&
+      transformationsToApply.includes("plugins")
+    ) {
+      const routerIndex = transformationsToApply.indexOf("router");
+      const pluginsIndex = transformationsToApply.indexOf("plugins");
+      if (routerIndex > pluginsIndex) {
+        // Move router before plugins
+        transformationsToApply.splice(routerIndex, 1);
+        transformationsToApply.splice(pluginsIndex, 0, "router");
+      }
+    }
+
     // If vuex-pinia is used, automatically add vuex-pinia-components
     if (
       transformationsToApply.includes("vuex-pinia") &&
@@ -331,7 +346,13 @@ export class CodemodRunner {
                 ? transformResult
                 : await transformResult;
 
-            if (resultCode && resultCode !== currentCode) {
+            // Always update currentCode if resultCode is different, even if empty string
+            // Some transformers may return the same code but we still want to track it
+            if (
+              resultCode !== undefined &&
+              resultCode !== null &&
+              resultCode !== currentCode
+            ) {
               currentCode = resultCode;
               hasModifications = true;
               result.transformationsApplied++;

@@ -35,8 +35,13 @@ program
     "openai",
   )
   .option(
-    "-d, --dry-run",
+    "-d, --dry-run [boolean]",
     "Dry run mode (does not modify files, shows diff)",
+    (value) => {
+      if (value === undefined || value === "true") return true;
+      if (value === "false") return false;
+      return Boolean(value);
+    },
     false,
   )
   .option(
@@ -375,7 +380,12 @@ program
         if (hasPackageBackup) {
           console.log(
             chalk.yellow(
-              `\n⚠ Note: package.json was restored. You may need to run 'npm install' to update dependencies.`,
+              `\n⚠️  Important: package.json has been restored with Vue 2 dependencies.`,
+            ),
+          );
+          console.log(
+            chalk.yellow(
+              `   Run 'npm install' to restore the original dependencies.`,
             ),
           );
         }

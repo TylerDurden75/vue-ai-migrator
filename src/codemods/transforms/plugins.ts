@@ -52,8 +52,29 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
         }
       }
 
+      // Remove 'store' property from options if present (Vuex → Pinia migration)
+      let filteredArgs = args;
+      if (args.length > 0 && args[0].type === "ObjectExpression") {
+        const options = args[0];
+        const properties = options.properties || [];
+        const storeProperty = properties.find(
+          (p: any) =>
+            p.key && (p.key.name === "store" || p.key.value === "store"),
+        );
+        if (storeProperty) {
+          // Remove store property
+          options.properties = properties.filter(
+            (p: any) => p !== storeProperty,
+          );
+          filteredArgs = [options];
+        }
+      }
+
       // Create createApp() call
-      const createAppCall = j.callExpression(j.identifier("createApp"), args);
+      const createAppCall = j.callExpression(
+        j.identifier("createApp"),
+        filteredArgs,
+      );
 
       // If there was a $mount call, replace the entire chain
       if (mountCallPath) {

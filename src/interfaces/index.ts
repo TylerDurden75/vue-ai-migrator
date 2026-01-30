@@ -3,9 +3,9 @@
  * These interfaces define contracts between modules to reduce coupling
  */
 
-import { Transform } from 'jscodeshift';
-import { ClassificationResult } from '../core/classifier';
-import { DiffResult } from '../utils/codegen';
+import { Transform } from "jscodeshift";
+import { ClassificationResult } from "../core/classifier";
+import { DiffResult } from "../utils/codegen";
 
 /**
  * Transformation interface for codemods
@@ -20,8 +20,16 @@ export interface ITransformation {
  * Cache manager interface
  */
 export interface ICacheManager {
-  needsProcessing(filePath: string, content: string, transformations: string[]): boolean;
-  markProcessed(filePath: string, content: string, transformations: string[]): void;
+  needsProcessing(
+    filePath: string,
+    content: string,
+    transformations: string[],
+  ): boolean;
+  markProcessed(
+    filePath: string,
+    content: string,
+    transformations: string[],
+  ): void;
   loadCache(): Promise<void>;
   saveCache(): Promise<void>;
   clearCache(): void;
@@ -65,7 +73,7 @@ export interface ITestGenerator {
   generateTest(
     componentPath: string,
     code: string,
-    apiStyle: 'composition' | 'script-setup'
+    apiStyle: "composition" | "script-setup",
   ): Promise<string>;
   writeTest(testPath: string, testCode: string): Promise<void>;
 }
@@ -84,24 +92,6 @@ export interface IPostMigrationValidator {
   validateMigration(filePath: string, code: string): Promise<ValidationResult>;
 }
 
-/**
- * File processor interface
- */
-export interface IFileProcessor {
-  processFile(
-    filePath: string,
-    content: string,
-    options: FileProcessingOptions
-  ): Promise<FileProcessingResult>;
-}
-
-/**
- * Migration pipeline interface
- */
-export interface IMigrationPipeline {
-  execute(options: PipelineOptions): Promise<PipelineResult>;
-}
-
 // Type definitions
 
 export interface ProjectAnalysis {
@@ -115,7 +105,7 @@ export interface MigrationContext {
   code: string;
   filePath: string;
   issues: string[];
-  classification: 'simple' | 'medium' | 'complex';
+  classification: "simple" | "medium" | "complex";
   relatedFiles?: string[];
   vueVersion?: string;
 }
@@ -131,7 +121,7 @@ export interface AgentResponse {
 }
 
 export interface ComplexityAnalysis {
-  complexity: 'low' | 'medium' | 'high';
+  complexity: "low" | "medium" | "high";
   recommendations: string[];
 }
 
@@ -146,46 +136,4 @@ export interface ValidationResult {
   errors: string[];
   warnings: string[];
   suggestions: string[];
-}
-
-export interface FileProcessingOptions {
-  transformations: string[];
-  useAI: boolean;
-  aiService?: IAIService;
-  generateTests: boolean;
-  showDiff: boolean;
-  classifyFiles: boolean;
-}
-
-export interface FileProcessingResult {
-  modified: boolean;
-  code: string;
-  transformationsApplied: number;
-  needsAI: boolean;
-  issues: string[];
-  classification?: ClassificationResult;
-  diff?: DiffResult;
-  explanation?: string;
-  testCode?: string;
-}
-
-export interface PipelineOptions {
-  files: string[];
-  projectPath: string;
-  transformations: string[];
-  useAI: boolean;
-  aiService?: IAIService;
-  dryRun: boolean;
-  generateTests: boolean;
-  showDiff: boolean;
-  classifyFiles: boolean;
-}
-
-export interface PipelineResult {
-  filesProcessed: number;
-  filesModified: number;
-  transformationsApplied: number;
-  errors: string[];
-  warnings: string[];
-  fileResults: Map<string, FileProcessingResult>;
 }

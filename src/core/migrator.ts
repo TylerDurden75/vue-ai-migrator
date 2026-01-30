@@ -301,6 +301,16 @@ export async function migrate(
             let migrated = codemodResult.modified;
             let explanation: string | undefined;
 
+            // Debug: Log migration status
+            if (migrated) {
+              const codeChanged = finalCode !== content;
+              if (!codeChanged) {
+                result.warnings.push(
+                  `DEBUG: ${path.relative(projectPath, filePath)} marked as migrated but codemod code === original content`,
+                );
+              }
+            }
+
             // For complex cases, use MigrationAgent with retry logic
             if (
               migrationAgent &&
@@ -403,41 +413,85 @@ export async function migrate(
             }
 
             if (migrated) {
-              if (!dryRun) {
-                // Apply post-migration fixes
-                try {
-                  const fixResult = await fixPostMigrationIssues(
-                    filePath,
-                    finalCode,
-                  );
-                  if (fixResult.fixed) {
-                    finalCode = fixResult.content;
-                    if (fixResult.fixes.length > 0) {
+              // Debug logging
+              const relativePath = path.relative(projectPath, filePath);
+              result.warnings.push(
+                `DEBUG: Processing ${relativePath} - migrated=${migrated}, codeChanged=${finalCode !== content}, dryRun=${dryRun}`,
+              );
+
+              // Only save if code actually changed
+              if (finalCode !== content) {
+                if (!dryRun) {
+                  // Apply post-migration fixes
+                  try {
+                    const fixResult = await fixPostMigrationIssues(
+                      filePath,
+                      finalCode,
+                      options.enableTypeScript || false,
+                    );
+                    if (fixResult.fixed) {
+                      finalCode = fixResult.content;
+                      if (fixResult.fixes.length > 0) {
+                        result.warnings.push(
+                          `Post-migration fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`,
+                        );
+                      }
+                    }
+
+                    // Fix import paths to use @ alias
+                    finalCode = fixImportPaths(
+                      finalCode,
+                      projectPath,
+                      filePath,
+                    );
+
+                    // Report issues found but not fixed
+                    if (fixResult.issues.length > 0) {
                       result.warnings.push(
-                        `Post-migration fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`,
+                        `Issues detected in ${path.relative(projectPath, filePath)}: ${fixResult.issues.join(", ")}`,
                       );
                     }
-                  }
-
-                  // Fix import paths to use @ alias
-                  finalCode = fixImportPaths(finalCode, projectPath, filePath);
-
-                  // Report issues found but not fixed
-                  if (fixResult.issues.length > 0) {
+                  } catch (error) {
+                    // If fixing fails, still write the file but warn
                     result.warnings.push(
-                      `Issues detected in ${path.relative(projectPath, filePath)}: ${fixResult.issues.join(", ")}`,
+                      `Post-migration fixer failed for ${path.relative(projectPath, filePath)}: ${error instanceof Error ? error.message : String(error)}`,
                     );
                   }
-                } catch (error) {
-                  // If fixing fails, still write the file but warn
-                  result.warnings.push(
-                    `Post-migration fixer failed for ${path.relative(projectPath, filePath)}: ${error instanceof Error ? error.message : String(error)}`,
-                  );
-                }
 
-                await safeWriteFile(filePath, finalCode);
+                  // Double-check that code is still different after fixes
+                  if (finalCode !== content) {
+                    try {
+                      await safeWriteFile(filePath, finalCode);
+                      // Verify file was written correctly
+                      const writtenContent = await safeReadFile(filePath);
+                      if (writtenContent !== finalCode) {
+                        result.warnings.push(
+                          `File ${path.relative(projectPath, filePath)} was written but content doesn't match expected result`,
+                        );
+                      } else {
+                        // Successfully written
+                        result.warnings.push(
+                          `✓ Successfully migrated ${path.relative(projectPath, filePath)}`,
+                        );
+                      }
+                    } catch (error) {
+                      result.errors.push(
+                        `Failed to write ${path.relative(projectPath, filePath)}: ${error instanceof Error ? error.message : String(error)}`,
+                      );
+                    }
+                  } else {
+                    result.warnings.push(
+                      `File ${path.relative(projectPath, filePath)} was transformed but post-fixes restored original content`,
+                    );
+                  }
+                }
+                result.filesModified++;
+              } else {
+                // Code marked as migrated but didn't actually change
+                result.warnings.push(
+                  `File ${path.relative(projectPath, filePath)} marked as migrated but content unchanged (codemod returned same code)`,
+                );
               }
-              result.filesModified++;
               result.transformationsApplied +=
                 codemodResult.transformationsApplied;
             }
@@ -503,13 +557,15 @@ export async function migrate(
     // Migrate package.json if requested
     if (shouldMigratePackage) {
       try {
-        // Backup package.json before migration if not already backed up
+        // Backup package.json before migration (ensure it's backed up before modification)
         const packageJsonPath = path.join(projectPath, "package.json");
         if (rollbackManager && !dryRun) {
           try {
+            // Always backup package.json before modifying it
+            // backupFile will read the current content, so this must be called BEFORE migratePackageJson
             await rollbackManager.backupFile(packageJsonPath);
           } catch {
-            // Already backed up or doesn't exist
+            // File doesn't exist or can't be read, skip silently
           }
         }
 
