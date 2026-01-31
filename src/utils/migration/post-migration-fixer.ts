@@ -1,5 +1,10 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import { 
+  analyzeArrayItemProperties, 
+  analyzeFilterProperties,
+  analyzeTemplateProperties 
+} from "./property-analyzer";
 
 export interface FixResult {
   fixed: boolean;
@@ -879,57 +884,49 @@ export async function fixPostMigrationIssues(
           
           if (shouldApplyFix) {
             processedComputed.add(computedName);
-            // GENERIC: Infer filter property names dynamically from filters object
-            let categoryFilter = 'category';
-            let searchFilter = 'search';
-            let categoryProperty = 'category'; // Property name in items to filter by
+            // TRULY GENERIC: Dynamically analyze properties from codebase instead of hardcoding
+            // Analyze filter properties dynamically
+            const filterAnalysis = analyzeFilterProperties(fixedContent);
+            const categoryFilter = filterAnalysis.categoryFilter || 'category';
+            const searchFilter = filterAnalysis.searchFilter || 'search';
             
-            // Try to detect filter property names from filters object
-            const filtersMatch = fixedContent.match(/filters\s*:\s*\{([^}]+)\}/);
-            if (filtersMatch) {
-              const filtersContent = filtersMatch[1];
-              // Detect category filter name (category, type, tag, etc.)
-              if (filtersContent.includes('category')) categoryFilter = 'category';
-              else if (filtersContent.includes('type')) categoryFilter = 'type';
-              else if (filtersContent.includes('tag')) categoryFilter = 'tag';
-              
-              // Detect search filter name (search, query, term, etc.)
-              if (filtersContent.includes('search')) searchFilter = 'search';
-              else if (filtersContent.includes('query')) searchFilter = 'query';
-              else if (filtersContent.includes('term')) searchFilter = 'term';
-            }
+            // Analyze array item properties dynamically
+            const arrayVarStr = String(arrayVar); // Ensure it's a string
+            const itemAnalysis = analyzeArrayItemProperties(fixedContent, arrayVarStr, projectRoot);
+            const categoryProperty = itemAnalysis.categoryProperty || 'category';
+            const searchProperties = Array.from(itemAnalysis.properties).filter((p) => {
+              const prop = String(p);
+              return ['title', 'name', 'content', 'description', 'text', 'label', 'author'].includes(prop);
+            }) as string[];
             
-            // GENERIC: Infer category property name from arrayVar name
-            // e.g., posts → category, products → category, items → category
-            // Try to detect from context: if arrayVar is "posts", likely has "category" property
-            const arrayVarLower = arrayVar.toLowerCase();
-            if (arrayVarLower.includes('post') || arrayVarLower.includes('product') || arrayVarLower.includes('item')) {
-              categoryProperty = 'category';
-            } else if (arrayVarLower.includes('user')) {
-              categoryProperty = 'role'; // Common for users
-            }
-            
-            // Build filtered computed property with GENERIC logic
+            // Build filtered computed property with TRULY GENERIC logic
+            // Uses dynamically detected properties instead of hardcoded ones
             const arrayVarWithValue = `${arrayVar}.value`;
-            const fixedFilteredComputed = `const ${computedName} = computed(() => {
-    let result = ${arrayVarWithValue};
-    
-    // Filter by category/type/tag (generic property detection)
-    if (filters.${categoryFilter}) {
-      result = result.filter(item => item.${categoryProperty} === filters.${categoryFilter});
-    }
-    
-    // Filter by search query (searches in common text properties)
-    if (filters.${searchFilter}) {
-      const searchLower = filters.${searchFilter}.toLowerCase();
-      result = result.filter(item => 
-        item.title?.toLowerCase().includes(searchLower) ||
+            
+            // Build search filter condition dynamically based on detected properties
+            const searchConditions = searchProperties.length > 0
+              ? searchProperties.map(prop => `item.${prop}?.toLowerCase().includes(searchLower)`).join(' ||\n        ')
+              : `item.title?.toLowerCase().includes(searchLower) ||
         item.content?.toLowerCase().includes(searchLower) ||
         item.name?.toLowerCase().includes(searchLower) ||
         item.author?.toLowerCase().includes(searchLower) ||
         item.description?.toLowerCase().includes(searchLower) ||
         item.text?.toLowerCase().includes(searchLower) ||
-        (typeof item === 'string' && item.toLowerCase().includes(searchLower))
+        (typeof item === 'string' && item.toLowerCase().includes(searchLower))`;
+            
+            const fixedFilteredComputed = `const ${computedName} = computed(() => {
+    let result = ${arrayVarWithValue};
+    
+    // Filter by category/type/tag (dynamically detected property: ${categoryProperty})
+    if (filters.${categoryFilter}) {
+      result = result.filter(item => item.${categoryProperty} === filters.${categoryFilter});
+    }
+    
+    // Filter by search query (searches in dynamically detected properties)
+    if (filters.${searchFilter}) {
+      const searchLower = filters.${searchFilter}.toLowerCase();
+      result = result.filter(item => 
+        ${searchConditions}
       );
     }
     
@@ -2148,6 +2145,31 @@ export async function fixPostMigrationIssues(
                   corrections.push({ wrong: wrongAccess, correct: correctAccess });
                 }
               }
+            } else {
+              // Property not found in storeMethodMap - might be in a different store
+              // Try to find it by checking all stores dynamically
+              if (projectRoot) {
+                try {
+                  const allStores = await analyzePiniaStores(projectRoot);
+                  // Check if property exists in any store
+                  for (const [prop, storeModule] of allStores.entries()) {
+                    if (prop === propertyName) {
+                      const correctStoreVar = `${storeModule}Store`;
+                      if (storeVarName !== correctStoreVar) {
+                        const wrongAccess = `${storeVarName}.${propertyName}`;
+                        const correctAccess = `${correctStoreVar}.${propertyName}`;
+                        if (!seenCorrections.has(wrongAccess)) {
+                          seenCorrections.add(wrongAccess);
+                          corrections.push({ wrong: wrongAccess, correct: correctAccess });
+                        }
+                      }
+                      break;
+                    }
+                  }
+                } catch (error) {
+                  // Store analysis failed, skip
+                }
+              }
             }
           }
           
@@ -2167,6 +2189,98 @@ export async function fixPostMigrationIssues(
           
           if (corrections.length > 0) {
             result.fixes.push(`Corrected wrong store method calls and property access: ${corrections.map(c => `${c.wrong} → ${c.correct}`).join(', ')}`);
+          }
+          
+          // Fix 8c.1: Detect and warn about potential null/undefined access in templates
+          // Pattern: {{ computedProperty.property }} where computedProperty might be null
+          // This helps prevent "Cannot read properties of undefined" errors
+          if (isVueFile) {
+            const templateMatch = fixedContent.match(/<template>([\s\S]*?)<\/template>/);
+            if (templateMatch) {
+              const templateContent = templateMatch[1];
+              const nullAccessPattern = /\{\{\s*(\w+)\.(\w+)\s*\}\}/g;
+              let nullMatch;
+              const potentialNullAccesses = new Set<string>();
+              
+              while ((nullMatch = nullAccessPattern.exec(templateContent)) !== null) {
+                const computedName = nullMatch[1];
+                const propertyName = nullMatch[2];
+                
+                // Check if this computed property might return null/undefined
+                // Common patterns: currentUser, selectedItem, activeItem, etc.
+                const mightBeNull = computedName.toLowerCase().includes('current') ||
+                                    computedName.toLowerCase().includes('selected') ||
+                                    computedName.toLowerCase().includes('active') ||
+                                    computedName.toLowerCase().includes('user');
+                
+                // Check if computed is defined: computed(() => store.property) where property might be null
+                const computedDefPattern = new RegExp(`const\\s+${computedName}\\s*=\\s*computed`, 'g');
+                const computedDef = scriptContent.match(computedDefPattern);
+                
+                if (mightBeNull && computedDef) {
+                  // Check if there's already a v-if guard
+                  const hasGuard = templateContent.includes(`v-if="${computedName}"`) ||
+                                  templateContent.includes(`v-if="!${computedName}"`) ||
+                                  templateContent.includes(`v-if="${computedName} &&"`);
+                  
+                  if (!hasGuard) {
+                    potentialNullAccesses.add(`${computedName}.${propertyName}`);
+                  }
+                }
+              }
+              
+              if (potentialNullAccesses.size > 0) {
+                // AUTOMATISÉ: Add v-if guards automatically to prevent null/undefined errors
+                let modifiedTemplate = templateContent;
+                const addedGuards: string[] = [];
+                
+                potentialNullAccesses.forEach(access => {
+                  const computedName = access.split('.')[0];
+                  
+                  // Find the parent element containing this access
+                  // Pattern: <tag>...{{ computedName.property }}...</tag>
+                  const accessPattern = new RegExp(`(<[^>]+>)([^<]*\\{\\{\\s*${computedName}\\.\\w+\\s*\\}\\}[^<]*)(</[^>]+>)`, 'g');
+                  let accessMatch;
+                  
+                  while ((accessMatch = accessPattern.exec(modifiedTemplate)) !== null) {
+                    const [fullMatch, openingTag, content, closingTag] = accessMatch;
+                    
+                    // Check if opening tag already has v-if
+                    if (!openingTag.includes(`v-if="${computedName}"`) && 
+                        !openingTag.includes(`v-if="!${computedName}"`)) {
+                      
+                      // Add v-if guard to opening tag
+                      const tagNameMatch = openingTag.match(/^<(\w+)/);
+                      if (tagNameMatch) {
+                        const tagName = tagNameMatch[1];
+                        // Insert v-if before closing >
+                        const newOpeningTag = openingTag.replace(/>$/, ` v-if="${computedName}">`);
+                        const newFullMatch = newOpeningTag + content + closingTag;
+                        
+                        modifiedTemplate = modifiedTemplate.replace(fullMatch, newFullMatch);
+                        addedGuards.push(`${computedName}`);
+                        break; // Only add one guard per computed property
+                      }
+                    }
+                  }
+                });
+                
+                if (addedGuards.length > 0) {
+                  // Update the template in fixedContent
+                  fixedContent = fixedContent.replace(
+                    /<template>([\s\S]*?)<\/template>/,
+                    `<template>${modifiedTemplate}</template>`
+                  );
+                  result.fixed = true;
+                  result.fixes.push(`Added v-if guards to prevent null/undefined access: ${addedGuards.join(', ')}`);
+                } else {
+                  // If automatic fix failed, add warning
+                  result.issues.push(
+                    `Potential null/undefined access detected in template: ${Array.from(potentialNullAccesses).join(', ')}. Consider adding v-if guards (e.g., v-if="${Array.from(potentialNullAccesses)[0].split('.')[0]}").`
+                  );
+                }
+              }
+            }
           }
         }
 
@@ -3095,17 +3209,12 @@ export async function fixPostMigrationIssues(
       const templateContent = templateMatch[1];
       const originalScriptContent = scriptContent;
       
-      // Find properties used in template but not defined in script
-      // GENERIC: Detects any property name used in template, not hardcoded names
-      const mainStorePropertyPattern = /\{\{\s*(\w+)\s*\}\}/g;
-      const vIfPattern = /v-if=["']([^"']+)["']/g;
-      const vForPattern = /v-for=["']\w+\s+in\s+(\w+)/g;
+      // TRULY GENERIC: Use dynamic template analysis instead of regex patterns
+      const templateProperties = analyzeTemplateProperties(templateContent);
       const usedProperties = new Set<string>();
       
-      // Extract from {{ propName }}
-      let templateMatch2;
-      while ((templateMatch2 = mainStorePropertyPattern.exec(templateContent)) !== null) {
-        const propName = templateMatch2[1];
+      // Check which template properties are not defined in script
+      templateProperties.forEach((propName) => {
         // Check if property is defined in script
         const isDefined = scriptContent.match(
           new RegExp(`(const|let|var|function|import)\\s+${propName}\\b`, 'g')
@@ -3116,9 +3225,10 @@ export async function fixPostMigrationIssues(
         if (!isDefined && !['v-if', 'v-for', 'v-show', 'v-model'].some(v => templateContent.includes(`${v}="${propName}"`))) {
           usedProperties.add(propName);
         }
-      }
+      });
       
-      // Extract from v-if="propName" or v-if="propName.length"
+      // Also check v-if patterns for additional properties
+      const vIfPattern = /v-if=["']([^"']+)["']/g;
       let vIfMatch;
       while ((vIfMatch = vIfPattern.exec(templateContent)) !== null) {
         const expr = vIfMatch[1];
@@ -3138,6 +3248,7 @@ export async function fixPostMigrationIssues(
       }
       
       // Extract from v-for="item in propName"
+      const vForPattern = /v-for=["']\w+\s+in\s+(\w+)/g;
       let vForMatch;
       while ((vForMatch = vForPattern.exec(templateContent)) !== null) {
         const propName = vForMatch[1];
