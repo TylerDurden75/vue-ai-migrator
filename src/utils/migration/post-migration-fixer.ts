@@ -450,21 +450,48 @@ export async function fixPostMigrationIssues(
         // Pattern: route.query.redirect or this.$route.query.redirect
         const routeQueryRedirectPattern = /(route|this\.\$route)\.query\.redirect(\s*\|\|)?/g;
         if (routeQueryRedirectPattern.test(scriptContent)) {
+          // Fix double || operators and incorrect ternary logic
+          // Pattern: : route.query.redirect || "/dashboard" (incorrect - should be just : "/dashboard")
+          scriptContent = scriptContent.replace(
+            /:\s*(route|this\.\$route)\.query\.redirect\s*\|\|\s*['"]([^'"]+)['"]/g,
+            (match, routeVar, fallback) => {
+              return `: '${fallback}'`;
+            }
+          );
+          
+          // Fix ternary operators with incorrect fallback logic
+          scriptContent = scriptContent.replace(
+            /(\?\s*(?:route|this\.\$route)\.query\.redirect)\s*:\s*(?:route|this\.\$route)\.query\.redirect\s*\|\|\s*['"]([^'"]+)['"]/g,
+            (match, condition, fallback) => {
+              return `${condition} : '${fallback}'`;
+            }
+          );
+          
+          // Fix double || in ternary (syntax error)
+          scriptContent = scriptContent.replace(
+            /:\s*\|\|\s*['"]([^'"]+)['"]/g,
+            (match, fallback) => {
+              return `: '${fallback}'`;
+            }
+          );
+          
           // Find all usages and ensure they're properly handled
           scriptContent = scriptContent.replace(
             /(const\s+\w+\s*=\s*)(route|this\.\$route)\.query\.redirect(\s*\|\|\s*['"][^'"]+['"])?/g,
             (match, prefix, routeVar, fallback) => {
               const varName = match.match(/const\s+(\w+)\s*=/)?.[1] || 'redirect';
               // Ensure redirect is a string, not an object
-              return `${prefix}typeof ${routeVar === 'this.$route' ? 'route' : routeVar}.query.redirect === 'string' ? ${routeVar === 'this.$route' ? 'route' : routeVar}.query.redirect : ${fallback || "'/profile'"}`;
+              const fallbackValue = fallback ? fallback.match(/['"]([^'"]+)['"]/)?.[1] || '/dashboard' : '/dashboard';
+              return `${prefix}typeof ${routeVar === 'this.$route' ? 'route' : routeVar}.query.redirect === 'string' ? ${routeVar === 'this.$route' ? 'route' : routeVar}.query.redirect : '${fallbackValue}'`;
             }
           );
+          
           // Also fix direct usage in router.push(route.query.redirect)
           scriptContent = scriptContent.replace(
             /router\.push\((route|this\.\$route)\.query\.redirect\)/g,
             (match, routeVar) => {
               const routeName = routeVar === 'this.$route' ? 'route' : routeVar;
-              return `router.push(typeof ${routeName}.query.redirect === 'string' ? ${routeName}.query.redirect : '/profile')`;
+              return `router.push(typeof ${routeName}.query.redirect === 'string' ? ${routeName}.query.redirect : '/dashboard')`;
             }
           );
           result.fixed = true;
@@ -711,23 +738,184 @@ export async function fixPostMigrationIssues(
     }
 
     // Fix 3d: Fix incomplete computed properties in Pinia stores
-    // Pattern: const filteredProducts = computed(() => filtered); → should have full logic
-    // This is a complex fix that requires understanding the store context
-    // For now, we detect obvious incomplete computed properties and warn
+    // Pattern 1: const filteredProducts = computed(() => filtered); → should have full logic
+    // Pattern 2: const categories = computed(() => Array.from(cats)); where cats is undefined
+    // GENERIC: Automatically infers missing logic from store context
     if (fixedContent.includes('defineStore') && fixedContent.includes('computed')) {
+      // Extract all reactive variables (ref/reactive) from the store for context analysis
+      const reactiveVars = new Set<string>();
+      const refPattern = /(?:const|let|var)\s+(\w+)\s*=\s*ref\s*\(/g;
+      const reactivePattern = /(?:const|let|var)\s+(\w+)\s*=\s*reactive\s*\(/g;
+      let refMatch, reactiveMatch;
+      while ((refMatch = refPattern.exec(fixedContent)) !== null) {
+        reactiveVars.add(refMatch[1]);
+      }
+      while ((reactiveMatch = reactivePattern.exec(fixedContent)) !== null) {
+        reactiveVars.add(reactiveMatch[1]);
+      }
+      
+      // Pattern 1: Simple incomplete computed: computed(() => undefinedVar)
       const incompleteComputedPattern = /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*(\w+)\s*\)/g;
       let incompleteMatch;
-      const incompleteComputed: string[] = [];
       
       while ((incompleteMatch = incompleteComputedPattern.exec(fixedContent)) !== null) {
         const computedName = incompleteMatch[1];
         const referencedVar = incompleteMatch[2];
         
         // Check if the referenced variable is not defined in the store
-        // This is a heuristic - if computedName !== referencedVar and referencedVar is not in scope
         if (computedName !== referencedVar && !fixedContent.match(new RegExp(`(const|let|var|ref|reactive)\\s+${referencedVar}\\b`))) {
-          incompleteComputed.push(computedName);
-          result.issues.push(`Incomplete computed property detected: ${computedName} references undefined variable '${referencedVar}'. Manual fix required.`);
+          // Try to infer from context: if computedName is plural (categories, tags, items), 
+          // and we have a similar singular reactive var (posts, products), infer extraction logic
+          const computedNameLower = computedName.toLowerCase();
+          
+          // Common patterns: categories → posts.category, tags → items.tags, etc.
+          let inferredSource: string | null = null;
+          let inferredProperty: string | null = null;
+          
+          // Pattern: categories → posts.category
+          if (computedNameLower.includes('categor') && reactiveVars.has('posts')) {
+            inferredSource = 'posts';
+            inferredProperty = 'category';
+          }
+          // Pattern: tags → items.tags or posts.tags
+          else if (computedNameLower.includes('tag') && reactiveVars.size > 0) {
+            const possibleSources = Array.from(reactiveVars).filter(v => 
+              v.toLowerCase().includes('post') || v.toLowerCase().includes('item') || 
+              v.toLowerCase().includes('product') || v.toLowerCase().includes('data')
+            );
+            if (possibleSources.length > 0) {
+              inferredSource = possibleSources[0];
+              inferredProperty = 'tags';
+            }
+          }
+          // Generic pattern: if computed name is plural and we have a matching singular/plural var
+          else {
+            for (const varName of reactiveVars) {
+              const varNameLower = varName.toLowerCase();
+              // Try to match: categories → posts, items → products, etc.
+              if (computedNameLower.includes(varNameLower.slice(0, -1)) || 
+                  varNameLower.includes(computedNameLower.slice(0, -1))) {
+                inferredSource = varName;
+                // Try to infer property name from computed name
+                inferredProperty = computedNameLower.replace(varNameLower, '').replace(/s$/, '') || 'category';
+                break;
+              }
+            }
+          }
+          
+          if (inferredSource) {
+            // Auto-fix: Replace computed(() => undefinedVar) with proper extraction logic
+            const property = inferredProperty || 'category';
+            const fixedComputed = `const ${computedName} = computed(() => {\n    const ${referencedVar} = new Set(${inferredSource}.value.map(item => item.${property}).filter(Boolean));\n    return Array.from(${referencedVar});\n  })`;
+            fixedContent = fixedContent.replace(incompleteMatch[0], fixedComputed);
+            result.fixed = true;
+            result.fixes.push(`Auto-fixed incomplete computed property '${computedName}': inferred extraction from ${inferredSource}.${property}`);
+          } else {
+            result.issues.push(`Incomplete computed property detected: ${computedName} references undefined variable '${referencedVar}'. Could not auto-fix - manual fix required.`);
+          }
+        }
+      }
+      
+      // Pattern 2: Array.from(undefinedVar) in computed (single line or multi-line)
+      // Match both: computed(() => Array.from(var)) and computed(() => { return Array.from(var); })
+      const arrayFromPatterns = [
+        // Single line: computed(() => Array.from(var))
+        /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*Array\.from\s*\(\s*(\w+)\s*\)\s*\)/g,
+        // Multi-line: computed(() => { return Array.from(var); })
+        /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*\{\s*return\s+Array\.from\s*\(\s*(\w+)\s*\)\s*;\s*\}\s*\)/g,
+        // Multi-line with newlines: computed(() => {\n  return Array.from(var);\n})
+        /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*\{[\s\n]*return\s+Array\.from\s*\(\s*(\w+)\s*\)\s*;?[\s\n]*\}\s*\)/g
+      ];
+      
+      for (const arrayFromPattern of arrayFromPatterns) {
+        let arrayFromMatch;
+        arrayFromPattern.lastIndex = 0; // Reset regex state
+        
+        while ((arrayFromMatch = arrayFromPattern.exec(fixedContent)) !== null) {
+          const computedName = arrayFromMatch[1];
+          const undefinedVar = arrayFromMatch[2];
+          
+          // Check if the variable is not defined (skip if it's defined elsewhere in the computed)
+          const computedBlock = fixedContent.substring(
+            fixedContent.indexOf(arrayFromMatch[0]),
+            fixedContent.indexOf(arrayFromMatch[0]) + arrayFromMatch[0].length
+          );
+          const isDefinedInComputed = computedBlock.match(new RegExp(`(const|let|var)\\s+${undefinedVar}\\b`));
+          
+          if (!isDefinedInComputed && !fixedContent.match(new RegExp(`(const|let|var|ref|reactive)\\s+${undefinedVar}\\b`))) {
+            // Try to infer from context
+            const computedNameLower = computedName.toLowerCase();
+            let inferredSource: string | null = null;
+            let inferredProperty: string | null = null;
+            
+            // Common patterns: categories → posts.category, tags → items.tags
+            if (computedNameLower.includes('categor') && reactiveVars.has('posts')) {
+              inferredSource = 'posts';
+              inferredProperty = 'category';
+            } else if (computedNameLower.includes('categor') && reactiveVars.size > 0) {
+              // Try to find any array-like reactive var (posts, items, products, data, etc.)
+              const possibleSources = Array.from(reactiveVars).filter(v => 
+                v.toLowerCase().includes('post') || v.toLowerCase().includes('item') || 
+                v.toLowerCase().includes('product') || v.toLowerCase().includes('data') ||
+                v.toLowerCase().includes('list') || v.toLowerCase().includes('array')
+              );
+              if (possibleSources.length > 0) {
+                inferredSource = possibleSources[0];
+                inferredProperty = 'category';
+              }
+            } else if (computedNameLower.includes('tag') && reactiveVars.size > 0) {
+              const possibleSources = Array.from(reactiveVars).filter(v => 
+                v.toLowerCase().includes('post') || v.toLowerCase().includes('item') || 
+                v.toLowerCase().includes('product') || v.toLowerCase().includes('data')
+              );
+              if (possibleSources.length > 0) {
+                inferredSource = possibleSources[0];
+                inferredProperty = 'tags';
+              }
+            } else {
+              // Generic inference: find best matching reactive var
+              // Try to match computed name with reactive var names
+              for (const varName of reactiveVars) {
+                const varNameLower = varName.toLowerCase();
+                // Match patterns like: categories → posts, items → products
+                if (computedNameLower.includes(varNameLower.slice(0, -1)) || 
+                    varNameLower.includes(computedNameLower.slice(0, -1)) ||
+                    (computedNameLower.length > 3 && varNameLower.includes(computedNameLower.substring(0, computedNameLower.length - 1)))) {
+                  inferredSource = varName;
+                  // Try to infer property name: categories → category, tags → tag
+                  inferredProperty = computedNameLower.replace(varNameLower, '').replace(/s$/, '') || 
+                                     computedNameLower.replace(/s$/, '') || 'category';
+                  break;
+                }
+              }
+              
+              // Fallback: if we have reactive vars but no match, use the first array-like one
+              if (!inferredSource && reactiveVars.size > 0) {
+                const arrayLikeVars = Array.from(reactiveVars).filter(v => 
+                  v.toLowerCase().includes('post') || v.toLowerCase().includes('item') || 
+                  v.toLowerCase().includes('product') || v.toLowerCase().includes('data') ||
+                  v.toLowerCase().includes('list') || v.toLowerCase().includes('array')
+                );
+                if (arrayLikeVars.length > 0) {
+                  inferredSource = arrayLikeVars[0];
+                  // Try to infer property from computed name
+                  inferredProperty = computedNameLower.replace(/s$/, '') || 'category';
+                }
+              }
+            }
+            
+            if (inferredSource) {
+              // Auto-fix: Replace Array.from(undefinedVar) with proper extraction
+              const property = inferredProperty || 'category';
+              const fixedComputed = `const ${computedName} = computed(() => {\n    const ${undefinedVar} = new Set(${inferredSource}.value.map(item => item.${property}).filter(Boolean));\n    return Array.from(${undefinedVar});\n  })`;
+              fixedContent = fixedContent.replace(arrayFromMatch[0], fixedComputed);
+              result.fixed = true;
+              result.fixes.push(`Auto-fixed Array.from(${undefinedVar}) in computed '${computedName}': inferred extraction from ${inferredSource}.${property}`);
+              break; // Only fix once per pattern
+            } else {
+              result.issues.push(`Incomplete computed property detected: ${computedName} uses Array.from(${undefinedVar}) where '${undefinedVar}' is undefined. Available reactive vars: ${Array.from(reactiveVars).join(', ')}. Could not auto-fix - manual fix required.`);
+            }
+          }
         }
       }
     }
@@ -875,15 +1063,20 @@ export async function fixPostMigrationIssues(
     }
   }
 
-  // Fix 6: Fix router navigation guards that use router.app.$store
-  // Pattern: router.app.$store.getters['module/getter'] or router.app.$store.getters['user/isAuthenticated']
-  // Transform to: useUserStore().isAuthenticated
+  // Fix 6: Fix router navigation guards that use router.app.$store or store.getters
+  // Pattern: router.app.$store.getters['module/getter'] or store.getters['module/getter']
+  // Transform to: useModuleStore().getter
   if (filePath.includes("router") || filePath.includes("Router")) {
+    // Pattern 1: router.app.$store.getters['module/getter']
     const routerStorePattern =
       /router\.app\.\$store\.(getters|dispatch|state)\[['"]([^'"]+)['"]\]/g;
+    // Pattern 2: store.getters['module/getter'] (direct store import)
+    const directStorePattern =
+      /store\.(getters|dispatch|state)\[['"]([^'"]+)\/([^'"]+)['"]\]/g;
     const matches = Array.from(fixedContent.matchAll(routerStorePattern));
+    const directMatches = Array.from(fixedContent.matchAll(directStorePattern));
     
-    if (matches.length > 0) {
+    if (matches.length > 0 || directMatches.length > 0) {
       const scriptMatch = fixedContent.match(
         /<script[^>]*>([\s\S]*?)<\/script>/,
       ) || fixedContent.match(/^([\s\S]*)$/); // For .js files
@@ -893,6 +1086,7 @@ export async function fixPostMigrationIssues(
         const originalScriptContent = scriptContent;
         const storesToImport = new Map<string, string>(); // module name → store name
         
+        // Process router.app.$store patterns
         matches.forEach((match) => {
           const [, type, path] = match;
           // Extract module name from path like 'user/isAuthenticated' or 'user'
@@ -937,6 +1131,34 @@ export async function fixPostMigrationIssues(
           }
         });
         
+        // Process store.getters['module/getter'] patterns (direct store import)
+        directMatches.forEach((match) => {
+          const [, type, moduleName, propertyName] = match;
+          
+          if (moduleName && propertyName) {
+            // Determine store name: 'auth' → 'useAuthStore'
+            const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
+            storesToImport.set(moduleName, storeName);
+            
+            // Replace store.getters['module/prop'] with storeVar.prop
+            const storeVarName = `${moduleName}Store`;
+            let replacement: string;
+            
+            if (type === 'getters') {
+              replacement = `${storeVarName}.${propertyName}`;
+            } else if (type === 'dispatch') {
+              replacement = `${storeVarName}.${propertyName}()`;
+            } else {
+              // state
+              replacement = `${storeVarName}.${propertyName}`;
+            }
+            
+            // Replace the pattern (escape special regex chars)
+            const patternToReplace = match[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            scriptContent = scriptContent.replace(new RegExp(patternToReplace, 'g'), replacement);
+          }
+        });
+        
         // Add store imports if needed
         if (storesToImport.size > 0 && scriptContent !== originalScriptContent) {
           storesToImport.forEach((storeName, moduleName) => {
@@ -949,45 +1171,83 @@ export async function fixPostMigrationIssues(
               scriptContent = importLine + scriptContent;
             }
             
-            // Initialize store INSIDE router.beforeEach guard, not at module level
-            // This is because Pinia must be initialized before stores can be used
+            // Remove old store import if it exists
+            const oldStoreImportPattern = /import\s+store\s+from\s+['"]\.\.\/store['"];?\s*\n?/g;
+            scriptContent = scriptContent.replace(oldStoreImportPattern, '');
+            
+            // Initialize store INSIDE router.beforeEach guard (not at module level)
+            // This is required because Pinia must be initialized with app.use(pinia) before stores can be used
             const storeVarName = `${moduleName}Store`;
-            const initPattern = new RegExp(`const\\s+${storeVarName}\\s*=`, 'g');
+            const moduleLevelInitPattern = new RegExp(`const\\s+${storeVarName}\\s*=\\s*${storeName}\\(\\);?\\s*\\n`, 'g');
             const insideBeforeEachPattern = new RegExp(`router\\.beforeEach[^}]*const\\s+${storeVarName}`, 's');
             
-            if (!initPattern.test(scriptContent) || !insideBeforeEachPattern.test(scriptContent)) {
+            // First, check if store is initialized at module level (outside beforeEach)
+            const hasModuleLevelInit = moduleLevelInitPattern.test(scriptContent);
+            const hasInsideBeforeEach = insideBeforeEachPattern.test(scriptContent);
+            
+            // Also check if store variable is used but not initialized inside beforeEach
+            const storeUsagePattern = new RegExp(`router\\.beforeEach[^}]*\\b${storeVarName}\\b`, 's');
+            const storeUsedButNotInit = storeUsagePattern.test(scriptContent) && !hasInsideBeforeEach;
+            
+            // If store is initialized at module level OR used but not initialized, move/create it inside beforeEach
+            if ((hasModuleLevelInit || storeUsedButNotInit) && !hasInsideBeforeEach) {
+              // Remove module-level initialization if it exists
+              if (hasModuleLevelInit) {
+                scriptContent = scriptContent.replace(moduleLevelInitPattern, '');
+              }
+              
               // Check if router.beforeEach exists
               const beforeEachMatch = scriptContent.match(/router\.beforeEach\s*\([^)]*\)\s*=>\s*\{/);
               if (beforeEachMatch) {
-                // Check if guard is already async
-                const isAsync = beforeEachMatch[0].includes('async');
-                const asyncKeyword = isAsync ? '' : 'async ';
-                
-                // Add store import and initialization INSIDE the beforeEach guard
-                const initLine = `    const { ${storeName} } = await import('${importPath}');\n    const ${storeVarName} = ${storeName}();\n`;
-                
-                // Make guard async if not already
-                if (!isAsync) {
-                  scriptContent = scriptContent.replace(
-                    /(router\.beforeEach\s*\()([^)]*)(\)\s*=>\s*\{)/,
-                    `$1${asyncKeyword}$2$3`
-                  );
-                }
-                
-                // Add store initialization inside guard
+                // Add store initialization inside the guard (at the beginning, before any usage)
+                const initLine = `  const ${storeVarName} = ${storeName}();\n`;
                 scriptContent = scriptContent.replace(
                   /(router\.beforeEach\s*\([^)]*\)\s*=>\s*\{)/,
                   `$1\n${initLine}`
                 );
               } else {
-                // If no beforeEach, create one
-                const beforeEachCode = `router.beforeEach(async (to, from, next) => {
-  const { ${storeName} } = await import('${importPath}');
+                // No router.beforeEach - create one with store initialization
+                const beforeEachCode = `router.beforeEach((to, from, next) => {
   const ${storeVarName} = ${storeName}();
   // Add your guard logic here
   next();
 });\n\n`;
-                scriptContent = scriptContent.replace(/export\s+default/, `${beforeEachCode}export default`);
+                const exportMatch = scriptContent.match(/export\s+default/);
+                if (exportMatch) {
+                  const insertPos = exportMatch.index!;
+                  scriptContent = scriptContent.slice(0, insertPos) + 
+                    `${beforeEachCode}` + 
+                    scriptContent.slice(insertPos);
+                } else {
+                  scriptContent = `${beforeEachCode}${scriptContent}`;
+                }
+              }
+            } else if (!hasInsideBeforeEach) {
+              // Store not initialized anywhere - add it inside beforeEach
+              const beforeEachMatch = scriptContent.match(/router\.beforeEach\s*\([^)]*\)\s*=>\s*\{/);
+              if (beforeEachMatch) {
+                // Add store initialization inside the guard (at the beginning)
+                const initLine = `  const ${storeVarName} = ${storeName}();\n`;
+                scriptContent = scriptContent.replace(
+                  /(router\.beforeEach\s*\([^)]*\)\s*=>\s*\{)/,
+                  `$1\n${initLine}`
+                );
+              } else {
+                // No router.beforeEach - create one with store initialization
+                const beforeEachCode = `router.beforeEach((to, from, next) => {
+  const ${storeVarName} = ${storeName}();
+  // Add your guard logic here
+  next();
+});\n\n`;
+                const exportMatch = scriptContent.match(/export\s+default/);
+                if (exportMatch) {
+                  const insertPos = exportMatch.index!;
+                  scriptContent = scriptContent.slice(0, insertPos) + 
+                    `${beforeEachCode}` + 
+                    scriptContent.slice(insertPos);
+                } else {
+                  scriptContent = `${beforeEachCode}${scriptContent}`;
+                }
               }
             }
           });
@@ -1418,7 +1678,7 @@ export async function fixPostMigrationIssues(
           allImports.forEach(({ content, normalized }) => {
             const importNameMatch = normalized.match(/import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/);
             if (importNameMatch) {
-              const exportNames = importNameMatch[1].split(',').map(s => s.trim());
+              const exportNames = importNameMatch[1].split(',').map(s => s.trim()).filter(s => s.length > 0); // Filter empty strings
               const fromPath = importNameMatch[2];
               
               if (!importsByModule.has(fromPath)) {
@@ -1447,9 +1707,11 @@ export async function fixPostMigrationIssues(
           // Step 3: Rebuild unique imports from grouped modules
           const uniqueImports: string[] = [];
           importsByModule.forEach((exports, modulePath) => {
-            const sortedExports = Array.from(exports).sort();
-            const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
-            uniqueImports.push(importStatement);
+            const sortedExports = Array.from(exports).sort().filter(e => e.length > 0); // Filter empty exports
+            if (sortedExports.length > 0) {
+              const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
+              uniqueImports.push(importStatement);
+            }
           });
           
           // Step 4: Always remove all imports and rebuild with merged unique imports
@@ -1462,7 +1724,14 @@ export async function fixPostMigrationIssues(
           
           // Add unique imports at the beginning (always rebuild to ensure proper merging)
           if (uniqueImports.length > 0) {
-            scriptContent = uniqueImports.join('\n') + '\n\n' + cleanedContent;
+            // Clean up any imports with empty commas (e.g., import { , useAppStore } → import { useAppStore })
+            const cleanedImports = uniqueImports.map(imp => {
+              return imp.replace(/import\s+\{\s*,+\s*([^}]+)\}\s+from/, 'import { $1 } from')
+                       .replace(/import\s+\{([^}]+)\s*,+\s*\}\s+from/, 'import { $1 } from')
+                       .replace(/import\s+\{\s*,+\s*\}\s+from/, ''); // Remove completely empty imports
+            }).filter(imp => imp.length > 0);
+            
+            scriptContent = cleanedImports.join('\n') + '\n\n' + cleanedContent;
             result.fixed = true;
             result.fixes.push("Merged duplicate imports from same modules");
           } else {
@@ -1874,9 +2143,11 @@ export async function fixPostMigrationIssues(
           // Rebuild merged imports
           const finalUniqueImports: string[] = [];
           finalImportsByModule.forEach((exports, modulePath) => {
-            const sortedExports = Array.from(exports).sort();
-            const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
-            finalUniqueImports.push(importStatement);
+            const sortedExports = Array.from(exports).sort().filter(e => e.length > 0); // Filter empty exports
+            if (sortedExports.length > 0) {
+              const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
+              finalUniqueImports.push(importStatement);
+            }
           });
           
           // Remove all imports and rebuild
@@ -1884,7 +2155,14 @@ export async function fixPostMigrationIssues(
           finalCleanedContent = finalCleanedContent.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '').trim();
           
           if (finalUniqueImports.length > 0) {
-            scriptContent = finalUniqueImports.join('\n') + '\n\n' + finalCleanedContent;
+            // Clean up any imports with empty commas
+            const cleanedImports = finalUniqueImports.map(imp => {
+              return imp.replace(/import\s+\{\s*,+\s*([^}]+)\}\s+from/, 'import { $1 } from')
+                       .replace(/import\s+\{([^}]+)\s*,+\s*\}\s+from/, 'import { $1 } from')
+                       .replace(/import\s+\{\s*,+\s*\}\s+from/, ''); // Remove completely empty imports
+            }).filter(imp => imp.length > 0);
+            
+            scriptContent = cleanedImports.join('\n') + '\n\n' + finalCleanedContent;
             result.fixed = true;
             if (!result.fixes.includes("Merged duplicate imports from same modules")) {
               result.fixes.push("Merged duplicate imports from same modules");
@@ -2035,6 +2313,37 @@ export async function fixPostMigrationIssues(
             new RegExp(`this\\.\\$store\\.getters\\[['"]${module}/${getter}['"]\\]`, 'g'),
             replacement
           );
+        }
+        
+        // Check if computed is used but not imported (after replacing this.$store.getters)
+        if (scriptContent.includes('computed(') && !scriptContent.match(/import\s+.*\{[^}]*\bcomputed\b[^}]*\}\s+from\s+['"]vue['"]/)) {
+          // Add computed to vue import or create new import
+          const vueImportMatch = scriptContent.match(/import\s+.*\{([^}]+)\}\s+from\s+['"]vue['"]/);
+          if (vueImportMatch) {
+            const existingImports = vueImportMatch[1].split(',').map(i => i.trim()).filter(i => i);
+            if (!existingImports.includes('computed')) {
+              const newImports = [...existingImports, 'computed'];
+              scriptContent = scriptContent.replace(
+                /import\s+.*\{[^}]+\}\s+from\s+['"]vue['"]/,
+                `import { ${newImports.join(', ')} } from 'vue'`
+              );
+              result.fixed = true;
+              result.fixes.push("Added missing computed import");
+            }
+          } else {
+            // Create new import
+            const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (importMatch) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$&import { computed } from 'vue';\n`
+              );
+            } else {
+              scriptContent = `import { computed } from 'vue';\n${scriptContent}`;
+            }
+            result.fixed = true;
+            result.fixes.push("Added missing computed import");
+          }
         }
         
         // Then detect direct method/getter calls
@@ -2422,9 +2731,11 @@ export async function fixPostMigrationIssues(
           // Rebuild merged imports
           const finalUniqueImports: string[] = [];
           finalImportsByModule.forEach((exports, modulePath) => {
-            const sortedExports = Array.from(exports).sort();
-            const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
-            finalUniqueImports.push(importStatement);
+            const sortedExports = Array.from(exports).sort().filter(e => e.length > 0); // Filter empty exports
+            if (sortedExports.length > 0) {
+              const importStatement = `import { ${sortedExports.join(', ')} } from '${modulePath}';`;
+              finalUniqueImports.push(importStatement);
+            }
           });
           
           // Remove all imports and rebuild
@@ -2432,7 +2743,14 @@ export async function fixPostMigrationIssues(
           finalCleanedContent = finalCleanedContent.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '').trim();
           
           if (finalUniqueImports.length > 0) {
-            scriptContent = finalUniqueImports.join('\n') + '\n\n' + finalCleanedContent;
+            // Clean up any imports with empty commas
+            const cleanedImports = finalUniqueImports.map(imp => {
+              return imp.replace(/import\s+\{\s*,+\s*([^}]+)\}\s+from/, 'import { $1 } from')
+                       .replace(/import\s+\{([^}]+)\s*,+\s*\}\s+from/, 'import { $1 } from')
+                       .replace(/import\s+\{\s*,+\s*\}\s+from/, ''); // Remove completely empty imports
+            }).filter(imp => imp.length > 0);
+            
+            scriptContent = cleanedImports.join('\n') + '\n\n' + finalCleanedContent;
             result.fixed = true;
             if (!result.fixes.includes("Merged duplicate imports from same modules")) {
               result.fixes.push("Merged duplicate imports from same modules");
@@ -2987,6 +3305,258 @@ export async function fixPostMigrationIssues(
             }
             result.fixed = true;
             result.fixes.push(`Added missing lifecycle hooks imports: ${usedLifecycleHooks.join(', ')}`);
+          }
+        }
+        
+        // Step 7.6: Detect and add missing Vue imports (ref, watch, etc.) GENERIC
+        // This detects usage of Vue functions and adds imports if missing
+        const vueFunctions = ['ref', 'reactive', 'computed', 'watch', 'watchEffect', 'onMounted', 'onUnmounted', 'onBeforeMount', 'onBeforeUnmount', 'onUpdated', 'onBeforeUpdate', 'onActivated', 'onDeactivated', 'provide', 'inject', 'nextTick', 'defineProps', 'defineEmits', 'defineExpose'];
+        const usedVueFunctions = vueFunctions.filter(func => {
+          // Check if function is used (not just mentioned in comments/strings)
+          const funcPattern = new RegExp(`\\b${func}\\s*\\(|\\b${func}\\s*=|import.*${func}`, 'g');
+          return funcPattern.test(scriptContent) && !scriptContent.match(new RegExp(`import\\s+.*\\{[^}]*\\b${func}\\b[^}]*\\}\\s+from\\s+['"]vue['"]`));
+        });
+        
+        if (usedVueFunctions.length > 0) {
+          const vueImportMatch = scriptContent.match(/import\s+.*\{([^}]+)\}\s+from\s+['"]vue['"]/);
+          if (vueImportMatch) {
+            const existingImports = vueImportMatch[1].split(',').map(i => i.trim()).filter(i => i);
+            const newImports = [...existingImports, ...usedVueFunctions.filter(f => !existingImports.includes(f))];
+            scriptContent = scriptContent.replace(
+              /import\s+.*\{[^}]+\}\s+from\s+['"]vue['"]/,
+              `import { ${newImports.join(', ')} } from 'vue'`
+            );
+            result.fixed = true;
+            result.fixes.push(`Added missing Vue imports: ${usedVueFunctions.join(', ')}`);
+          } else {
+            // Create new import
+            const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (importMatch) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$&import { ${usedVueFunctions.join(', ')} } from 'vue';\n`
+              );
+            } else {
+              scriptContent = `import { ${usedVueFunctions.join(', ')} } from 'vue';\n${scriptContent}`;
+            }
+            result.fixed = true;
+            result.fixes.push(`Added missing Vue imports: ${usedVueFunctions.join(', ')}`);
+          }
+        }
+        
+        // Step 7.6.5: Remove unused store imports and declarations GENERIC
+        // Detect store imports that are declared but never used
+        // Also detect stores that are used but not imported
+        if (scriptContent.includes('Store')) {
+          // First, find all store declarations: const XStore = useXStore();
+          const storeDeclPattern = /const\s+(\w+Store)\s*=\s*(use\w+Store)\(\)/g;
+          const storeDecls = new Map<string, string>(); // storeVar → storeName
+          let match;
+          while ((match = storeDeclPattern.exec(scriptContent)) !== null) {
+            const [, storeVar, storeName] = match;
+            storeDecls.set(storeVar, storeName);
+            
+            // Check if import exists for this store
+            const importPattern = new RegExp(`import\\s+\\{[^}]*\\b${storeName}\\b[^}]*\\}\\s+from`, 'g');
+            if (!importPattern.test(scriptContent)) {
+              // Store is used but not imported - add import
+              const modulePath = `@/store/modules/${storeName.replace(/^use/, '').replace(/Store$/, '').toLowerCase()}`;
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                scriptContent = scriptContent.replace(
+                  /(import\s+[^;]+;[\s\n]*)+/,
+                  `$&import { ${storeName} } from '${modulePath}';\n`
+                );
+              } else {
+                scriptContent = `import { ${storeName} } from '${modulePath}';\n${scriptContent}`;
+              }
+              result.fixed = true;
+              result.fixes.push(`Added missing store import: ${storeName}`);
+            }
+          }
+          
+          // Check which stores are actually used
+          storeDecls.forEach((storeName, storeVar) => {
+            // Check if store variable is used anywhere (except in its declaration)
+            // Pattern: storeVar.property, storeVar(), storeVar, storeVar], storeVar}
+            const usagePattern = new RegExp(`\\b${storeVar}\\.[a-zA-Z_$]|\\b${storeVar}\\s*\\(|\\b${storeVar}\\s*\\)|\\b${storeVar}\\s*,|\\b${storeVar}\\s*;|\\b${storeVar}\\s*\\]|\\b${storeVar}\\s*\\}`, 'g');
+            const allMatches = Array.from(scriptContent.matchAll(usagePattern));
+            // Filter out the declaration itself
+            const actualUsages = allMatches.filter(m => {
+              const beforeMatch = scriptContent.substring(0, m.index);
+              // Check if this is not part of the declaration: const storeVar = useStore()
+              const isInDeclaration = beforeMatch.match(/const\s+$/);
+              // Also check if it's used in computed/watched expressions
+              const isInComputed = beforeMatch.match(/computed\s*\(\s*\(\)\s*=>\s*$/);
+              const isInWatch = beforeMatch.match(/watch\s*\(/);
+              return !isInDeclaration && (isInComputed || isInWatch || !beforeMatch.match(/const\s+$/));
+            });
+            
+            // If store is not used, remove declaration and import
+            // BUT: Make sure we're not removing stores that are used but our pattern didn't catch
+            // Double-check by looking for the store variable name in computed/watched expressions
+            const hasUsageInComputed = new RegExp(`computed\s*\(\s*\(\)\s*=>\s*.*\\b${storeVar}\\b`, 's').test(scriptContent);
+            const hasUsageInWatch = new RegExp(`watch\s*\([^)]*\\b${storeVar}\\b`, 's').test(scriptContent);
+            const hasUsageInTemplate = scriptContent.includes(`{{ ${storeVar}`) || scriptContent.includes(`v-if="${storeVar}`) || scriptContent.includes(`v-for="${storeVar}`);
+            
+            if (actualUsages.length === 0 && !hasUsageInComputed && !hasUsageInWatch && !hasUsageInTemplate) {
+              // Remove declaration
+              scriptContent = scriptContent.replace(
+                new RegExp(`const\\s+${storeVar}\\s*=\\s*${storeName}\\(\\);?\\s*\\n?`, 'g'),
+                ''
+              );
+              
+              // Remove import if no other store from same module is used
+              const importPattern = new RegExp(`import\\s+\\{[^}]*\\b${storeName}\\b[^}]*\\}\\s+from\\s+['"]([^'"]+)['"];?\\s*\\n?`, 'g');
+              scriptContent = scriptContent.replace(importPattern, (importMatch) => {
+                // Check if other stores from same module are imported
+                const modulePath = importMatch.match(/from\s+['"]([^'"]+)['"]/)?.[1];
+                if (modulePath) {
+                  // Check if any other store from this module is used
+                  const otherStorePattern = new RegExp(`const\\s+(\\w+Store)\\s*=\\s*(use\\w+Store)\\(\\)`, 'g');
+                  let otherMatch;
+                  let hasOtherStore = false;
+                  while ((otherMatch = otherStorePattern.exec(scriptContent)) !== null) {
+                    const [, otherVar, otherName] = otherMatch;
+                    if (otherVar !== storeVar && scriptContent.includes(`from '${modulePath}'`)) {
+                      // Check if other store is used
+                      const otherUsagePattern = new RegExp(`\\b${otherVar}\\.[a-zA-Z_$]|\\b${otherVar}\\s*\\)`, 'g');
+                      if (otherUsagePattern.test(scriptContent)) {
+                        hasOtherStore = true;
+                        break;
+                      }
+                    }
+                  }
+                  
+                  if (!hasOtherStore) {
+                    // Remove entire import
+                    return '';
+                  } else {
+                    // Remove only this store from import
+                    return importMatch.replace(new RegExp(`\\s*,\\s*${storeName}|${storeName}\\s*,?\\s*`), '');
+                  }
+                }
+                return '';
+              });
+              
+              result.fixed = true;
+              result.fixes.push(`Removed unused store: ${storeVar}`);
+            }
+          });
+        }
+        
+        // Step 7.7: Replace remaining this.$store.dispatch/getters in watchers and methods GENERIC
+        // This handles cases where this.$store is used but not yet replaced
+        if (scriptContent.includes('this.$store')) {
+          // Detect all this.$store.dispatch('module/method', ...) patterns
+          const dispatchPattern = /this\.\$store\.dispatch\(['"]([^'"]+)\/([^'"]+)['"]\s*,?\s*([^)]*)\)/g;
+          let dispatchMatch;
+          const dispatchReplacements: Array<{ pattern: string; replacement: string; storeVar: string; storeName: string; module: string }> = [];
+          
+          while ((dispatchMatch = dispatchPattern.exec(scriptContent)) !== null) {
+            const [, module, method, args] = dispatchMatch;
+            const storeVarName = `${module}Store`;
+            const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
+            const fullMatch = dispatchMatch[0];
+            const replacement = args.trim() ? `${storeVarName}.${method}(${args.trim()})` : `${storeVarName}.${method}()`;
+            
+            dispatchReplacements.push({
+              pattern: fullMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+              replacement: replacement,
+              storeVar: storeVarName,
+              storeName: storeName,
+              module: module
+            });
+          }
+          
+          // Apply replacements
+          dispatchReplacements.forEach(({ pattern, replacement, storeVar, storeName, module }) => {
+            scriptContent = scriptContent.replace(new RegExp(pattern, 'g'), replacement);
+            
+            // Ensure store is imported and initialized
+            if (!scriptContent.includes(`import { ${storeName} }`)) {
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                scriptContent = scriptContent.replace(
+                  /(import\s+[^;]+;[\s\n]*)+/,
+                  `$&import { ${storeName} } from '@/store/modules/${module}';\n`
+                );
+              } else {
+                scriptContent = `import { ${storeName} } from '@/store/modules/${module}';\n${scriptContent}`;
+              }
+            }
+            
+            if (!scriptContent.includes(`const ${storeVar} = ${storeName}`)) {
+              // Add store initialization after imports
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                const insertPos = importMatch[0].length;
+                scriptContent = scriptContent.slice(0, insertPos) + 
+                  `\nconst ${storeVar} = ${storeName}();\n` + 
+                  scriptContent.slice(insertPos);
+              }
+            }
+          });
+          
+          // Detect this.$store.getters['module/getter'] patterns
+          const gettersPattern = /this\.\$store\.getters\[['"]([^'"]+)\/([^'"]+)['"]\]/g;
+          let gettersMatch;
+          const gettersReplacements: Array<{ pattern: string; replacement: string; storeVar: string; storeName: string; module: string }> = [];
+          
+          while ((gettersMatch = gettersPattern.exec(scriptContent)) !== null) {
+            const [, module, getter] = gettersMatch;
+            const storeVarName = `${module}Store`;
+            const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
+            const fullMatch = gettersMatch[0];
+            const replacement = `${storeVarName}.${getter}`;
+            
+            gettersReplacements.push({
+              pattern: fullMatch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+              replacement: replacement,
+              storeVar: storeVarName,
+              storeName: storeName,
+              module: module
+            });
+          }
+          
+          // Apply getters replacements
+          gettersReplacements.forEach(({ pattern, replacement, storeVar, storeName, module }) => {
+            scriptContent = scriptContent.replace(new RegExp(pattern, 'g'), replacement);
+            
+            // Ensure store is imported and initialized (same logic as dispatch)
+            if (!scriptContent.includes(`import { ${storeName} }`)) {
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                scriptContent = scriptContent.replace(
+                  /(import\s+[^;]+;[\s\n]*)+/,
+                  `$&import { ${storeName} } from '@/store/modules/${module}';\n`
+                );
+              } else {
+                scriptContent = `import { ${storeName} } from '@/store/modules/${module}';\n${scriptContent}`;
+              }
+            }
+            
+            if (!scriptContent.includes(`const ${storeVar} = ${storeName}`)) {
+              const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+              if (importMatch) {
+                const insertPos = importMatch[0].length;
+                scriptContent = scriptContent.slice(0, insertPos) + 
+                  `\nconst ${storeVar} = ${storeName}();\n` + 
+                  scriptContent.slice(insertPos);
+              }
+            }
+          });
+          
+          if (dispatchReplacements.length > 0 || gettersReplacements.length > 0) {
+            result.fixed = true;
+            const fixes = [];
+            if (dispatchReplacements.length > 0) {
+              fixes.push(`Replaced ${dispatchReplacements.length} this.$store.dispatch calls`);
+            }
+            if (gettersReplacements.length > 0) {
+              fixes.push(`Replaced ${gettersReplacements.length} this.$store.getters calls`);
+            }
+            result.fixes.push(fixes.join(', '));
           }
         }
         

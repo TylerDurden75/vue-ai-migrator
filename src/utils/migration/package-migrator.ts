@@ -168,11 +168,13 @@ export async function migratePackageJson(
       }
     }
 
-    // Remove Vue 2 specific plugins
+    // Remove Vue 2 specific plugins and obsolete Vue CLI plugins
     const vue2Plugins = [
       "vue-template-compiler",
       "vue-class-component",
       "vue-property-decorator",
+      "@vue/cli-plugin-router", // Obsolete - Router is now standalone in Vue 3
+      "@vue/cli-plugin-vuex",   // Obsolete - Vuex replaced by Pinia
     ];
 
     for (const plugin of vue2Plugins) {
