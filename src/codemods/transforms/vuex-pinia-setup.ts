@@ -2219,6 +2219,26 @@ function inferTypeFromAST(astNode: any): string {
     return "any";
   }
 
+  // Handle BinaryExpression (arithmetic operations: a * b, a + b, etc.)
+  if (astNode.type === "BinaryExpression") {
+    return inferTypeFromASTExpression(astNode);
+  }
+
+  // Handle UnaryExpression (!a, -a, etc.)
+  if (astNode.type === "UnaryExpression") {
+    return inferTypeFromASTExpression(astNode);
+  }
+
+  // Handle MemberExpression (state.count, items.length, etc.)
+  if (astNode.type === "MemberExpression") {
+    // Check for .length property (arrays)
+    if (astNode.property && astNode.property.name === "length") {
+      return "number";
+    }
+    // Try to infer from the property access
+    return inferTypeFromASTExpression(astNode);
+  }
+
   // Use existing inferTypeFromASTValue for basic types
   const basicType = inferTypeFromASTValue(astNode);
   if (basicType !== "any" && basicType !== "any[]") {
@@ -2460,6 +2480,28 @@ function inferTypeFromASTExpression(expressionAST: any): string {
     // Check for .length property (arrays)
     if (property && property.name === "length") {
       return "number";
+    }
+
+    // Check for numeric property access (e.g., state.count, state.index)
+    if (property) {
+      const propName = property.name || property.value;
+      if (propName && typeof propName === "string") {
+        const lowerName = propName.toLowerCase();
+        // Common numeric property names
+        if (
+          lowerName.includes("count") ||
+          lowerName.includes("id") ||
+          lowerName.includes("index") ||
+          lowerName.includes("number") ||
+          lowerName.includes("size") ||
+          lowerName.includes("age") ||
+          lowerName.includes("price") ||
+          lowerName.includes("amount") ||
+          lowerName.includes("quantity")
+        ) {
+          return "number";
+        }
+      }
     }
 
     // Check for property access on objects (e.g., user.name, user.age)
