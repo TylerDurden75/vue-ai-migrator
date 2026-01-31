@@ -20,6 +20,7 @@ export interface PackageMigrationResult {
 export async function migratePackageJson(
   projectPath: string,
   dryRun: boolean = false,
+  enableTypeScript: boolean = false,
 ): Promise<PackageMigrationResult> {
   const result: PackageMigrationResult = {
     modified: false,
@@ -208,6 +209,27 @@ export async function migratePackageJson(
             `${plugin} was removed. If you're using class-based components, consider migrating to Composition API or using vue-facing-decorator for Vue 3`,
           );
         }
+      }
+    }
+
+    // Add TypeScript dependencies if TypeScript is enabled
+    if (enableTypeScript) {
+      if (!allDeps.typescript) {
+        if (!packageJson.devDependencies) {
+          packageJson.devDependencies = {};
+        }
+        packageJson.devDependencies.typescript = "^5.3.3";
+        result.changes.push("Added TypeScript: ^5.3.3");
+        result.modified = true;
+      }
+      // Add ts-loader for webpack TypeScript support
+      if (!allDeps['ts-loader']) {
+        if (!packageJson.devDependencies) {
+          packageJson.devDependencies = {};
+        }
+        packageJson.devDependencies['ts-loader'] = "^9.5.1";
+        result.changes.push("Added ts-loader: ^9.5.1 (required for TypeScript compilation)");
+        result.modified = true;
       }
     }
 

@@ -20,9 +20,20 @@ import {
   fixPostMigrationIssues,
   fixImportPaths,
 } from "../utils/migration/post-migration-fixer";
+import {
+  checkDependencyConflicts,
+  cleanupDependencies,
+  verifyDependencyConsistency,
+  installDependencies,
+} from "../utils/migration/dependency-checker";
+import {
+  createOrUpdateTsConfig,
+  deleteTsConfig,
+} from "../utils/migration/typescript-config";
 import { CacheManager } from "../utils/cache";
 import { MigrationReporter, FileReport } from "./reporter";
 import * as path from "path";
+import * as fs from "fs/promises";
 import { glob } from "glob";
 
 export interface MigrationOptions {
@@ -76,6 +87,7 @@ export async function migrate(
     validateAfterMigration: shouldValidate = true,
     useCache = true,
     incremental = false,
+    enableTypeScript = false,
   } = options;
 
   const result: MigrationResult = {
@@ -89,6 +101,52 @@ export async function migrate(
   try {
     // Validate project path
     validateProjectPath(projectPath);
+
+    // Check for dependency conflicts BEFORE migration
+    console.log("Checking for dependency conflicts...");
+    const preMigrationConflicts = await checkDependencyConflicts(projectPath);
+    
+    if (preMigrationConflicts.hasConflicts) {
+      const errorConflicts = preMigrationConflicts.conflicts.filter(c => c.severity === "error");
+      if (errorConflicts.length > 0) {
+        console.warn("⚠️  Dependency conflicts detected before migration:");
+        errorConflicts.forEach(conflict => {
+          console.warn(`  - ${conflict.packageName}: ${conflict.message}`);
+        });
+        
+        // Auto-cleanup if conflicts are detected
+        console.log("Cleaning up dependencies to resolve conflicts...");
+        const cleanupResult = await cleanupDependencies(projectPath, dryRun);
+        
+        if (cleanupResult.cleaned && !dryRun) {
+          console.log(`✓ Cleaned up: ${cleanupResult.removedFiles.join(", ")}`);
+          result.warnings.push(
+            `Cleaned up dependencies before migration: ${cleanupResult.removedFiles.join(", ")}`
+          );
+        } else if (dryRun) {
+          result.warnings.push(
+            `[DRY RUN] Would clean up: ${cleanupResult.removedFiles.join(", ")}`
+          );
+        }
+        
+        // Show recommendations
+        if (preMigrationConflicts.recommendations.length > 0) {
+          console.log("Recommendations:");
+          preMigrationConflicts.recommendations.forEach(rec => {
+            console.log(`  - ${rec}`);
+          });
+        }
+      }
+      
+      // Add warnings for non-critical conflicts
+      preMigrationConflicts.conflicts
+        .filter(c => c.severity === "warning")
+        .forEach(conflict => {
+          result.warnings.push(`${conflict.packageName}: ${conflict.message}`);
+        });
+    } else {
+      console.log("✓ No critical dependency conflicts detected");
+    }
 
     // Analyze the project
     const analysis = await analyzeProject(projectPath);
@@ -145,8 +203,12 @@ export async function migrate(
         path.join(projectPath, "webpack.config.js"),
         path.join(projectPath, "vite.config.js"),
         path.join(projectPath, "vue.config.js"),
-        path.join(projectPath, "tsconfig.json"),
       ];
+      
+      // Only backup tsconfig.json if TypeScript is enabled (it will be created/modified)
+      if (options.enableTypeScript) {
+        configFiles.push(path.join(projectPath, "tsconfig.json"));
+      }
 
       for (const configFile of configFiles) {
         try {
@@ -473,17 +535,37 @@ export async function migrate(
                   // Double-check that code is still different after fixes
                   if (finalCode !== content) {
                     try {
-                      await safeWriteFile(filePath, finalCode);
+                      // Rename .js to .ts if TypeScript is enabled and file is a .js file
+                      let targetFilePath = filePath;
+                      if (options.enableTypeScript && filePath.endsWith('.js') && !filePath.endsWith('.vue')) {
+                        const newFilePath = filePath.replace(/\.js$/, '.ts');
+                        // Backup old file if it exists and we're renaming
+                        if (rollbackManager && !dryRun) {
+                          await rollbackManager.backupFile(filePath);
+                        }
+                        // Delete old .js file if it exists
+                        try {
+                          await fs.unlink(filePath);
+                        } catch (unlinkError) {
+                          // File might not exist, that's okay
+                        }
+                        targetFilePath = newFilePath;
+                        result.warnings.push(
+                          `Renamed ${path.relative(projectPath, filePath)} → ${path.relative(projectPath, newFilePath)} (TypeScript)`,
+                        );
+                      }
+                      
+                      await safeWriteFile(targetFilePath, finalCode);
                       // Verify file was written correctly
-                      const writtenContent = await safeReadFile(filePath);
+                      const writtenContent = await safeReadFile(targetFilePath);
                       if (writtenContent !== finalCode) {
                         result.warnings.push(
-                          `File ${path.relative(projectPath, filePath)} was written but content doesn't match expected result`,
+                          `File ${path.relative(projectPath, targetFilePath)} was written but content doesn't match expected result`,
                         );
                       } else {
                         // Successfully written
                         result.warnings.push(
-                          `✓ Successfully migrated ${path.relative(projectPath, filePath)}`,
+                          `✓ Successfully migrated ${path.relative(projectPath, targetFilePath)}`,
                         );
                       }
                     } catch (error) {
@@ -581,12 +663,83 @@ export async function migrate(
           }
         }
 
-        const packageResult = await migratePackageJson(projectPath, dryRun);
+        const packageResult = await migratePackageJson(projectPath, dryRun, options.enableTypeScript || false);
         if (packageResult.modified) {
           result.warnings.push(
             ...packageResult.changes.map((c) => `Package: ${c}`),
           );
           result.warnings.push(...packageResult.warnings);
+        }
+        
+        // Create or update tsconfig.json if TypeScript is enabled (ALWAYS, regardless of package.json modification)
+        if (options.enableTypeScript) {
+          try {
+            const tsconfigPath = path.join(projectPath, "tsconfig.json");
+            
+            // Check if tsconfig.json exists BEFORE creating it (for rollback tracking)
+            let tsconfigExistedBefore = false;
+            try {
+              await fs.access(tsconfigPath);
+              tsconfigExistedBefore = true;
+            } catch {
+              tsconfigExistedBefore = false;
+            }
+            
+            // Create backup BEFORE creating/updating the file
+            if (rollbackManager && !dryRun && !tsconfigExistedBefore) {
+              // File doesn't exist, create empty backup to mark it as "created during migration"
+              (rollbackManager as any).backups.set(tsconfigPath, {
+                filePath: tsconfigPath,
+                originalContent: '', // Empty = file was created
+                timestamp: new Date(),
+              });
+            } else if (rollbackManager && !dryRun && tsconfigExistedBefore) {
+              // File exists, backup its current content
+              await rollbackManager.backupFile(tsconfigPath);
+            }
+            
+            // Now create or update tsconfig.json
+            const tsConfigResult = await createOrUpdateTsConfig(projectPath, dryRun);
+            if (tsConfigResult.created || tsConfigResult.modified) {
+              result.warnings.push(
+                ...tsConfigResult.changes.map((c) => `TypeScript Config: ${c}`),
+              );
+              result.warnings.push(...tsConfigResult.warnings);
+            }
+          } catch (error) {
+            result.warnings.push(
+              `TypeScript config error: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
+        
+        // After package.json migration, verify dependency consistency
+        if (!dryRun && packageResult.modified) {
+          console.log("Verifying dependency consistency after migration...");
+          const postMigrationCheck = await verifyDependencyConsistency(projectPath);
+          
+          if (postMigrationCheck.hasConflicts) {
+            const errorConflicts = postMigrationCheck.conflicts.filter(c => c.severity === "error");
+            errorConflicts.forEach(conflict => {
+              result.errors.push(`Dependency conflict: ${conflict.packageName} - ${conflict.message}`);
+            });
+            
+            // Show recommendations
+            if (postMigrationCheck.recommendations.length > 0) {
+              console.log("Recommendations to fix dependency issues:");
+              postMigrationCheck.recommendations.forEach(rec => {
+                console.log(`  - ${rec}`);
+                result.warnings.push(`Recommendation: ${rec}`);
+              });
+            }
+          } else {
+            console.log("✓ Dependency consistency verified");
+          }
+          
+          // Add warnings
+          postMigrationCheck.warnings.forEach(warning => {
+            result.warnings.push(warning);
+          });
         }
       } catch (error) {
         result.warnings.push(
@@ -607,7 +760,7 @@ export async function migrate(
         }
       }
 
-      const vueConfigResult = await migrateVueConfig(projectPath, dryRun);
+      const vueConfigResult = await migrateVueConfig(projectPath, dryRun, options.enableTypeScript || false);
       if (vueConfigResult.modified) {
         result.warnings.push(
           ...vueConfigResult.changes.map((c) => `Vue Config: ${c}`),
@@ -735,6 +888,53 @@ export async function migrate(
     // Save backups if rollback is enabled
     if (rollbackManager && !dryRun && result.filesModified > 0) {
       await rollbackManager.saveBackups();
+    }
+
+    // Final dependency consistency check and installation recommendation
+    if (!dryRun && shouldMigratePackage) {
+      console.log("Performing final dependency consistency check...");
+      const finalCheck = await verifyDependencyConsistency(projectPath);
+      
+      if (finalCheck.hasConflicts) {
+        const errorConflicts = finalCheck.conflicts.filter(c => c.severity === "error");
+        if (errorConflicts.length > 0) {
+          console.warn("⚠️  Dependency conflicts detected after migration:");
+          errorConflicts.forEach(conflict => {
+            console.warn(`  - ${conflict.packageName}: ${conflict.message}`);
+            result.errors.push(`Dependency conflict: ${conflict.packageName} - ${conflict.message}`);
+          });
+        }
+        
+        // Show recommendations
+        if (finalCheck.recommendations.length > 0) {
+          console.log("\n📋 Recommendations:");
+          finalCheck.recommendations.forEach(rec => {
+            console.log(`  - ${rec}`);
+            result.warnings.push(`Recommendation: ${rec}`);
+          });
+        }
+        
+        // Suggest automatic installation
+        console.log("\n💡 Tip: Run 'npm install' to resolve dependency conflicts automatically.");
+        result.warnings.push("Run 'npm install' to install updated dependencies and resolve conflicts");
+      } else {
+        console.log("✓ All dependencies are consistent");
+        
+        // Check if node_modules exists, if not suggest installation
+        const nodeModulesPath = path.join(projectPath, "node_modules");
+        try {
+          await fs.access(nodeModulesPath);
+        } catch {
+          // node_modules doesn't exist, suggest installation
+          console.log("💡 Tip: Run 'npm install' to install dependencies.");
+          result.warnings.push("Run 'npm install' to install dependencies");
+        }
+      }
+      
+      // Add warnings
+      finalCheck.warnings.forEach(warning => {
+        result.warnings.push(warning);
+      });
     }
 
     // Generate report

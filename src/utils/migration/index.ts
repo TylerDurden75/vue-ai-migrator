@@ -12,3 +12,16 @@ export {
   fixImportPaths,
   type FixResult,
 } from "./post-migration-fixer";
+export {
+  checkDependencyConflicts,
+  cleanupDependencies,
+  verifyDependencyConsistency,
+  installDependencies,
+  type DependencyCheckResult,
+  type CleanupResult,
+} from "./dependency-checker";
+export {
+  createOrUpdateTsConfig,
+  deleteTsConfig,
+  type TypeScriptConfigResult,
+} from "./typescript-config";

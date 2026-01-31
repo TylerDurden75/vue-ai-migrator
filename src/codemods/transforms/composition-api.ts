@@ -421,14 +421,16 @@ function addTypeScriptTypes(
   // Add types to computed() calls: computed(() => ...) → computed<string>(() => ...)
   context.computedProperties.forEach((prop) => {
     // Match: const propName = computed(() => ...)
+    // FIX: Don't capture the opening parenthesis in 'before' to avoid computed(<type>() => ...)
     const computedPattern = new RegExp(
-      `(const\\s+${prop}\\s*=\\s*computed\\()([^)]+)(\\))`,
+      `(const\\s+${prop}\\s*=\\s*computed)(\\()([^)]+)(\\))`,
       "g",
     );
-    result = result.replace(computedPattern, (_match, before, fn, after) => {
+    result = result.replace(computedPattern, (_match, before, openParen, fn, closeParen) => {
       // Use inferred return type if available
       const type = context.computedReturnTypes?.[prop] || "any";
-      return `${before}<${type}>${fn}${after}`;
+      // Correct format: computed<type>(() => ...) not computed(<type>() => ...)
+      return `${before}<${type}>${openParen}${fn}${closeParen}`;
     });
   });
 

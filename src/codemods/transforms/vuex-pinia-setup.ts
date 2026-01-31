@@ -857,13 +857,40 @@ export const vuexPiniaSetupTransform: Transform = (
 
                   // Track property types for interface generation
                   if (enableTypeScript) {
-                    const propCode = j(
-                      prop.value || j.literal(null)
-                    ).toSource();
-                    const inferredType = inferTypeFromValueString(
-                      propCode.trim()
-                    );
-                    statePropertyTypes.set(propName, inferredType);
+                    // Use AST analysis for better type inference
+                    if (prop.value) {
+                      const inferredType = inferTypeFromAST(prop.value);
+                      statePropertyTypes.set(propName, inferredType);
+                      
+                      // If it's an array with objects, store the object AST for interface generation
+                      if (prop.value.type === "ArrayExpression" && prop.value.elements && prop.value.elements.length > 0) {
+                        // Check if first element is an object
+                        const firstElement = prop.value.elements[0];
+                        if (firstElement && firstElement.type === "ObjectExpression") {
+                          // Store the object AST for interface generation
+                          objectPropertyDetails.set(propName, firstElement);
+                          // Mark as array type with interface
+                          statePropertyTypes.set(propName, "any[]");
+                        }
+                      }
+                      // If it's null but the property name suggests it should be an object/array
+                      else if (!prop.value || prop.value.type === "NullLiteral" || (prop.value.type === "Literal" && prop.value.value === null)) {
+                        // Infer from property name: posts → Post[], currentPost → Post | null
+                        if (propName.endsWith('s') || propName.match(/List|Items|Array$/i)) {
+                          // Likely an array
+                          statePropertyTypes.set(propName, "any[]");
+                        } else {
+                          // Likely an object, infer interface name from property name
+                          const interfaceName = propName.charAt(0).toUpperCase() + propName.slice(1);
+                          statePropertyTypes.set(propName, `${interfaceName} | null`);
+                        }
+                      }
+                    } else {
+                      // No value provided, infer from property name
+                      const propCode = j(j.literal(null)).toSource();
+                      const inferredType = inferTypeFromValueString(propCode.trim());
+                      statePropertyTypes.set(propName, inferredType);
+                    }
                   }
                 }
               }
@@ -1904,6 +1931,35 @@ function addTypeScriptTypesToStore(
             const interfaceName = prop.charAt(0).toUpperCase() + prop.slice(1);
             type = interfaceName;
           }
+          // If it's null but property name suggests it should be an object/array
+          else if (propType === "null" || propType.includes("| null")) {
+            // Infer from property name: posts → Post[], currentPost → Post | null
+            if (prop.endsWith('s') || prop.match(/List|Items|Array$/i)) {
+              const interfaceName = pluralToSingularInterface(prop);
+              type = `${interfaceName}[] | null`;
+            } else {
+              // Likely an object, infer interface name from property name
+              const interfaceName = prop.charAt(0).toUpperCase() + prop.slice(1);
+              type = `${interfaceName} | null`;
+            }
+          }
+        }
+        
+        // Handle null values - infer type from property name if value is null
+        if (value.trim() === "null" || value.trim() === "undefined") {
+          if (!context.statePropertyTypes || !context.statePropertyTypes[prop]) {
+            // Infer from property name
+            if (prop.endsWith('s') || prop.match(/List|Items|Array$/i)) {
+              const interfaceName = pluralToSingularInterface(prop);
+              type = `${interfaceName}[] | null`;
+            } else if (prop !== "loading" && prop !== "isLoading") {
+              // Likely an object (but not boolean flags)
+              const interfaceName = prop.charAt(0).toUpperCase() + prop.slice(1);
+              type = `${interfaceName} | null`;
+            } else {
+              type = "boolean";
+            }
+          }
         }
 
         // Correct format: ref<number>(value) not ref(<number>value)
@@ -1924,8 +1980,62 @@ function addTypeScriptTypesToStore(
     result = result.replace(
       computedPattern,
       (_match, before, openParen, fn, closeParen) => {
-        // Use inferred return type if available, otherwise default to any
-        const returnType = context.computedReturnTypes?.[prop] || "any";
+        // Use inferred return type if available
+        let returnType = context.computedReturnTypes?.[prop];
+        
+        // If no return type inferred, try to infer from the function body
+        if (!returnType || returnType === "any") {
+          // Check if computed returns a ref value (e.g., posts.value, currentPost.value)
+          const fnBody = fn.toString();
+          
+          // Pattern: () => posts.value or () => currentPost.value
+          const refValuePattern = /\(\)\s*=>\s*(\w+)\.value/;
+          const refMatch = fnBody.match(refValuePattern);
+          if (refMatch) {
+            const refVarName = refMatch[1];
+            // Check if this ref has a type in statePropertyTypes
+            if (context.statePropertyTypes) {
+              const refType = context.statePropertyTypes[refVarName];
+              if (refType) {
+                // Extract the base type (remove | null if present)
+                returnType = refType.replace(/\s*\|\s*null/g, '');
+                // If it's an array type, use it directly
+                if (refType.includes('[]')) {
+                  returnType = refType.replace(/\s*\|\s*null/g, '');
+                }
+              }
+            }
+          }
+          
+          // Pattern: () => posts (without .value)
+          const directRefPattern = /\(\)\s*=>\s*(\w+)(?!\.)/;
+          const directRefMatch = fnBody.match(directRefPattern);
+          if (directRefMatch && (!returnType || returnType === "any")) {
+            const refVarName = directRefMatch[1];
+            if (context.statePropertyTypes) {
+              const refType = context.statePropertyTypes[refVarName];
+              if (refType) {
+                returnType = refType.replace(/\s*\|\s*null/g, '');
+              }
+            }
+          }
+          
+          // Pattern: () => posts.value.length (number)
+          if (fnBody.includes('.length')) {
+            returnType = "number";
+          }
+          
+          // Pattern: () => Array.from(...) (string[])
+          if (fnBody.includes('Array.from')) {
+            returnType = "string[]";
+          }
+          
+          // Default to any if still not found
+          if (!returnType || returnType === "any") {
+            returnType = "any";
+          }
+        }
+        
         // Correct format: computed<number>(() => ...) not computed(<number>() => ...)
         return `${before}<${returnType}>${openParen}${fn}${closeParen}`;
       }
@@ -2076,8 +2186,14 @@ function inferTypeFromValueString(value: string): string {
     return "boolean";
   }
 
-  // Array literal
+  // Array literal - try to detect if it contains objects
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    // Check if array contains object literals: [{ id: 1, name: 'test' }]
+    const arrayContent = trimmed.slice(1, -1).trim();
+    if (arrayContent.startsWith("{") && arrayContent.includes(":")) {
+      // Array contains objects - will be handled by AST analysis
+      return "any[]";
+    }
     return "any[]";
   }
 
@@ -2093,6 +2209,45 @@ function inferTypeFromValueString(value: string): string {
   }
 
   return "any";
+}
+
+/**
+ * Infer TypeScript type from an AST node (improved version)
+ */
+function inferTypeFromAST(astNode: any): string {
+  if (!astNode) {
+    return "any";
+  }
+
+  // Use existing inferTypeFromASTValue for basic types
+  const basicType = inferTypeFromASTValue(astNode);
+  if (basicType !== "any" && basicType !== "any[]") {
+    return basicType;
+  }
+
+  // Handle ArrayExpression - check if it contains objects
+  if (astNode.type === "ArrayExpression") {
+    if (astNode.elements && astNode.elements.length > 0) {
+      const firstElement = astNode.elements[0];
+      if (firstElement && firstElement.type === "ObjectExpression") {
+        // Array of objects - return marker for interface generation
+        return "any[]";
+      }
+    }
+    return "any[]";
+  }
+
+  // Handle ObjectExpression
+  if (astNode.type === "ObjectExpression") {
+    return "object";
+  }
+
+  // Handle NullLiteral
+  if (astNode.type === "NullLiteral" || (astNode.type === "Literal" && astNode.value === null)) {
+    return "null";
+  }
+
+  return basicType;
 }
 
 /**
@@ -2260,7 +2415,7 @@ function inferTypeFromASTValue(valueAST: any): string {
 /**
  * Infer TypeScript type from an AST expression (for computed return types)
  */
-function inferTypeFromAST(expressionAST: any): string {
+function inferTypeFromASTExpression(expressionAST: any): string {
   if (!expressionAST) {
     return "any";
   }
@@ -2279,8 +2434,8 @@ function inferTypeFromAST(expressionAST: any): string {
     // String concatenation
     if (operator === "+") {
       // Could be string or number, check operands
-      const leftType = inferTypeFromAST(expressionAST.left);
-      const rightType = inferTypeFromAST(expressionAST.right);
+      const leftType = inferTypeFromASTExpression(expressionAST.left);
+      const rightType = inferTypeFromASTExpression(expressionAST.right);
       if (leftType === "string" || rightType === "string") {
         return "string";
       }
@@ -2370,8 +2525,8 @@ function inferTypeFromAST(expressionAST: any): string {
   // Conditional expressions: a ? b : c
   if (expressionAST.type === "ConditionalExpression") {
     // Infer from both branches - take the first non-any type
-    const consequentType = inferTypeFromAST(expressionAST.consequent);
-    const alternateType = inferTypeFromAST(expressionAST.alternate);
+    const consequentType = inferTypeFromASTExpression(expressionAST.consequent);
+    const alternateType = inferTypeFromASTExpression(expressionAST.alternate);
     if (consequentType !== "any") return consequentType;
     if (alternateType !== "any") return alternateType;
     return "any";

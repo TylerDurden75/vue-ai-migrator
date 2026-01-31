@@ -245,6 +245,114 @@ export function clearStoreAnalysisCache(): void {
   storeAnalysisProjectRoot = null;
 }
 
+/**
+ * Extract object structure from code assignments (e.g., SET_POSTS([{ id: 1, title: '...' }]))
+ * Returns interface properties for TypeScript
+ */
+function extractObjectStructureFromCode(code: string, varName: string): { properties: string[]; sampleCount: number } {
+  const properties = new Set<string>();
+  let sampleCount = 0;
+  
+  try {
+    // Pattern 1: const posts = [{ id: 1, title: '...' }, ...]
+    const arrayAssignPattern = new RegExp(`(?:const|let|var)\\s+\\w+\\s*=\\s*\\[\\s*\\{([^}]+)\\}[^\\]]*\\]`, 'g');
+    let arrayMatch;
+    while ((arrayMatch = arrayAssignPattern.exec(code)) !== null) {
+      const objectContent = arrayMatch[1];
+      // Extract property names: id: 1, title: '...'
+      const propPattern = /(\w+)\s*:/g;
+      let propMatch;
+      while ((propMatch = propPattern.exec(objectContent)) !== null) {
+        properties.add(propMatch[1]);
+        sampleCount++;
+      }
+    }
+    
+    // Pattern 2: SET_POSTS([{ id: 1, title: '...' }])
+    const functionCallPattern = new RegExp(`SET_\\w+\\(\\s*\\[\\s*\\{([^}]+)\\}[^\\]]*\\]\\s*\\)`, 'g');
+    let funcMatch;
+    while ((funcMatch = functionCallPattern.exec(code)) !== null) {
+      const objectContent = funcMatch[1];
+      const propPattern = /(\w+)\s*:/g;
+      let propMatch;
+      while ((propMatch = propPattern.exec(objectContent)) !== null) {
+        properties.add(propMatch[1]);
+        sampleCount++;
+      }
+    }
+    
+    // Pattern 3: posts.value = [{ id: 1, title: '...' }]
+    const valueAssignPattern = new RegExp(`(\\w+)\\.value\\s*=\\s*\\[\\s*\\{([^}]+)\\}[^\\]]*\\]`, 'g');
+    let valueMatch;
+    while ((valueMatch = valueAssignPattern.exec(code)) !== null) {
+      const objectContent = valueMatch[2];
+      const propPattern = /(\w+)\s*:/g;
+      let propMatch;
+      while ((propMatch = propPattern.exec(objectContent)) !== null) {
+        properties.add(propMatch[1]);
+        sampleCount++;
+      }
+    }
+  } catch (error) {
+    // Silently fail - extraction is best effort
+  }
+  
+  return { properties: Array.from(properties), sampleCount };
+}
+
+/**
+ * Convert plural property name to singular interface name (same logic as in vuex-pinia-setup.ts)
+ */
+function pluralToSingularInterface(pluralName: string): string {
+  const irregularPlurals: Record<string, string> = {
+    children: "Child",
+    people: "Person",
+    men: "Man",
+    women: "Woman",
+    feet: "Foot",
+    teeth: "Tooth",
+    mice: "Mouse",
+    geese: "Goose",
+    data: "Datum",
+  };
+
+  const lowerName = pluralName.toLowerCase();
+
+  if (irregularPlurals[lowerName]) {
+    return irregularPlurals[lowerName];
+  }
+
+  if (/([a-z])([A-Z])/.test(pluralName)) {
+    let result = pluralName.charAt(0).toUpperCase() + pluralName.slice(1);
+    if (result.endsWith("s") && result.length > 1) {
+      const secondLast = result[result.length - 2];
+      if (secondLast && secondLast === secondLast.toLowerCase()) {
+        result = result.slice(0, -1);
+      }
+    }
+    return result;
+  }
+
+  if (lowerName.endsWith("ies") && lowerName.length > 3) {
+    const base = lowerName.slice(0, -3);
+    return base.charAt(0).toUpperCase() + base.slice(1) + "y";
+  }
+
+  if (lowerName.endsWith("es") && lowerName.length > 2) {
+    const base = lowerName.slice(0, -2);
+    if (base.length > 0) {
+      return base.charAt(0).toUpperCase() + base.slice(1);
+    }
+  }
+
+  if (lowerName.endsWith("s") && lowerName.length > 1) {
+    const singular = lowerName.slice(0, -1);
+    return singular.charAt(0).toUpperCase() + singular.slice(1);
+  }
+
+  return pluralName.charAt(0).toUpperCase() + pluralName.slice(1);
+}
+
 export async function fixPostMigrationIssues(
   filePath: string,
   content: string,
@@ -691,11 +799,129 @@ export async function fixPostMigrationIssues(
     }
   }
 
+  // Fix 3d: Fix incorrect Event types in function parameters
+  // Pattern: function SET_USER(userParam: Event) or function SET_FILTER({ key: Event, value }: Event)
+  // These should be 'any' or proper types, not Event (DOM Event type)
+  if (enableTypeScript && (filePath.endsWith('.ts') || filePath.endsWith('.js'))) {
+    // Fix 1: function funcName(param: Event) where param is not actually an Event
+    // Common patterns: SET_USER, SET_TOKEN, SET_FILTER, UPDATE_POST, etc.
+    const incorrectEventTypePattern = /function\s+(\w+)\s*\(([^)]+)\)\s*:\s*(?:void|Promise<void>|any)\s*\{/g;
+    let eventTypeMatch;
+    while ((eventTypeMatch = incorrectEventTypePattern.exec(fixedContent)) !== null) {
+      const funcName = eventTypeMatch[1];
+      const params = eventTypeMatch[2];
+      
+      // Skip if function name suggests it's actually handling DOM events
+      if (funcName.toLowerCase().includes('handler') || funcName.toLowerCase().includes('onclick') || funcName.toLowerCase().includes('onsubmit')) {
+        continue;
+      }
+      
+      // Fix parameters with : Event type that shouldn't be Event
+      // Pattern: param: Event or { key: Event, value }: Event
+      let fixedParams = params;
+      
+      // Fix simple parameter: param: Event → param: any
+      fixedParams = fixedParams.replace(/(\w+)\s*:\s*Event(?!\w)/g, (match, paramName) => {
+        // Skip if param name suggests it's actually an event (e, evt, event)
+        if (paramName.toLowerCase() === 'e' || paramName.toLowerCase() === 'evt' || paramName.toLowerCase() === 'event') {
+          return match;
+        }
+        return `${paramName}: any`;
+      });
+      
+      // Fix destructured parameter: { key: Event, value }: Event → { key: string, value: any }: { key: string; value: any }
+      // This is a common mistake from incorrect type inference
+      fixedParams = fixedParams.replace(/\{\s*key\s*:\s*Event\s*,\s*value\s*:\s*(\w+)\s*\}\s*:\s*Event/g, '{ key: string, value: any }: { key: string; value: any }');
+      fixedParams = fixedParams.replace(/\{\s*(\w+)\s*:\s*Event\s*,\s*(\w+)\s*:\s*(\w+)\s*\}\s*:\s*Event/g, (match, keyName, valueName, valueType) => {
+        // Infer proper types based on parameter names
+        const inferredKeyType = 'string';
+        const inferredValueType = valueType === 'Event' ? 'any' : valueType;
+        return `{ ${keyName}: ${inferredKeyType}, ${valueName}: ${inferredValueType} }: { ${keyName}: ${inferredKeyType}; ${valueName}: ${inferredValueType} }`;
+      });
+      
+      // Fix incorrect destructuring syntax: { key: any, value } → { key, value }: { key: string; value: any }
+      // This pattern means "rename key to any" which is wrong - should be { key, value } with proper type
+      fixedParams = fixedParams.replace(/\{\s*(\w+)\s*:\s*any\s*,\s*(\w+)\s*\}\s*:\s*Event/g, (match, keyName, valueName) => {
+        // Infer proper types based on parameter names
+        const inferredKeyType = keyName === 'key' ? 'string' : 'any';
+        return `{ ${keyName}, ${valueName} }: { ${keyName}: ${inferredKeyType}; ${valueName}: any }`;
+      });
+      
+      // Also fix without Event type: { key: any, value } → { key, value }: { key: string; value: any }
+      fixedParams = fixedParams.replace(/\{\s*(\w+)\s*:\s*any\s*,\s*(\w+)\s*\}(?!\s*:)/g, (match, keyName, valueName) => {
+        // Only fix if it looks like a function parameter (not a variable declaration)
+        if (fixedParams.includes('function') || fixedParams.includes('=>')) {
+          const inferredKeyType = keyName === 'key' ? 'string' : 'any';
+          return `{ ${keyName}, ${valueName} }: { ${keyName}: ${inferredKeyType}; ${valueName}: any }`;
+        }
+        return match;
+      });
+      
+      if (fixedParams !== params) {
+        fixedContent = fixedContent.replace(eventTypeMatch[0], eventTypeMatch[0].replace(params, fixedParams));
+        result.fixed = true;
+        result.fixes.push(`Fixed incorrect Event type in function ${funcName} parameters`);
+      }
+    }
+    
+    // Fix 2: Arrow functions with incorrect Event types
+    const arrowEventTypePattern = /(const\s+\w+\s*=\s*\([^)]+\)\s*:\s*(?:void|Promise<void>|any)\s*=>)/g;
+    let arrowMatch;
+    while ((arrowMatch = arrowEventTypePattern.exec(fixedContent)) !== null) {
+      const match = arrowMatch[0];
+      const paramsMatch = match.match(/\(([^)]+)\)/);
+      if (paramsMatch) {
+        let params = paramsMatch[1];
+        let fixedParams = params;
+        
+        // Fix simple parameter: param: Event → param: any
+        fixedParams = fixedParams.replace(/(\w+)\s*:\s*Event(?!\w)/g, (match, paramName) => {
+          if (paramName.toLowerCase() === 'e' || paramName.toLowerCase() === 'evt' || paramName.toLowerCase() === 'event') {
+            return match;
+          }
+          return `${paramName}: any`;
+        });
+        
+        if (fixedParams !== params) {
+          fixedContent = fixedContent.replace(match, match.replace(params, fixedParams));
+          result.fixed = true;
+          result.fixes.push(`Fixed incorrect Event type in arrow function parameters`);
+        }
+      }
+    }
+  }
+
+  // Fix 3e: Fix filters[key] access in Pinia stores (TypeScript error)
+  // Pattern: filters[key] = value where filters is reactive({ category: null, search: '' })
+  // TypeScript doesn't allow dynamic key access without type assertion
+  if (enableTypeScript && (filePath.endsWith('.ts') || filePath.endsWith('.js'))) {
+    // Pattern: filters[key] = value or filters[key] where key is a string parameter
+    const filtersKeyPattern = /filters\[(\w+)\]\s*=/g;
+    let filtersMatch;
+    while ((filtersMatch = filtersKeyPattern.exec(fixedContent)) !== null) {
+      const keyVar = filtersMatch[1];
+      // Check if this is in a function that takes { key, value } as parameter
+      const functionContext = fixedContent.substring(0, filtersMatch.index);
+      const functionMatch = functionContext.match(/(function\s+\w+\s*\([^)]*\{[^}]*key[^}]*\}[^)]*\)|const\s+\w+\s*=\s*\([^)]*\{[^}]*key[^}]*\}[^)]*\))/);
+      
+      if (functionMatch || keyVar === 'key') {
+        // Replace filters[key] with (filters as any)[key] for TypeScript compatibility
+        fixedContent = fixedContent.replace(
+          new RegExp(`filters\\[${keyVar}\\]`, 'g'),
+          `(filters as any)[${keyVar}]`
+        );
+        result.fixed = true;
+        result.fixes.push(`Fixed filters[key] access with type assertion for TypeScript compatibility`);
+        break; // Only fix once per file
+      }
+    }
+  }
+
   // Fix 3c: Make functions async if they use await in .js/.ts files (stores, etc.)
   // This handles Pinia stores and other JS files that aren't Vue components
   if ((filePath.endsWith('.js') || filePath.endsWith('.ts')) && !isVueFile && fixedContent.includes('await')) {
-    // Pattern 1: function funcName() { ... await ... }
-    const functionPattern = /(function\s+(\w+)\s*\([^)]*\)\s*\{)/g;
+    // Pattern 1: function funcName() { ... await ... } or function funcName(): void { ... await ... }
+    const functionPattern = /(function\s+(\w+)\s*\([^)]*\)(?:\s*:\s*(?:void|Promise<void>|any))?\s*\{)/g;
     let functionMatch;
     const functionsToFix: Array<{ match: string; replacement: string }> = [];
     
@@ -727,8 +953,101 @@ export async function fixPostMigrationIssues(
       const functionBody = afterMatch.substring(0, bodyEnd);
       // Check if body contains await
       if (functionBody.includes('await')) {
-        const replacement = match.replace(/function\s+/, 'async function ');
+        // Replace function with async function, preserving return type annotation if present
+        let replacement = match;
+        if (match.includes('): void')) {
+          replacement = match.replace(/function\s+/, 'async function ').replace(/:\s*void/, ': Promise<void>');
+        } else if (match.includes('): Promise<void>')) {
+          replacement = match.replace(/function\s+/, 'async function ');
+        } else {
+          replacement = match.replace(/function\s+/, 'async function ');
+        }
         functionsToFix.push({ match, replacement });
+      }
+    }
+    
+    // Also check for arrow functions: const funcName = () => { await ... }
+    // Pattern 1: const funcName = () => { await ... } (no type annotation)
+    const arrowFunctionPattern1 = /(const\s+(\w+)\s*=\s*)(\([^)]*\)\s*=>\s*\{)/g;
+    let arrowMatch1;
+    const arrowFunctionsToFix: Array<{ match: string; replacement: string; index: number }> = [];
+    
+    while ((arrowMatch1 = arrowFunctionPattern1.exec(fixedContent)) !== null) {
+      const match = arrowMatch1[0];
+      const funcName = arrowMatch1[2];
+      
+      // Skip if already async
+      if (match.includes('async')) continue;
+      
+      // Find the function body
+      const matchIndex = arrowMatch1.index;
+      const afterMatch = fixedContent.substring(matchIndex + match.length);
+      
+      // Find the matching closing brace
+      let braceCount = 0;
+      let bodyEnd = 0;
+      for (let i = 0; i < afterMatch.length; i++) {
+        if (afterMatch[i] === '{') braceCount++;
+        if (afterMatch[i] === '}') {
+          braceCount--;
+          if (braceCount === 0) {
+            bodyEnd = i + 1;
+            break;
+          }
+        }
+      }
+      
+      const functionBody = afterMatch.substring(0, bodyEnd);
+      // Check if body contains await
+      if (functionBody.includes('await')) {
+        // Replace with async arrow function
+        const replacement = match.replace(/(const\s+\w+\s*=\s*\()/, '$1async ');
+        arrowFunctionsToFix.push({ match, replacement, index: matchIndex });
+      }
+    }
+    
+    // Pattern 2: const funcName = (): void => { await ... } (with type annotation)
+    const arrowFunctionPattern2 = /(const\s+(\w+)\s*=\s*)(\([^)]*\)\s*:\s*(?:void|Promise<void>|any)\s*=>\s*\{)/g;
+    let arrowMatch2;
+    
+    while ((arrowMatch2 = arrowFunctionPattern2.exec(fixedContent)) !== null) {
+      const match = arrowMatch2[0];
+      const funcName = arrowMatch2[2];
+      
+      // Skip if already async
+      if (match.includes('async')) continue;
+      
+      // Find the function body
+      const matchIndex = arrowMatch2.index;
+      const afterMatch = fixedContent.substring(matchIndex + match.length);
+      
+      // Find the matching closing brace
+      let braceCount = 0;
+      let bodyEnd = 0;
+      for (let i = 0; i < afterMatch.length; i++) {
+        if (afterMatch[i] === '{') braceCount++;
+        if (afterMatch[i] === '}') {
+          braceCount--;
+          if (braceCount === 0) {
+            bodyEnd = i + 1;
+            break;
+          }
+        }
+      }
+      
+      const functionBody = afterMatch.substring(0, bodyEnd);
+      // Check if body contains await
+      if (functionBody.includes('await')) {
+        // Replace with async arrow function, preserving return type if present
+        let replacement = match;
+        if (match.includes('): void')) {
+          replacement = match.replace(/(const\s+\w+\s*=\s*\()/, '$1async ').replace(/:\s*void/, ': Promise<void>');
+        } else if (match.includes('): Promise<void>')) {
+          replacement = match.replace(/(const\s+\w+\s*=\s*\()/, '$1async ');
+        } else {
+          replacement = match.replace(/(const\s+\w+\s*=\s*\()/, '$1async ');
+        }
+        arrowFunctionsToFix.push({ match, replacement, index: matchIndex });
       }
     }
     
@@ -737,9 +1056,86 @@ export async function fixPostMigrationIssues(
       fixedContent = fixedContent.replace(match, replacement);
     });
     
-    if (functionsToFix.length > 0) {
+    arrowFunctionsToFix.reverse().forEach(({ match, replacement }) => {
+      fixedContent = fixedContent.replace(match, replacement);
+    });
+    
+    if (functionsToFix.length > 0 || arrowFunctionsToFix.length > 0) {
       result.fixed = true;
-      result.fixes.push(`Made ${functionsToFix.length} function(s) async where await is used`);
+      result.fixes.push(`Made ${functionsToFix.length + arrowFunctionsToFix.length} function(s) async where await is used`);
+    }
+
+    // Fix 3e: Improve TypeScript types and generate interfaces from code assignments
+    // Analyze assignments like SET_POSTS([{ id: 1, title: '...' }]) to generate interfaces
+    if (enableTypeScript && (filePath.endsWith('.ts') || filePath.endsWith('.js')) && fixedContent.includes('defineStore')) {
+      // Find empty interfaces that need to be filled: interface Post {}
+      const emptyInterfacePattern = /interface\s+(\w+)\s*\{\s*\}/g;
+      let interfaceMatch;
+      const interfacesToFill = new Map<string, { properties: string[] }>();
+      
+      while ((interfaceMatch = emptyInterfacePattern.exec(fixedContent)) !== null) {
+        const interfaceName = interfaceMatch[1];
+        // Try to extract object structure from code
+        const structure = extractObjectStructureFromCode(fixedContent, interfaceName.toLowerCase());
+        if (structure.properties.length > 0) {
+          interfacesToFill.set(interfaceName, structure);
+        }
+      }
+      
+      // Replace empty interfaces with filled ones
+      interfacesToFill.forEach((structure, interfaceName) => {
+        // Infer types for each property (simple heuristic)
+        const typedProperties = structure.properties.map(prop => {
+          // Infer type from property name
+          const propLower = prop.toLowerCase();
+          if (propLower.includes('id') || propLower.includes('count') || propLower.includes('index')) {
+            return `  ${prop}: number;`;
+          } else if (propLower.includes('is') || propLower.includes('has') || propLower.includes('should')) {
+            return `  ${prop}: boolean;`;
+          } else {
+            return `  ${prop}: string;`;
+          }
+        });
+        
+        const filledInterface = `interface ${interfaceName} {\n${typedProperties.join('\n')}\n}`;
+        const emptyInterface = `interface ${interfaceName} {}`;
+        fixedContent = fixedContent.replace(emptyInterface, filledInterface);
+        result.fixed = true;
+        result.fixes.push(`Generated TypeScript interface '${interfaceName}' with properties: ${structure.properties.join(', ')}`);
+      });
+      
+      // Improve ref types: ref(null) → ref<Post | null>(null) based on context
+      // Pattern: const currentPost = ref(null) where Post interface exists
+      const refNullPattern = /const\s+(\w+)\s*=\s*ref\s*<\s*any\s*>\s*\(\s*null\s*\)/g;
+      let refNullMatch;
+      while ((refNullMatch = refNullPattern.exec(fixedContent)) !== null) {
+        const varName = refNullMatch[1];
+        // Infer interface name from variable name
+        const interfaceName = varName.charAt(0).toUpperCase() + varName.slice(1);
+        // Check if interface exists
+        if (fixedContent.includes(`interface ${interfaceName}`)) {
+          const improvedRef = `const ${varName} = ref<${interfaceName} | null>(null)`;
+          fixedContent = fixedContent.replace(refNullMatch[0], improvedRef);
+          result.fixed = true;
+          result.fixes.push(`Improved type for ref '${varName}': ref<${interfaceName} | null>`);
+        }
+      }
+      
+      // Improve ref types: ref([]) → ref<Post[]>([]) based on context
+      const refArrayPattern = /const\s+(\w+)\s*=\s*ref\s*<\s*any\[\]\s*>\s*\(\s*\[\s*\]\s*\)/g;
+      let refArrayMatch;
+      while ((refArrayMatch = refArrayPattern.exec(fixedContent)) !== null) {
+        const varName = refArrayMatch[1];
+        // Infer interface name from variable name (plural → singular)
+        const interfaceName = pluralToSingularInterface(varName);
+        // Check if interface exists
+        if (fixedContent.includes(`interface ${interfaceName}`)) {
+          const improvedRef = `const ${varName} = ref<${interfaceName}[]>([])`;
+          fixedContent = fixedContent.replace(refArrayMatch[0], improvedRef);
+          result.fixed = true;
+          result.fixes.push(`Improved type for ref '${varName}': ref<${interfaceName}[]>`);
+        }
+      }
     }
 
     // Fix 3d: Fix incomplete computed properties in Pinia stores
@@ -777,33 +1173,69 @@ export async function fixPostMigrationIssues(
           let inferredSource: string | null = null;
           let inferredProperty: string | null = null;
           
-          // Pattern: categories → posts.category
-          if (computedNameLower.includes('categor') && reactiveVars.has('posts')) {
-            inferredSource = 'posts';
-            inferredProperty = 'category';
-          }
-          // Pattern: tags → items.tags or posts.tags
-          else if (computedNameLower.includes('tag') && reactiveVars.size > 0) {
-            const possibleSources = Array.from(reactiveVars).filter(v => 
-              v.toLowerCase().includes('post') || v.toLowerCase().includes('item') || 
-              v.toLowerCase().includes('product') || v.toLowerCase().includes('data')
-            );
-            if (possibleSources.length > 0) {
-              inferredSource = possibleSources[0];
-              inferredProperty = 'tags';
+          // GENERIC PATTERN: Infer source from computed name and available reactive vars
+          // Works for: categories → any array var with 'category' property, tags → any array var with 'tags' property
+          // Strategy: Find any reactive var that could contain the property we're looking for
+          
+          // Extract property name from computed name (categories → category, tags → tag)
+          let targetProperty = computedNameLower.replace(/s$/, ''); // Remove plural 's'
+          
+          // Pattern 1: categories/category → find any array var and extract 'category' property
+          if (computedNameLower.includes('categor')) {
+            targetProperty = 'category';
+            // Find any array-like reactive var (any plural noun or array-like name)
+            const arrayLikeVars = Array.from(reactiveVars).filter(v => {
+              const vLower = v.toLowerCase();
+              // Match common array patterns: posts, items, products, data, list, array, etc.
+              return vLower.endsWith('s') || vLower.includes('list') || vLower.includes('array') || 
+                     vLower.includes('data') || vLower.includes('items') || vLower.includes('collection');
+            });
+            if (arrayLikeVars.length > 0) {
+              inferredSource = arrayLikeVars[0];
+              inferredProperty = targetProperty;
             }
           }
-          // Generic pattern: if computed name is plural and we have a matching singular/plural var
+          // Pattern 2: tags → find any array var and extract 'tags' property
+          else if (computedNameLower.includes('tag')) {
+            targetProperty = 'tags';
+            const arrayLikeVars = Array.from(reactiveVars).filter(v => {
+              const vLower = v.toLowerCase();
+              return vLower.endsWith('s') || vLower.includes('list') || vLower.includes('array') || 
+                     vLower.includes('data') || vLower.includes('items') || vLower.includes('collection');
+            });
+            if (arrayLikeVars.length > 0) {
+              inferredSource = arrayLikeVars[0];
+              inferredProperty = targetProperty;
+            }
+          }
+          // Pattern 3: Generic - try to match computed name with reactive var names
+          // e.g., categories → posts (if posts exists), items → products (if products exists)
           else {
             for (const varName of reactiveVars) {
               const varNameLower = varName.toLowerCase();
               // Try to match: categories → posts, items → products, etc.
+              // Match if computed name contains part of var name or vice versa
               if (computedNameLower.includes(varNameLower.slice(0, -1)) || 
-                  varNameLower.includes(computedNameLower.slice(0, -1))) {
+                  varNameLower.includes(computedNameLower.slice(0, -1)) ||
+                  // Also match if they share a common root (e.g., "categor" in both "categories" and "posts" doesn't match, but "items" and "products" might)
+                  (computedNameLower.length > 3 && varNameLower.includes(computedNameLower.substring(0, computedNameLower.length - 1)))) {
                 inferredSource = varName;
                 // Try to infer property name from computed name
-                inferredProperty = computedNameLower.replace(varNameLower, '').replace(/s$/, '') || 'category';
+                inferredProperty = computedNameLower.replace(varNameLower, '').replace(/s$/, '') || targetProperty;
                 break;
+              }
+            }
+            
+            // Fallback: if no match found, use first array-like reactive var
+            if (!inferredSource && reactiveVars.size > 0) {
+              const arrayLikeVars = Array.from(reactiveVars).filter(v => {
+                const vLower = v.toLowerCase();
+                return vLower.endsWith('s') || vLower.includes('list') || vLower.includes('array') || 
+                       vLower.includes('data') || vLower.includes('items') || vLower.includes('collection');
+              });
+              if (arrayLikeVars.length > 0) {
+                inferredSource = arrayLikeVars[0];
+                inferredProperty = targetProperty || 'category'; // Default to 'category' if can't infer
               }
             }
           }
@@ -817,6 +1249,28 @@ export async function fixPostMigrationIssues(
             result.fixes.push(`Auto-fixed incomplete computed property '${computedName}': inferred extraction from ${inferredSource}.${property}`);
           } else {
             result.issues.push(`Incomplete computed property detected: ${computedName} references undefined variable '${referencedVar}'. Could not auto-fix - manual fix required.`);
+          }
+        }
+        
+        // Pattern 2.5: Fix computed that returns ref directly without .value
+        // Pattern: const filteredPosts = computed(() => posts) → computed(() => posts.value)
+        const refComputedPattern = /const\s+(\w+)\s*=\s*computed\s*<\s*any\s*>\s*\(\s*\(\)\s*=>\s*(\w+)\s*\)/g;
+        let refComputedMatch;
+        while ((refComputedMatch = refComputedPattern.exec(fixedContent)) !== null) {
+          const computedName = refComputedMatch[1];
+          const refVar = refComputedMatch[2];
+          
+          // Check if refVar is a reactive variable (ref/reactive)
+          if (reactiveVars.has(refVar)) {
+            // Check if it's not already using .value
+            const matchStr = refComputedMatch[0];
+            if (!matchStr.includes('.value')) {
+              // Fix: add .value
+              const fixedComputed = matchStr.replace(`=> ${refVar})`, `=> ${refVar}.value)`);
+              fixedContent = fixedContent.replace(matchStr, fixedComputed);
+              result.fixed = true;
+              result.fixes.push(`Fixed computed '${computedName}': added .value to ${refVar}`);
+            }
           }
         }
         
@@ -942,12 +1396,16 @@ export async function fixPostMigrationIssues(
       
       // Pattern 2: Array.from(undefinedVar) in computed (single line or multi-line)
       // Match both: computed(() => Array.from(var)) and computed(() => { return Array.from(var); })
+      // Also handle TypeScript: computed<any>(() => Array.from(var))
       const arrayFromPatterns = [
-        // Single line: computed(() => Array.from(var))
+        // Single line: computed(() => Array.from(var)) or computed<any>(() => Array.from(var))
+        /const\s+(\w+)\s*=\s*computed\s*<[^>]*>\s*\(\s*\(\)\s*=>\s*Array\.from\s*\(\s*(\w+)\s*\)\s*\)/g,
         /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*Array\.from\s*\(\s*(\w+)\s*\)\s*\)/g,
-        // Multi-line: computed(() => { return Array.from(var); })
+        // Multi-line: computed(() => { return Array.from(var); }) or computed<any>(() => { return Array.from(var); })
+        /const\s+(\w+)\s*=\s*computed\s*<[^>]*>\s*\(\s*\(\)\s*=>\s*\{\s*return\s+Array\.from\s*\(\s*(\w+)\s*\)\s*;\s*\}\s*\)/g,
         /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*\{\s*return\s+Array\.from\s*\(\s*(\w+)\s*\)\s*;\s*\}\s*\)/g,
         // Multi-line with newlines: computed(() => {\n  return Array.from(var);\n})
+        /const\s+(\w+)\s*=\s*computed\s*<[^>]*>\s*\(\s*\(\)\s*=>\s*\{[\s\n]*return\s+Array\.from\s*\(\s*(\w+)\s*\)\s*;?[\s\n]*\}\s*\)/g,
         /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*\{[\s\n]*return\s+Array\.from\s*\(\s*(\w+)\s*\)\s*;?[\s\n]*\}\s*\)/g
       ];
       
@@ -972,29 +1430,28 @@ export async function fixPostMigrationIssues(
             let inferredSource: string | null = null;
             let inferredProperty: string | null = null;
             
-            // Common patterns: categories → posts.category, tags → items.tags
-            if (computedNameLower.includes('categor') && reactiveVars.has('posts')) {
-              inferredSource = 'posts';
+            // GENERIC PATTERN: Infer source from computed name and available reactive vars
+            // Works for any project, not just specific variable names
+            if (computedNameLower.includes('categor')) {
               inferredProperty = 'category';
-            } else if (computedNameLower.includes('categor') && reactiveVars.size > 0) {
-              // Try to find any array-like reactive var (posts, items, products, data, etc.)
-              const possibleSources = Array.from(reactiveVars).filter(v => 
-                v.toLowerCase().includes('post') || v.toLowerCase().includes('item') || 
-                v.toLowerCase().includes('product') || v.toLowerCase().includes('data') ||
-                v.toLowerCase().includes('list') || v.toLowerCase().includes('array')
-              );
-              if (possibleSources.length > 0) {
-                inferredSource = possibleSources[0];
-                inferredProperty = 'category';
+              // Find any array-like reactive var (any plural noun or array-like name)
+              const arrayLikeVars = Array.from(reactiveVars).filter(v => {
+                const vLower = v.toLowerCase();
+                return vLower.endsWith('s') || vLower.includes('list') || vLower.includes('array') || 
+                       vLower.includes('data') || vLower.includes('items') || vLower.includes('collection');
+              });
+              if (arrayLikeVars.length > 0) {
+                inferredSource = arrayLikeVars[0];
               }
-            } else if (computedNameLower.includes('tag') && reactiveVars.size > 0) {
-              const possibleSources = Array.from(reactiveVars).filter(v => 
-                v.toLowerCase().includes('post') || v.toLowerCase().includes('item') || 
-                v.toLowerCase().includes('product') || v.toLowerCase().includes('data')
-              );
-              if (possibleSources.length > 0) {
-                inferredSource = possibleSources[0];
-                inferredProperty = 'tags';
+            } else if (computedNameLower.includes('tag')) {
+              inferredProperty = 'tags';
+              const arrayLikeVars = Array.from(reactiveVars).filter(v => {
+                const vLower = v.toLowerCase();
+                return vLower.endsWith('s') || vLower.includes('list') || vLower.includes('array') || 
+                       vLower.includes('data') || vLower.includes('items') || vLower.includes('collection');
+              });
+              if (arrayLikeVars.length > 0) {
+                inferredSource = arrayLikeVars[0];
               }
             } else {
               // Generic inference: find best matching reactive var
@@ -1015,11 +1472,11 @@ export async function fixPostMigrationIssues(
               
               // Fallback: if we have reactive vars but no match, use the first array-like one
               if (!inferredSource && reactiveVars.size > 0) {
-                const arrayLikeVars = Array.from(reactiveVars).filter(v => 
-                  v.toLowerCase().includes('post') || v.toLowerCase().includes('item') || 
-                  v.toLowerCase().includes('product') || v.toLowerCase().includes('data') ||
-                  v.toLowerCase().includes('list') || v.toLowerCase().includes('array')
-                );
+                const arrayLikeVars = Array.from(reactiveVars).filter(v => {
+                  const vLower = v.toLowerCase();
+                  return vLower.endsWith('s') || vLower.includes('list') || vLower.includes('array') || 
+                         vLower.includes('data') || vLower.includes('items') || vLower.includes('collection');
+                });
                 if (arrayLikeVars.length > 0) {
                   inferredSource = arrayLikeVars[0];
                   // Try to infer property from computed name
@@ -1031,7 +1488,10 @@ export async function fixPostMigrationIssues(
             if (inferredSource) {
               // Auto-fix: Replace Array.from(undefinedVar) with proper extraction
               const property = inferredProperty || 'category';
-              const fixedComputed = `const ${computedName} = computed(() => {\n    const ${undefinedVar} = new Set(${inferredSource}.value.map(item => item.${property}).filter(Boolean));\n    return Array.from(${undefinedVar});\n  })`;
+              // Check if original had TypeScript type annotation
+              const hasTypeAnnotation = arrayFromMatch[0].includes('computed<');
+              const typeAnnotation = hasTypeAnnotation ? arrayFromMatch[0].match(/computed<([^>]+)>/)?.[1] || 'any' : 'any';
+              const fixedComputed = `const ${computedName} = computed<${typeAnnotation}>(() => {\n    const ${undefinedVar} = new Set(${inferredSource}.value.map(item => item.${property}).filter(Boolean));\n    return Array.from(${undefinedVar});\n  })`;
               fixedContent = fixedContent.replace(arrayFromMatch[0], fixedComputed);
               result.fixed = true;
               result.fixes.push(`Auto-fixed Array.from(${undefinedVar}) in computed '${computedName}': inferred extraction from ${inferredSource}.${property}`);
@@ -2397,6 +2857,155 @@ export async function fixPostMigrationIssues(
           result.fixes.push(`Secured router.push with params for route '${routeName}' (Vue Router 4 compatibility - using path instead of name+params)`);
         }
         
+        // Fix 8f: Add type checking and undefined checks for router.push functions
+        // Pattern: const goToPost = postId => { router.push({ path: `/blog/${postId}` }) }
+        // Should become: const goToPost = (postId: number | string | undefined) => { if (postId !== undefined && postId !== null) { router.push({ path: `/blog/${postId}` }) } }
+        if (scriptContent.includes('router.push') && scriptContent.includes('path:')) {
+          // Find functions that use router.push with template literals containing parameters
+          // Pattern matches: const functionName = param => { router.push({ path: `/route/${param}` }) }
+          const routerPushFunctionPattern = /const\s+(\w+)\s*=\s*(\w+)\s*=>\s*\{[^}]*router\.push\s*\(\s*\{\s*path\s*:\s*[`'"]\/[^`'"]*\$\{(\w+)\}[^`'"]*[`'"]/g;
+          let routerPushFunctionMatch;
+          const processedFunctions = new Set<string>();
+          
+          while ((routerPushFunctionMatch = routerPushFunctionPattern.exec(scriptContent)) !== null) {
+            const [fullMatch, functionName, paramName, pathParam] = routerPushFunctionMatch;
+            
+            // Skip if already processed
+            if (processedFunctions.has(functionName)) continue;
+            processedFunctions.add(functionName);
+            
+            // Check if function already has type annotation
+            const hasTypeAnnotation = /const\s+\w+\s*:\s*\([^)]+\)\s*=>/.test(fullMatch) || 
+                                      /const\s+\w+\s*=\s*\([^)]+:\s*\w+/.test(fullMatch);
+            
+            // Check if function already has undefined check
+            const hasUndefinedCheck = /if\s*\([^)]*undefined[^)]*\)/.test(fullMatch) || 
+                                     /if\s*\([^)]*!==\s*undefined/.test(fullMatch);
+            
+            if (!hasTypeAnnotation || !hasUndefinedCheck) {
+              // Extract the full function body
+              const functionBodyMatch = scriptContent.match(new RegExp(`const\\s+${functionName}\\s*=\\s*${paramName}\\s*=>\\s*\\{([^}]+)\\}`, 's'));
+              if (functionBodyMatch) {
+                const functionBody = functionBodyMatch[1].trim();
+                
+                // Build the fixed function
+                const typeAnnotation = enableTypeScript ? `(${paramName}: number | string | undefined)` : `(${paramName})`;
+                let fixedFunction = `const ${functionName} = ${typeAnnotation} => {\n`;
+                fixedFunction += `  if (${paramName} !== undefined && ${paramName} !== null) {\n`;
+                fixedFunction += `    ${functionBody}\n`;
+                fixedFunction += `  }\n`;
+                fixedFunction += `}`;
+                
+                scriptContent = scriptContent.replace(functionBodyMatch[0], fixedFunction);
+                result.fixed = true;
+                result.fixes.push(`Added type checking and undefined check for ${functionName} function with router.push`);
+              }
+            }
+          }
+        }
+        
+        // Fix 8g: Improve fetch* functions to search existing data first (GENERIC)
+        // Pattern: async function fetchPost(postId: number) { ... const post = { id: postId, ... } SET_CURRENT_*(post) }
+        // Should become: async function fetchPost(postId: number) { ... const existingPost = arrayVar.value.find(p => p.id === postId); if (existingPost) { SET_CURRENT_*(existingPost) } else { ... } }
+        // This is GENERIC - works for any fetch* function, any array variable, any SET_CURRENT_* function
+        if (scriptContent.includes('async function fetch')) {
+          // Find fetch functions that create new objects instead of searching existing data
+          // Pattern matches: async function fetch*Name*(param: type) { ... const item = { id: param, ... } SET_CURRENT_*(item) }
+          const fetchFunctionPattern = /async\s+function\s+(fetch\w+)\s*\([^)]+\)\s*:\s*Promise<void>\s*\{([\s\S]*?const\s+\w+\s*=\s*\{[^}]*id\s*:\s*\w+[^}]*\}[\s\S]*?SET_CURRENT_\w+)/g;
+          let fetchFunctionMatch;
+          
+          while ((fetchFunctionMatch = fetchFunctionPattern.exec(scriptContent)) !== null) {
+            const [fullMatch, functionName, functionBody] = fetchFunctionMatch;
+            
+            // Check if function already searches existing data (GENERIC check)
+            const alreadySearches = /\.find\s*\([^)]*\.id\s*===/.test(functionBody) || 
+                                   /\.find\s*\([^)]*id\s*===/.test(functionBody) ||
+                                   /existing\w+\s*=\s*\w+\.value\.find/.test(functionBody);
+            
+            if (!alreadySearches) {
+              // GENERIC: Try to detect the array variable name dynamically (posts, items, users, products, etc.)
+              // Strategy 1: Look for patterns like: posts.value, items.value, users.value, etc. in function body
+              const arrayVarMatch = functionBody.match(/(\w+)\.value/);
+              
+              // Strategy 2: Look for ref declarations in the entire script: const posts = ref([])
+              let arrayVar: string | null = null;
+              if (arrayVarMatch) {
+                arrayVar = arrayVarMatch[1];
+              } else {
+                // Try to find ref declarations and match with function name
+                const refDeclarations = scriptContent.match(/const\s+(\w+)\s*=\s*ref\s*\(/g);
+                if (refDeclarations) {
+                  // Extract ref variable names
+                  const refVars = refDeclarations.map(match => {
+                    const varMatch = match.match(/const\s+(\w+)\s*=/);
+                    return varMatch ? varMatch[1] : null;
+                  }).filter(Boolean) as string[];
+                  
+                  // Try to infer from function name: fetchPost -> posts, fetchUser -> users, etc.
+                  const functionNameLower = functionName.toLowerCase();
+                  const baseName = functionName.replace(/^fetch/, '').toLowerCase();
+                  const pluralName = baseName + 's';
+                  
+                  // Look for matching ref variable (exact match or contains base name)
+                  const matchingRef = refVars.find(refVar => {
+                    const refVarLower = refVar.toLowerCase();
+                    return refVarLower === pluralName || 
+                           refVarLower.includes(baseName) ||
+                           baseName.includes(refVarLower.replace(/s$/, ''));
+                  });
+                  
+                  if (matchingRef) {
+                    arrayVar = matchingRef;
+                  } else if (refVars.length === 1) {
+                    // If there's only one ref, use it (common pattern: single array in store)
+                    arrayVar = refVars[0];
+                  } else {
+                    // Generic inference: remove 'fetch' prefix and pluralize
+                    arrayVar = pluralName;
+                  }
+                }
+              }
+              
+              // Only proceed if we found or inferred an array variable with high confidence
+              // Skip if we can't detect with confidence (better to skip than apply wrong fix)
+              if (arrayVar) {
+                // GENERIC: Try to detect the parameter name dynamically from function signature
+                const paramMatch = fullMatch.match(/\((\w+)\s*:\s*\w+\)/);
+                const paramName = paramMatch ? paramMatch[1] : null;
+                
+                // If we can't detect parameter name, skip this fix (don't assume 'id')
+                if (!paramName) {
+                  continue;
+                }
+                
+                // GENERIC: Try to detect the SET function name dynamically (SET_CURRENT_POST, SET_CURRENT_USER, etc.)
+                const setFunctionMatch = functionBody.match(/(SET_CURRENT_\w+)/);
+                const setFunction = setFunctionMatch ? setFunctionMatch[1] : `SET_CURRENT_${arrayVar.charAt(0).toUpperCase() + arrayVar.slice(1, -1)}`;
+                
+                // GENERIC: Build improved function body using detected variables
+                const itemName = arrayVar.slice(0, -1); // posts -> post, users -> user, etc.
+                const existingItemName = `existing${itemName.charAt(0).toUpperCase() + itemName.slice(1)}`;
+                
+                const searchCode = `\n      // Try to find ${itemName} in existing ${arrayVar} first\n      const ${existingItemName} = ${arrayVar}.value.find((p: any) => p.id === ${paramName});\n      if (${existingItemName}) {\n        ${setFunction}(${existingItemName});\n      } else {\n`;
+                
+                // Find where the new object is created and wrap it in else
+                const newObjectPattern = /const\s+\w+\s*=\s*\{[^}]*id\s*:\s*\w+[^}]*\}/;
+                const newObjectMatch = functionBody.match(newObjectPattern);
+                if (newObjectMatch) {
+                  const improvedBody = functionBody.replace(
+                    newObjectMatch[0],
+                    searchCode + '        ' + newObjectMatch[0] + '\n      }'
+                  );
+                  
+                  scriptContent = scriptContent.replace(functionBody, improvedBody);
+                  result.fixed = true;
+                  result.fixes.push(`Improved ${functionName} to search existing data before creating new (generic fix)`);
+                }
+              }
+            }
+          }
+        }
+        
         // Check for useIndexStore/useAppStore usage
         const indexStorePattern = /useIndexStore\(\)|useAppStore\(\)/g;
         if (indexStorePattern.test(scriptContent)) {
@@ -3017,6 +3626,381 @@ export async function fixPostMigrationIssues(
         }
       });
 
+      // Fix 4: Add fallback to route.params for props.*Id in Vue Router components (GENERIC)
+      // Pattern: watch(() => props.id, ...) or watch(() => props.userId, ...) where props.*Id might be undefined
+      // Should add: const computedId = computed(() => props.id || route.params.id)
+      // This is GENERIC - works for any prop ending with 'Id' (id, userId, postId, itemId, etc.)
+      if (scriptContent.includes('defineProps') && scriptContent.includes('props.') && scriptContent.includes('watch')) {
+        // Find all props that end with 'Id' (id, userId, postId, itemId, etc.)
+        const propsIdPattern = /props\.(\w*Id|\w*id)/g;
+        const propsIds = new Set<string>();
+        let propsIdMatch;
+        while ((propsIdMatch = propsIdPattern.exec(scriptContent)) !== null) {
+          propsIds.add(propsIdMatch[1]);
+        }
+        
+        // Ensure useRoute is imported (only once, before the loop)
+        if (!scriptContent.includes('useRoute')) {
+          const vueRouterImport = scriptContent.match(/import\s+.*from\s+['"]vue-router['"]/);
+          if (vueRouterImport) {
+            // Add useRoute to existing import
+            scriptContent = scriptContent.replace(
+              /import\s+{([^}]+)}\s+from\s+['"]vue-router['"]/,
+              (match, imports) => {
+                if (!imports.includes('useRoute')) {
+                  return `import {${imports}, useRoute} from 'vue-router'`;
+                }
+                return match;
+              }
+            );
+          } else {
+            // Add new import
+            scriptContent = `import { useRoute } from 'vue-router';\n${scriptContent}`;
+          }
+          // Add useRoute() call if not present
+          if (!scriptContent.includes('const route = useRoute()') && !scriptContent.includes('const route = useRoute();')) {
+            const routerMatch = scriptContent.match(/const\s+router\s*=\s*useRouter\(\)/);
+            if (routerMatch) {
+              scriptContent = scriptContent.replace(routerMatch[0], `const route = useRoute();\n${routerMatch[0]}`);
+            } else {
+              // Add after imports
+              const importEnd = scriptContent.lastIndexOf('import');
+              const nextLine = scriptContent.indexOf('\n', importEnd);
+              if (nextLine !== -1) {
+                scriptContent = scriptContent.slice(0, nextLine + 1) + 'const route = useRoute();\n' + scriptContent.slice(nextLine + 1);
+              }
+            }
+          }
+          result.fixed = true;
+          result.fixes.push('Added useRoute import and initialization for route.params fallback');
+        }
+        
+        // Process each propId found (GENERIC - works for id, userId, postId, itemId, etc.)
+        propsIds.forEach(propId => {
+          if (scriptContent.includes(`props.${propId}`) && scriptContent.includes('watch')) {
+            // Check if there's already a computed fallback for this propId
+            const computedVarName = propId.charAt(0).toLowerCase() + propId.slice(1).replace(/Id$/, 'Id'); // id -> id, userId -> userId
+            const hasRouteParamsFallback = new RegExp(`const\\s+\\w+\\s*=\\s*computed\\s*\\([^)]*props\\.${propId}\\s*\\|\\|\\s*route\\.params`).test(scriptContent);
+            
+            if (!hasRouteParamsFallback) {
+              // Find watch(() => props.propId, ...)
+              const watchPropsIdPattern = new RegExp(`watch\\s*\\(\\s*\\(\\)\\s*=>\\s*props\\.${propId}`, 'g');
+              if (watchPropsIdPattern.test(scriptContent)) {
+                // GENERIC: Create computed variable name dynamically
+                // Convention: id -> postId (common pattern), userId -> userId, postId -> postId, etc.
+                // Try to infer from context: if propId is just 'id', look for context clues
+                let computedName: string;
+                if (propId === 'id') {
+                  // Try to infer from component/route context
+                  const componentContext = scriptContent.match(/component:\s*(\w+)/) || 
+                                          scriptContent.match(/name:\s*['"](\w+)['"]/);
+                  if (componentContext) {
+                    const componentName = componentContext[1].toLowerCase();
+                    // Extract base name: BlogPost -> post, UserDetail -> user, etc.
+                    const baseName = componentName.replace(/(post|detail|view|page)$/i, '').toLowerCase() || 'post';
+                    computedName = baseName + 'Id';
+                  } else {
+                    // Default convention: id -> postId (most common pattern)
+                    computedName = 'postId';
+                  }
+                } else {
+                  // Use propId as-is: userId -> userId, postId -> postId
+                  computedName = computedVarName;
+                }
+                
+                // Add computed fallback before watch
+                const computedFallback = `\n// Get ${propId} from props or route params\nconst ${computedName} = computed(() => {\n  return props.${propId} || (route.params.${propId} as string);\n});\n\n`;
+                
+                // Insert before the watch statement
+                scriptContent = scriptContent.replace(
+                  new RegExp(`(watch\\s*\\(\\s*\\(\\)\\s*=>\\s*props\\.${propId})`),
+                  `${computedFallback}$1`
+                );
+                
+                // Update watch to use computedName.value instead of props.propId
+                scriptContent = scriptContent.replace(
+                  new RegExp(`watch\\s*\\(\\s*\\(\\)\\s*=>\\s*props\\.${propId}\\s*,\\s*(\\w+)\\s*=>`, 'g'),
+                  `watch(() => ${computedName}.value, $1 =>`
+                );
+                
+                result.fixed = true;
+                result.fixes.push(`Added route.params.${propId} fallback for props.${propId} in Vue Router component (generic fix)`);
+              }
+            }
+          }
+        });
+      }
+
+      // Fix 5: Add NaN checks for parseInt in watch functions and route params
+      // Pattern: watch(() => props.id, newId => { fetchPost(parseInt(newId)) })
+      // Should be: watch(() => props.id, newId => { if (newId && !isNaN(parseInt(newId))) { fetchPost(parseInt(newId)) } })
+      if (scriptContent.includes('parseInt')) {
+        // Fix functions that use parseInt without NaN checks
+        // Pattern: async function fetchPost(postId: number): Promise<void> { ...parseInt(postId)... }
+        const functionParseIntPattern = /(async\s+)?function\s+(\w+)\s*\([^)]*(\w+)\s*:\s*number[^)]*\)\s*:\s*Promise<void>\s*\{([^}]*parseInt\s*\(\s*\3\s*\)[^}]*)\}/g;
+        let funcMatch;
+        while ((funcMatch = functionParseIntPattern.exec(scriptContent)) !== null) {
+          const isAsync = funcMatch[1];
+          const funcName = funcMatch[2];
+          const paramName = funcMatch[3];
+          const funcBody = funcMatch[4];
+          
+          // Check if there's already a NaN check
+          if (!funcBody.includes('isNaN') && !funcBody.includes('NaN') && !funcBody.includes('if (!')) {
+            // Add NaN check at the beginning of the function
+            const fixedBody = funcBody.replace(
+              /^/,
+              `  if (!${paramName} || isNaN(${paramName})) {\n    return;\n  }\n`
+            );
+            scriptContent = scriptContent.replace(funcMatch[0], funcMatch[0].replace(funcBody, fixedBody));
+            result.fixed = true;
+            result.fixes.push(`Added NaN check in function ${funcName} for parameter ${paramName}`);
+          }
+        }
+      }
+      
+      // Fix malformed watch statements with extra braces and missing parentheses
+      // This is a GENERIC fix that works for any watch statement, not just props or parseInt
+      if (scriptContent.includes('watch')) {
+        // Pattern 1: watch(() => ..., param => { { ... } }) - double braces
+        // This pattern is generic and works for any watch source and body
+        const doubleBracePattern = /watch\s*\(([^,]+),\s*(\w+)\s*=>\s*\{\s*\{\s*([^}]+)\s*\}\s*\}\)/g;
+        let doubleBraceMatch;
+        while ((doubleBraceMatch = doubleBracePattern.exec(scriptContent)) !== null) {
+          const watchSource = doubleBraceMatch[1].trim();
+          const paramName = doubleBraceMatch[2];
+          let watchBody = doubleBraceMatch[3].trim();
+          
+          // Count parentheses to fix missing closing ones
+          const openParens = (watchBody.match(/\(/g) || []).length;
+          const closeParens = (watchBody.match(/\)/g) || []).length;
+          
+          // Add missing closing parentheses
+          for (let i = 0; i < openParens - closeParens; i++) {
+            watchBody += ')';
+          }
+          
+          // Add semicolon if missing (unless it's already there or ends with })
+          if (!watchBody.endsWith(';') && !watchBody.endsWith(')')) {
+            watchBody += ';';
+          }
+          
+          const fixedWatch = `watch(${watchSource}, ${paramName} => {\n  ${watchBody}\n})`;
+          scriptContent = scriptContent.replace(doubleBraceMatch[0], fixedWatch);
+          result.fixed = true;
+          result.fixes.push(`Fixed malformed watch statement with extra braces`);
+        }
+        
+        // Pattern 2: watch(() => ..., param => { if (...) { { ... } } }) - double braces inside if
+        const doubleBraceInIfPattern = /watch\s*\(([^,]+),\s*(\w+)\s*=>\s*\{\s*(if\s*\([^)]+\)\s*)\{\s*\{\s*([^}]+)\s*\}\s*\}\s*\}\)/g;
+        let doubleBraceInIfMatch;
+        while ((doubleBraceInIfMatch = doubleBraceInIfPattern.exec(scriptContent)) !== null) {
+          const watchSource = doubleBraceInIfMatch[1].trim();
+          const paramName = doubleBraceInIfMatch[2];
+          const ifCondition = doubleBraceInIfMatch[3].trim();
+          let watchBody = doubleBraceInIfMatch[4].trim();
+          
+          // Count parentheses to fix missing closing ones
+          const openParens = (watchBody.match(/\(/g) || []).length;
+          const closeParens = (watchBody.match(/\)/g) || []).length;
+          
+          // Add missing closing parentheses
+          for (let i = 0; i < openParens - closeParens; i++) {
+            watchBody += ')';
+          }
+          
+          // Add semicolon if missing
+          if (!watchBody.endsWith(';') && !watchBody.endsWith(')')) {
+            watchBody += ';';
+          }
+          
+          const fixedWatch = `watch(${watchSource}, ${paramName} => {\n  ${ifCondition}{\n    ${watchBody}\n  }\n})`;
+          scriptContent = scriptContent.replace(doubleBraceInIfMatch[0], fixedWatch);
+          result.fixed = true;
+          result.fixes.push(`Fixed malformed watch statement with extra braces in if statement`);
+        }
+        
+        // Pattern 3: watch(() => ..., param => { if (...) { { code } } }) - more complex pattern
+        // This handles cases where the watch body has multiple statements
+        const complexWatchPattern = /watch\s*\(([^,]+),\s*(\w+)\s*=>\s*\{\s*(if\s*\([^)]+\)\s*)\{\s*\{\s*([^}]*blogStore[^}]*\w+\([^)]*\)[^}]*)\s*\}\s*\}\s*\}\)/g;
+        let complexWatchMatch;
+        while ((complexWatchMatch = complexWatchPattern.exec(scriptContent)) !== null) {
+          const watchSource = complexWatchMatch[1].trim();
+          const paramName = complexWatchMatch[2];
+          const ifCondition = complexWatchMatch[3].trim();
+          let watchBody = complexWatchMatch[4].trim();
+          
+          // Count parentheses to fix missing closing ones
+          const openParens = (watchBody.match(/\(/g) || []).length;
+          const closeParens = (watchBody.match(/\)/g) || []).length;
+          
+          // Add missing closing parentheses
+          for (let i = 0; i < openParens - closeParens; i++) {
+            watchBody += ')';
+          }
+          
+          // Add semicolon if missing
+          if (!watchBody.endsWith(';') && !watchBody.endsWith(')')) {
+            watchBody += ';';
+          }
+          
+          const fixedWatch = `watch(${watchSource}, ${paramName} => {\n  ${ifCondition}{\n    ${watchBody}\n  }\n})`;
+          scriptContent = scriptContent.replace(complexWatchMatch[0], fixedWatch);
+          result.fixed = true;
+          result.fixes.push(`Fixed complex malformed watch statement with extra braces`);
+        }
+      }
+      
+      if (scriptContent.includes('parseInt') && scriptContent.includes('watch')) {
+        // Fix malformed watch statements with missing parentheses/braces
+        // Pattern: watch(() => props.id, newId => { { blogStore.fetchPost(parseInt(newId) } })
+        // This pattern matches watch statements with extra braces and missing closing parentheses
+        const malformedWatchPattern = /watch\s*\(\s*\(\)\s*=>\s*props\.(\w+)\s*,\s*(\w+)\s*=>\s*\{([^}]*if[^}]*)\{\s*([^}]*parseInt\s*\(\s*\2\s*\)[^}]*)\s*\}\s*\}\)/g;
+        let malformedMatch;
+        while ((malformedMatch = malformedWatchPattern.exec(scriptContent)) !== null) {
+          const propName = malformedMatch[1];
+          const paramName = malformedMatch[2];
+          const ifCondition = malformedMatch[3].trim();
+          let watchBody = malformedMatch[4].trim();
+          
+          // Fix: remove extra braces and add missing semicolon/parentheses
+          // Count opening and closing parentheses in watchBody
+          const openParens = (watchBody.match(/\(/g) || []).length;
+          const closeParens = (watchBody.match(/\)/g) || []).length;
+          
+          // Add missing closing parentheses
+          for (let i = 0; i < openParens - closeParens; i++) {
+            watchBody += ')';
+          }
+          
+          // Add semicolon if missing
+          if (!watchBody.endsWith(';')) {
+            watchBody += ';';
+          }
+          
+          // Extract the if condition properly (remove the extra opening brace)
+          const cleanIfCondition = ifCondition.replace(/^\s*if\s*\(/, 'if (').replace(/\{\s*$/, '');
+          
+          const fixedWatch = `watch(() => props.${propName}, ${paramName} => {\n  ${cleanIfCondition} {\n    ${watchBody}\n  }\n})`;
+          scriptContent = scriptContent.replace(malformedMatch[0], fixedWatch);
+          result.fixed = true;
+          result.fixes.push(`Fixed malformed watch statement with missing parentheses/braces for props.${propName}`);
+        }
+        
+        // Also fix simpler pattern: watch(() => props.id, newId => { { blogStore.fetchPost(parseInt(newId) } })
+        const simpleMalformedPattern = /watch\s*\(\s*\(\)\s*=>\s*props\.(\w+)\s*,\s*(\w+)\s*=>\s*\{\s*\{\s*([^}]*parseInt\s*\(\s*\2\s*\)[^}]*)\s*\}\s*\}\)/g;
+        let simpleMalformedMatch;
+        while ((simpleMalformedMatch = simpleMalformedPattern.exec(scriptContent)) !== null) {
+          const propName = simpleMalformedMatch[1];
+          const paramName = simpleMalformedMatch[2];
+          let watchBody = simpleMalformedMatch[3].trim();
+          
+          // Fix: remove extra braces and add missing semicolon/parentheses
+          const openParens = (watchBody.match(/\(/g) || []).length;
+          const closeParens = (watchBody.match(/\)/g) || []).length;
+          
+          // Add missing closing parentheses
+          for (let i = 0; i < openParens - closeParens; i++) {
+            watchBody += ')';
+          }
+          
+          // Add semicolon if missing
+          if (!watchBody.endsWith(';')) {
+            watchBody += ';';
+          }
+          
+          const fixedWatch = `watch(() => props.${propName}, ${paramName} => {\n  if (${paramName} && !isNaN(parseInt(${paramName}))) {\n    ${watchBody}\n  }\n})`;
+          scriptContent = scriptContent.replace(simpleMalformedMatch[0], fixedWatch);
+          result.fixed = true;
+          result.fixes.push(`Fixed malformed watch statement with missing parentheses/braces for props.${propName}`);
+        }
+        
+        // Pattern: watch(() => props.id, newId => { ...parseInt(newId)... })
+        const watchParseIntPattern = /watch\s*\(\s*\(\)\s*=>\s*props\.(\w+)\s*,\s*(\w+)\s*=>\s*\{([^}]*parseInt\s*\(\s*\2\s*\)[^}]*)\}\s*\)/g;
+        let watchMatch;
+        while ((watchMatch = watchParseIntPattern.exec(scriptContent)) !== null) {
+          const propName = watchMatch[1];
+          const paramName = watchMatch[2];
+          const watchBody = watchMatch[3];
+          
+          // Check if there's already a NaN check
+          if (!watchBody.includes('isNaN') && !watchBody.includes('NaN')) {
+            // Add NaN check
+            const fixedBody = `  if (${paramName} && !isNaN(parseInt(${paramName}))) {\n${watchBody}\n  }`;
+            const fixedWatch = `watch(() => props.${propName}, ${paramName} => {\n${fixedBody}\n})`;
+            scriptContent = scriptContent.replace(watchMatch[0], fixedWatch);
+            result.fixed = true;
+            result.fixes.push(`Added NaN check for parseInt in watch function for props.${propName}`);
+          }
+        }
+        
+        // Pattern: watch(() => props.id, newId => blogStore.fetchPost(parseInt(newId)))
+        const watchParseIntSimplePattern = /watch\s*\(\s*\(\)\s*=>\s*props\.(\w+)\s*,\s*(\w+)\s*=>\s*([^,}]+parseInt\s*\(\s*\2\s*\)[^,}]*)\s*\)/g;
+        let watchSimpleMatch;
+        while ((watchSimpleMatch = watchParseIntSimplePattern.exec(scriptContent)) !== null) {
+          const propName = watchSimpleMatch[1];
+          const paramName = watchSimpleMatch[2];
+          const watchCall = watchSimpleMatch[3];
+          
+          // Check if there's already a NaN check in the options
+          const fullMatch = watchSimpleMatch[0];
+          if (!fullMatch.includes('isNaN') && !fullMatch.includes('NaN')) {
+            // Wrap in a function with NaN check
+            const fixedWatch = `watch(() => props.${propName}, ${paramName} => {
+  if (${paramName} && !isNaN(parseInt(${paramName}))) {
+    ${watchCall}
+  }
+})`;
+            scriptContent = scriptContent.replace(fullMatch, fixedWatch);
+            result.fixed = true;
+            result.fixes.push(`Added NaN check for parseInt in watch function for props.${propName}`);
+          }
+        }
+        
+        // Pattern: watch(() => postId.value, newId => { ...parseInt(newId)... })
+        // Handle computed postId.value pattern (common in Vue Router components)
+        const watchComputedParseIntPattern = /watch\s*\(\s*\(\)\s*=>\s*(\w+)\.value\s*,\s*(\w+)\s*=>\s*\{([^}]*parseInt\s*\(\s*\2\s*\)[^}]*)\}\s*\)/g;
+        let watchComputedMatch;
+        while ((watchComputedMatch = watchComputedParseIntPattern.exec(scriptContent)) !== null) {
+          const computedVar = watchComputedMatch[1];
+          const paramName = watchComputedMatch[2];
+          const watchBody = watchComputedMatch[3];
+          
+          // Check if there's already a NaN check
+          if (!watchBody.includes('isNaN') && !watchBody.includes('NaN') && !watchBody.includes('if (')) {
+            // Add NaN check
+            const fixedBody = `  if (${paramName} && typeof ${paramName} === 'string' && ${paramName}.trim() && !isNaN(parseInt(${paramName}))) {\n${watchBody}\n  }`;
+            const fixedWatch = `watch(() => ${computedVar}.value, ${paramName} => {\n${fixedBody}\n})`;
+            scriptContent = scriptContent.replace(watchComputedMatch[0], fixedWatch);
+            result.fixed = true;
+            result.fixes.push(`Added NaN check for parseInt in watch function for ${computedVar}.value`);
+          }
+        }
+        
+        // Pattern: watch(() => postId.value, newId => blogStore.fetchPost(parseInt(newId)))
+        const watchComputedParseIntSimplePattern = /watch\s*\(\s*\(\)\s*=>\s*(\w+)\.value\s*,\s*(\w+)\s*=>\s*([^,}]+parseInt\s*\(\s*\2\s*\)[^,}]*)\s*\)/g;
+        let watchComputedSimpleMatch;
+        while ((watchComputedSimpleMatch = watchComputedParseIntSimplePattern.exec(scriptContent)) !== null) {
+          const computedVar = watchComputedSimpleMatch[1];
+          const paramName = watchComputedSimpleMatch[2];
+          const watchCall = watchComputedSimpleMatch[3];
+          
+          // Check if there's already a NaN check
+          const fullMatch = watchComputedSimpleMatch[0];
+          if (!fullMatch.includes('isNaN') && !fullMatch.includes('NaN')) {
+            // Wrap in a function with NaN check
+            const fixedWatch = `watch(() => ${computedVar}.value, ${paramName} => {
+  if (${paramName} && typeof ${paramName} === 'string' && ${paramName}.trim() && !isNaN(parseInt(${paramName}))) {
+    ${watchCall}
+  }
+})`;
+            scriptContent = scriptContent.replace(fullMatch, fixedWatch);
+            result.fixed = true;
+            result.fixes.push(`Added NaN check for parseInt in watch function for ${computedVar}.value`);
+          }
+        }
+      }
+
       // Final step: Always merge imports at the end (after all other fixes that might add imports)
       // This ensures that even if other fixes add imports, they are properly merged
       if (scriptContent && scriptContent.includes('import')) {
@@ -3440,9 +4424,11 @@ export async function fixPostMigrationIssues(
                 const storeInitMatch = scriptContent.match(new RegExp(`const\\s+${storeInfo.storeVarName}\\s*=\\s*${storeInfo.storeName}\\(\\);`));
                 if (storeInitMatch) {
                   const insertPos = storeInitMatch.index! + storeInitMatch[0].length;
-                  scriptContent = scriptContent.slice(0, insertPos) + 
-                    `\nconst ${propName} = computed(() => ${storeInfo.storeVarName}.${propName});` + 
-                    scriptContent.slice(insertPos);
+                  // Correct TypeScript syntax: computed<type>(() => ...) not computed(<type>() => ...)
+                  const computedCode = enableTypeScript 
+                    ? `\nconst ${propName} = computed<any>(() => ${storeInfo.storeVarName}.${propName});`
+                    : `\nconst ${propName} = computed(() => ${storeInfo.storeVarName}.${propName});`;
+                  scriptContent = scriptContent.slice(0, insertPos) + computedCode + scriptContent.slice(insertPos);
                 }
               }
             });
@@ -3636,6 +4622,9 @@ export async function fixPostMigrationIssues(
         const vueFunctions = ['ref', 'reactive', 'computed', 'watch', 'watchEffect', 'onMounted', 'onUnmounted', 'onBeforeMount', 'onBeforeUnmount', 'onUpdated', 'onBeforeUpdate', 'onActivated', 'onDeactivated', 'provide', 'inject', 'nextTick', 'defineProps', 'defineEmits', 'defineExpose'];
         const usedVueFunctions = vueFunctions.filter(func => {
           // Check if function is used (not just mentioned in comments/strings)
+          // Pattern: func( or func< or const x = func or func.value (for ref)
+          const usagePattern = new RegExp(`\\b${func}\\s*[<(]|const\\s+\\w+\\s*=\\s*${func}\\s*[<(]|\\w+\\.${func}\\b`, 'g');
+          return usagePattern.test(scriptContent);
           const funcPattern = new RegExp(`\\b${func}\\s*\\(|\\b${func}\\s*=|import.*${func}`, 'g');
           return funcPattern.test(scriptContent) && !scriptContent.match(new RegExp(`import\\s+.*\\{[^}]*\\b${func}\\b[^}]*\\}\\s+from\\s+['"]vue['"]`));
         });
@@ -3925,11 +4914,238 @@ export async function fixPostMigrationIssues(
           }
         }
         
+        // Fix: Remove TypeScript syntax from JavaScript files (GENERIC)
+        // Pattern: (value as string) or (value as number) in files without lang="ts"
+        // Check if script tag has lang="ts" or lang="typescript"
+        const scriptTagMatch = fixedContent.match(/<script\s+setup[^>]*>/);
+        const hasTypeScriptLang = scriptTagMatch && /lang\s*=\s*["']ts["']|lang\s*=\s*["']typescript["']/.test(scriptTagMatch[0]);
+        
+        if (!enableTypeScript && !hasTypeScriptLang) {
+          // Remove TypeScript type assertions: (value as string) -> String(value) or just value
+          // Pattern: (expression as type) - handles nested parentheses and complex expressions
+          // More robust pattern that handles: (route.params.id as string), ((value) as string), etc.
+          const typeAssertionPattern = /\(([^()]+|\([^()]*\)+)\s+as\s+(\w+)\)/g;
+          let typeAssertionMatch;
+          const processedAssertions = new Set<string>();
+          
+          while ((typeAssertionMatch = typeAssertionPattern.exec(scriptContent)) !== null) {
+            const [fullMatch, expression, type] = typeAssertionMatch;
+            
+            // Skip if already processed (avoid infinite loops)
+            if (processedAssertions.has(fullMatch)) continue;
+            processedAssertions.add(fullMatch);
+            
+            // Convert TypeScript assertion to JavaScript conversion
+            let replacement: string;
+            const trimmedExpr = expression.trim();
+            
+            if (type === 'string') {
+              // Use String() for conversion, but handle edge cases
+              if (trimmedExpr.includes('||')) {
+                // For expressions like: props.id || (route.params.id as string)
+                // Replace just the assertion part: (route.params.id as string) -> String(route.params.id || '')
+                replacement = `String(${trimmedExpr} || '')`;
+              } else {
+                replacement = `String(${trimmedExpr})`;
+              }
+            } else if (type === 'number') {
+              replacement = `Number(${trimmedExpr})`;
+            } else if (type === 'boolean') {
+              replacement = `Boolean(${trimmedExpr})`;
+            } else {
+              // For other types, just remove the assertion (keep the expression)
+              replacement = trimmedExpr;
+            }
+            
+            scriptContent = scriptContent.replace(fullMatch, replacement);
+            result.fixed = true;
+            result.fixes.push(`Removed TypeScript type assertion 'as ${type}' from JavaScript file (generic fix)`);
+          }
+          
+          // Fix: Remove TypeScript generic syntax from JavaScript files (GENERIC)
+          // Pattern: computed<any>(() => ...), ref<number>(value), reactive<Type>({...})
+          // This removes type parameters like <any>, <string>, <number>, etc.
+          const genericPatterns = [
+            /(computed)<[^>]+>/g,
+            /(ref)<[^>]+>/g,
+            /(reactive)<[^>]+>/g,
+            /(computed)<[^>]+>/g,
+            /(defineStore)<[^>]+>/g,
+            /(defineComponent)<[^>]+>/g,
+            /(defineProps)<[^>]+>/g,
+            /(defineEmits)<[^>]+>/g,
+          ];
+          
+          genericPatterns.forEach(pattern => {
+            let genericMatch;
+            const processedGenerics = new Set<string>();
+            
+            while ((genericMatch = pattern.exec(scriptContent)) !== null) {
+              const [fullMatch, functionName] = genericMatch;
+              
+              // Skip if already processed
+              if (processedGenerics.has(fullMatch)) continue;
+              processedGenerics.add(fullMatch);
+              
+              // Remove the generic type parameter: computed<any> -> computed
+              const fixed = functionName;
+              scriptContent = scriptContent.replace(fullMatch, fixed);
+              result.fixed = true;
+              result.fixes.push(`Removed TypeScript generic '<...>' from ${functionName} in JavaScript file (generic fix)`);
+            }
+          });
+        }
+        
+        // Fix: Remove extra closing braces/parentheses before </script> (GENERIC)
+        // Pattern: });</script> or });</script> where there's an extra closing
+        // This detects malformed code blocks before script closing tag
+        const scriptEndPattern = /([^}]+)(\}\)+)\s*<\/script>/;
+        const scriptEndMatch = scriptContent.match(scriptEndPattern);
+        if (scriptEndMatch) {
+          const beforeEnd = scriptEndMatch[1];
+          const extraClosings = scriptEndMatch[2];
+          
+          // Check if there are unmatched opening braces/parentheses
+          const openBraces = (beforeEnd.match(/\{/g) || []).length;
+          const closeBraces = (beforeEnd.match(/\}/g) || []).length;
+          const openParens = (beforeEnd.match(/\(/g) || []).length;
+          const closeParens = (beforeEnd.match(/\)/g) || []).length;
+          
+          // If we have extra closings and they match the imbalance, remove them
+          if (extraClosings.length > 1 && 
+              (openBraces - closeBraces === extraClosings.match(/\}/g)?.length ||
+               openParens - closeParens === extraClosings.match(/\)/g)?.length)) {
+            scriptContent = scriptContent.replace(scriptEndMatch[0], beforeEnd + '</script>');
+            result.fixed = true;
+            result.fixes.push('Removed extra closing braces/parentheses before script closing tag');
+          }
+        }
+        
+        // Fix: Correct malformed router.push with broken template literals (GENERIC)
+        // Pattern: router.push({ path: `/route/${param\n  }\n}` }) - broken template literal with newlines
+        // This is GENERIC - works for any route path and parameter name
+        const brokenTemplateLiteralPattern = /router\.push\s*\(\s*\{\s*path\s*:\s*[`'"]\/[^`'"]*\$\{(\w+)\s*\n\s*\}\s*\n\s*\}[`'"]/g;
+        let brokenTemplateMatch;
+        const processedBrokenPushes = new Set<string>();
+        
+        while ((brokenTemplateMatch = brokenTemplateLiteralPattern.exec(scriptContent)) !== null) {
+          const [fullMatch, paramName] = brokenTemplateMatch;
+          
+          // Skip if already processed
+          if (processedBrokenPushes.has(fullMatch)) continue;
+          processedBrokenPushes.add(fullMatch);
+          
+          // GENERIC: Extract route path from the broken pattern dynamically
+          const routeMatch = fullMatch.match(/path\s*:\s*[`'"]\/(\w+)\//);
+          let routePath: string;
+          
+          if (routeMatch) {
+            routePath = `/${routeMatch[1]}`;
+          } else {
+            // Try to infer from function name or context
+            const functionContext = scriptContent.substring(0, brokenTemplateMatch.index);
+            const functionMatch = functionContext.match(/const\s+(\w+)\s*=\s*\([^)]+\)\s*=>/);
+            if (functionMatch) {
+              const functionName = functionMatch[1].toLowerCase();
+              // Common patterns: goToPost -> /blog, navigateToUser -> /user, etc.
+              if (functionName.includes('post')) {
+                routePath = '/blog';
+              } else if (functionName.includes('user')) {
+                routePath = '/user';
+              } else if (functionName.includes('item')) {
+                routePath = '/item';
+              } else {
+                // Generic: extract base from function name
+                const baseName = functionName.replace(/^(go|navigate|open|view)/, '').replace(/to$/, '');
+                routePath = `/${baseName}`;
+              }
+            } else {
+              // Fallback: use generic /route
+              routePath = '/route';
+            }
+          }
+          
+          const fixedPush = `router.push({ path: \`${routePath}/\${${paramName}}\` })`;
+          scriptContent = scriptContent.replace(fullMatch, fixedPush);
+          result.fixed = true;
+          result.fixes.push(`Fixed broken template literal in router.push for ${routePath} (generic fix)`);
+        }
+        
         // Update fixedContent with final scriptContent
         fixedContent = fixedContent.replace(
           /(<script\s+setup[^>]*>)([\s\S]*?)(<\/script>)/,
           `$1${scriptContent}$3`,
         );
+      }
+    }
+  }
+  
+  // Fix TypeScript syntax in JavaScript files (non-Vue files)
+  // This handles .js and .ts files that are not Vue components
+  if (!isVueFile && (filePath.endsWith('.js') || filePath.endsWith('.ts'))) {
+    // Only process if TypeScript is NOT enabled (to avoid removing types from TS files)
+    if (!enableTypeScript) {
+      // Remove TypeScript generic syntax: computed<any>(), ref<number>(), etc.
+      const genericPatterns = [
+        /(computed)<[^>]+>/g,
+        /(ref)<[^>]+>/g,
+        /(reactive)<[^>]+>/g,
+        /(defineStore)<[^>]+>/g,
+        /(defineComponent)<[^>]+>/g,
+        /(defineProps)<[^>]+>/g,
+        /(defineEmits)<[^>]+>/g,
+      ];
+      
+      genericPatterns.forEach(pattern => {
+        let genericMatch;
+        const processedGenerics = new Set<string>();
+        
+        while ((genericMatch = pattern.exec(fixedContent)) !== null) {
+          const [fullMatch, functionName] = genericMatch;
+          
+          // Skip if already processed
+          if (processedGenerics.has(fullMatch)) continue;
+          processedGenerics.add(fullMatch);
+          
+          // Remove the generic type parameter: computed<any> -> computed
+          const fixed = functionName;
+          fixedContent = fixedContent.replace(fullMatch, fixed);
+          result.fixed = true;
+          result.fixes.push(`Removed TypeScript generic '<...>' from ${functionName} in JavaScript file (generic fix)`);
+        }
+      });
+      
+      // Remove TypeScript type assertions: (value as string) -> String(value)
+      const typeAssertionPattern = /\(([^()]+|\([^()]*\)+)\s+as\s+(\w+)\)/g;
+      let typeAssertionMatch;
+      const processedAssertions = new Set<string>();
+      
+      while ((typeAssertionMatch = typeAssertionPattern.exec(fixedContent)) !== null) {
+        const [fullMatch, expression, type] = typeAssertionMatch;
+        
+        // Skip if already processed
+        if (processedAssertions.has(fullMatch)) continue;
+        processedAssertions.add(fullMatch);
+        
+        // Convert TypeScript assertion to JavaScript conversion
+        let replacement: string;
+        const trimmedExpr = expression.trim();
+        
+        if (type === 'string') {
+          replacement = trimmedExpr.includes('||') 
+            ? `String(${trimmedExpr} || '')` 
+            : `String(${trimmedExpr})`;
+        } else if (type === 'number') {
+          replacement = `Number(${trimmedExpr})`;
+        } else if (type === 'boolean') {
+          replacement = `Boolean(${trimmedExpr})`;
+        } else {
+          replacement = trimmedExpr;
+        }
+        
+        fixedContent = fixedContent.replace(fullMatch, replacement);
+        result.fixed = true;
+        result.fixes.push(`Removed TypeScript type assertion 'as ${type}' from JavaScript file (generic fix)`);
       }
     }
   }

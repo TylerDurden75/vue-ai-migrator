@@ -9,6 +9,7 @@ import { getDiffSummary } from "./utils/codegen";
 import chalk from "chalk";
 import ora from "ora";
 import { detectVueVersion, analyzeProject } from "./utils/analysis";
+import { installDependencies } from "./utils/migration/dependency-checker";
 import * as path from "path";
 import * as fs from "fs/promises";
 
@@ -75,12 +76,22 @@ program
     "Enable TypeScript type annotations in migrated code",
     false,
   )
-  .action(async (path: string, options) => {
+  .option(
+    "--install",
+    "Automatically install dependencies after migration",
+    false,
+  )
+  .option(
+    "--clean-install",
+    "Remove node_modules and package-lock.json before reinstalling dependencies",
+    false,
+  )
+  .action(async (projectPath: string, options) => {
     const spinner = ora("Analyzing project...").start();
 
     try {
       // Detect Vue version
-      const vueVersion = await detectVueVersion(path);
+      const vueVersion = await detectVueVersion(projectPath);
 
       if (!vueVersion || vueVersion.major !== 2) {
         spinner.fail("This project does not appear to be a Vue 2 project");
@@ -143,7 +154,7 @@ program
       }
 
       const migrationOptions: MigrationOptions = {
-        projectPath: path,
+        projectPath: projectPath,
         aiApiKey: apiKey,
         aiProvider: provider,
         dryRun: options.dryRun || false,
@@ -241,12 +252,79 @@ program
         );
       }
       
+      // Handle dependency installation after migration
+      if (!options.dryRun && (options.install || options.cleanInstall)) {
+        if (options.cleanInstall) {
+          spinner.start("Cleaning node_modules and package-lock.json...");
+          try {
+            const nodeModulesPath = path.join(projectPath, "node_modules");
+            const packageLockPath = path.join(projectPath, "package-lock.json");
+            
+            try {
+              await fs.rm(nodeModulesPath, { recursive: true, force: true });
+            } catch {
+              // node_modules might not exist
+            }
+            
+            try {
+              await fs.unlink(packageLockPath);
+            } catch {
+              // package-lock.json might not exist
+            }
+            
+            spinner.succeed("Cleaned node_modules and package-lock.json");
+          } catch (error) {
+            spinner.fail("Failed to clean node_modules");
+            console.log(
+              chalk.yellow(
+                `   Continuing with npm install anyway...`,
+              ),
+            );
+          }
+        }
+
+        spinner.start("Installing dependencies...");
+        const installResult = await installDependencies(projectPath, "npm");
+        
+        if (installResult.success) {
+          spinner.succeed("Dependencies installed successfully!");
+          console.log(
+            chalk.green(
+              `\n✓ All dependencies have been installed.`,
+            ),
+          );
+          if (options.typescript) {
+            console.log(
+              chalk.green(
+                `   TypeScript dependencies are now available.`,
+              ),
+            );
+          }
+        } else {
+          spinner.fail("Failed to install dependencies");
+          console.log(
+            chalk.red(
+              `\n✗ Error: ${installResult.error || "Unknown error"}`,
+            ),
+          );
+          console.log(
+            chalk.yellow(
+              `   Please run 'npm install' manually to install dependencies.`,
+            ),
+          );
+        }
+      }
+      
       // Show helpful next steps
       if (result.filesModified > 0) {
         console.log(chalk.blue("\n📝 Next steps:"));
         console.log(chalk.gray("  1. Review the migrated code"));
         console.log(chalk.gray("  2. Run your tests: npm test"));
-        console.log(chalk.gray("  3. Install dependencies: npm install"));
+        if (!options.install && !options.cleanInstall) {
+          console.log(chalk.gray("  3. Install dependencies: npm install"));
+        } else {
+          console.log(chalk.green("  3. ✓ Dependencies already installed"));
+        }
         if (result.classification && result.classification.complex > 0 && (!shouldUseAI || !apiKey)) {
           console.log(chalk.yellow("  4. Consider using --ai for complex files if needed"));
         }
@@ -410,6 +488,8 @@ program
   .argument("<path>", "Path to the project to rollback")
   .option("-a, --all", "Rollback all files", false)
   .option("-f, --file <file>", "Rollback a specific file")
+  .option("--install", "Automatically reinstall dependencies after rollback", false)
+  .option("--clean-install", "Remove node_modules and package-lock.json before reinstalling", false)
   .action(async (projectPath: string, options) => {
     const spinner = ora("Loading backups...").start();
 
@@ -457,7 +537,7 @@ program
           });
         }
 
-        // Warn about package.json restoration
+        // Handle package.json restoration and dependency reinstallation
         const packageJsonPath = path.resolve(projectPath, "package.json");
         const hasPackageBackup = rollbackManager.hasBackup(packageJsonPath);
         if (hasPackageBackup) {
@@ -468,9 +548,77 @@ program
           );
           console.log(
             chalk.yellow(
-              `   Run 'npm install' to restore the original dependencies.`,
+              `   Your node_modules may still contain Vue 3 dependencies, which can cause errors.`,
             ),
           );
+
+          if (options.install || options.cleanInstall) {
+            // Automatically reinstall dependencies
+            if (options.cleanInstall) {
+              spinner.start("Cleaning node_modules and package-lock.json...");
+              try {
+                const nodeModulesPath = path.join(projectPath, "node_modules");
+                const packageLockPath = path.join(projectPath, "package-lock.json");
+                
+                try {
+                  await fs.rm(nodeModulesPath, { recursive: true, force: true });
+                } catch {
+                  // node_modules might not exist
+                }
+                
+                try {
+                  await fs.unlink(packageLockPath);
+                } catch {
+                  // package-lock.json might not exist
+                }
+                
+                spinner.succeed("Cleaned node_modules and package-lock.json");
+              } catch (error) {
+                spinner.fail("Failed to clean node_modules");
+                console.log(
+                  chalk.yellow(
+                    `   Continuing with npm install anyway...`,
+                  ),
+                );
+              }
+            }
+
+            spinner.start("Reinstalling dependencies...");
+            const installResult = await installDependencies(projectPath, "npm");
+            
+            if (installResult.success) {
+              spinner.succeed("Dependencies reinstalled successfully!");
+              console.log(
+                chalk.green(
+                  `\n✓ All dependencies have been restored to match Vue 2 requirements.`,
+                ),
+              );
+            } else {
+              spinner.fail("Failed to reinstall dependencies");
+              console.log(
+                chalk.red(
+                  `\n✗ Error: ${installResult.error || "Unknown error"}`,
+                ),
+              );
+              console.log(
+                chalk.yellow(
+                  `   Please run 'npm install' manually to restore dependencies.`,
+                ),
+              );
+            }
+          } else {
+            // Show warning and instructions
+            console.log(
+              chalk.red(
+                `   ⚠️  CRITICAL: You MUST run 'npm install' to restore the correct dependencies.`,
+              ),
+            );
+            console.log(
+              chalk.yellow(
+                `   Tip: Use '--install' to automatically reinstall dependencies, or '--clean-install' to clean and reinstall.`,
+              ),
+            );
+          }
         }
       }
     } catch (error) {
