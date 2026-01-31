@@ -3849,6 +3849,36 @@ export async function fixPostMigrationIssues(
           result.fixed = true;
           result.fixes.push(`Fixed complex malformed watch statement with extra braces`);
         }
+        
+        // Pattern 4: watch(() => ..., param => { if (...) { { code } }) - pattern with extra braces and missing closing
+        // More generic pattern that handles: watch(() => blogId.value, newId => { if (...) { { blogStore.fetchPost(parseInt(newId) } })
+        const genericDoubleBracePattern = /watch\s*\(([^,]+),\s*(\w+)\s*=>\s*\{\s*(if\s*\([^)]+\)\s*)\{\s*\{\s*([^}]*\w+\([^)]*\)[^}]*)\s*\}\s*\}\)/g;
+        let genericDoubleBraceMatch;
+        while ((genericDoubleBraceMatch = genericDoubleBracePattern.exec(scriptContent)) !== null) {
+          const watchSource = genericDoubleBraceMatch[1].trim();
+          const paramName = genericDoubleBraceMatch[2];
+          const ifCondition = genericDoubleBraceMatch[3].trim();
+          let watchBody = genericDoubleBraceMatch[4].trim();
+          
+          // Count parentheses to fix missing closing ones
+          const openParens = (watchBody.match(/\(/g) || []).length;
+          const closeParens = (watchBody.match(/\)/g) || []).length;
+          
+          // Add missing closing parentheses
+          for (let i = 0; i < openParens - closeParens; i++) {
+            watchBody += ')';
+          }
+          
+          // Add semicolon if missing
+          if (!watchBody.endsWith(';') && !watchBody.endsWith(')')) {
+            watchBody += ';';
+          }
+          
+          const fixedWatch = `watch(${watchSource}, ${paramName} => {\n  ${ifCondition}{\n    ${watchBody}\n  }\n})`;
+          scriptContent = scriptContent.replace(genericDoubleBraceMatch[0], fixedWatch);
+          result.fixed = true;
+          result.fixes.push(`Fixed generic malformed watch statement with extra braces and missing parentheses`);
+        }
       }
       
       if (scriptContent.includes('parseInt') && scriptContent.includes('watch')) {
@@ -5069,6 +5099,20 @@ export async function fixPostMigrationIssues(
           scriptContent = scriptContent.replace(fullMatch, fixedPush);
           result.fixed = true;
           result.fixes.push(`Fixed broken template literal in router.push for ${routePath} (generic fix)`);
+        }
+        
+        // Fix: Remove extra closing parentheses/braces after router.push (GENERIC)
+        // Pattern: router.push({ path: ... }) }) - extra closing parenthesis
+        // Pattern: router.push({ path: ... }) } - extra closing brace
+        const extraClosingPattern = /router\.push\s*\(\s*\{\s*path\s*:\s*[`'"][^`'"]+[`'"]\s*\}\s*\)\s*([\)\}]+)/g;
+        let extraClosingMatch;
+        while ((extraClosingMatch = extraClosingPattern.exec(scriptContent)) !== null) {
+          const [fullMatch, extraClosings] = extraClosingMatch;
+          // Remove extra closings: router.push({ path: ... }) }) -> router.push({ path: ... })
+          const fixed = fullMatch.replace(extraClosings, '');
+          scriptContent = scriptContent.replace(fullMatch, fixed);
+          result.fixed = true;
+          result.fixes.push(`Removed extra closing parentheses/braces after router.push (generic fix)`);
         }
         
         // Update fixedContent with final scriptContent
