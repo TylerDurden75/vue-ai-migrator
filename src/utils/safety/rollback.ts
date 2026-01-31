@@ -34,18 +34,51 @@ export class RollbackManager {
 
   /**
    * Restore a file from backup
+   * Improved path matching: handles both absolute and relative paths
    */
   async restoreFile(filePath: string): Promise<boolean> {
-    // Try exact path first
-    let backup = this.backups.get(filePath);
-
-    // If not found, try to find by filename (for relative/absolute path differences)
+    // Normalize the file path for comparison
+    const normalizedPath = path.normalize(filePath);
+    
+    // Try exact path first (normalized)
+    let backup = this.backups.get(normalizedPath);
+    
+    // If not found, try to find by matching paths (handles relative/absolute differences)
     if (!backup) {
-      const fileName = path.basename(filePath);
+      // Try exact match with different path formats
       for (const [backupPath, backupInfo] of this.backups.entries()) {
-        if (path.basename(backupPath) === fileName) {
+        const normalizedBackupPath = path.normalize(backupPath);
+        
+        // Match by exact normalized path
+        if (normalizedBackupPath === normalizedPath) {
           backup = backupInfo;
           break;
+        }
+        
+        // Match by relative path (if backupPath is relative and filePath is absolute)
+        if (!path.isAbsolute(backupPath) && path.isAbsolute(filePath)) {
+          const projectRoot = path.dirname(this.backupDir);
+          const resolvedBackupPath = path.resolve(projectRoot, backupPath);
+          if (path.normalize(resolvedBackupPath) === normalizedPath) {
+            backup = backupInfo;
+            break;
+          }
+        }
+        
+        // Match by filename and parent directory structure
+        const fileName = path.basename(filePath);
+        const backupFileName = path.basename(backupPath);
+        if (fileName === backupFileName) {
+          // Also check if parent directories match (more reliable than filename only)
+          const fileParent = path.dirname(filePath);
+          const backupParent = path.isAbsolute(backupPath) 
+            ? path.dirname(backupPath)
+            : path.resolve(path.dirname(this.backupDir), path.dirname(backupPath));
+          
+          if (path.normalize(fileParent) === path.normalize(backupParent)) {
+            backup = backupInfo;
+            break;
+          }
         }
       }
     }
@@ -117,6 +150,7 @@ export class RollbackManager {
 
       // Load all backups and merge them (most recent takes precedence)
       const allBackups = new Map<string, BackupInfo>();
+      const projectRoot = path.dirname(this.backupDir);
 
       for (const backupFile of backupFiles.sort()) {
         try {
@@ -127,10 +161,24 @@ export class RollbackManager {
           const backupData = JSON.parse(backupContent);
 
           for (const backup of backupData) {
-            // Only add if not already present (older backups)
-            if (!allBackups.has(backup.filePath)) {
-              allBackups.set(backup.filePath, {
-                filePath: backup.filePath,
+            // Normalize file path: convert relative paths to absolute paths
+            let normalizedPath = backup.filePath;
+            
+            // If path is relative and contains project name prefix, remove it
+            if (!path.isAbsolute(normalizedPath)) {
+              // Remove project name prefix if present (e.g., "test-project/src/App.vue" -> "src/App.vue")
+              normalizedPath = normalizedPath.replace(/^[^/]+\//, '');
+              // Resolve relative to project root
+              normalizedPath = path.resolve(projectRoot, normalizedPath);
+            }
+            
+            // Normalize the path (remove redundant separators, resolve . and ..)
+            normalizedPath = path.normalize(normalizedPath);
+            
+            // Use normalized path as key
+            if (!allBackups.has(normalizedPath)) {
+              allBackups.set(normalizedPath, {
+                filePath: normalizedPath, // Store normalized absolute path
                 originalContent: backup.originalContent,
                 timestamp: new Date(backup.timestamp),
               });
@@ -174,16 +222,34 @@ export class RollbackManager {
 
   /**
    * Check if a file has a backup
+   * Improved: better path matching
    */
   hasBackup(filePath: string): boolean {
-    if (this.backups.has(filePath)) {
+    const normalizedPath = path.normalize(filePath);
+    
+    if (this.backups.has(normalizedPath)) {
       return true;
     }
-    // Check by filename
-    const fileName = path.basename(filePath);
+    
+    // Check by normalized path matching
     for (const backupPath of this.backups.keys()) {
-      if (path.basename(backupPath) === fileName) {
+      const normalizedBackupPath = path.normalize(backupPath);
+      if (normalizedBackupPath === normalizedPath) {
         return true;
+      }
+      
+      // Check by filename and parent directory
+      const fileName = path.basename(filePath);
+      const backupFileName = path.basename(backupPath);
+      if (fileName === backupFileName) {
+        const fileParent = path.dirname(filePath);
+        const backupParent = path.isAbsolute(backupPath) 
+          ? path.dirname(backupPath)
+          : path.resolve(path.dirname(this.backupDir), path.dirname(backupPath));
+        
+        if (path.normalize(fileParent) === path.normalize(backupParent)) {
+          return true;
+        }
       }
     }
     return false;

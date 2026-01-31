@@ -69,7 +69,7 @@ export async function migrate(
     aiApiKey,
     aiProvider = "openai",
     dryRun = false,
-    useAI = true,
+    useAI = false, // AI is now opt-in by default (free mode)
     outputReport = "migration-report.json",
     enableRollback = true,
     migratePackageJson: shouldMigratePackage = true,
@@ -123,6 +123,11 @@ export async function migrate(
       ? new RollbackManager(projectPath)
       : null;
     const cacheManager = useCache ? new CacheManager(projectPath) : null;
+    
+    // Load cache early for better performance
+    if (cacheManager) {
+      await cacheManager.loadCache();
+    }
 
     // Track classification and diffs
     const fileReports: FileReport[] = [];
@@ -197,19 +202,25 @@ export async function migrate(
     }
 
     // Process files in parallel batches for better performance
-    // Increased batch size for better scalability
-    const BATCH_SIZE = Math.min(
-      20,
-      Math.max(10, Math.floor(vueFiles.length / 4) || 10),
-    );
+    // Optimized batch size based on project size and available resources
+    // Smaller batches for large projects to avoid memory issues
+    const getOptimalBatchSize = (fileCount: number): number => {
+      if (fileCount < 50) return 20; // Small projects: larger batches
+      if (fileCount < 200) return 15; // Medium projects: medium batches
+      if (fileCount < 500) return 10; // Large projects: smaller batches
+      return 8; // Very large projects: small batches to avoid memory pressure
+    };
+    
+    const BATCH_SIZE = getOptimalBatchSize(vueFiles.length);
     const batches: string[][] = [];
     for (let i = 0; i < vueFiles.length; i += BATCH_SIZE) {
       batches.push(vueFiles.slice(i, i + BATCH_SIZE));
     }
 
     // Process batches sequentially, files within batch in parallel
+    // Use Promise.allSettled for better error handling and to continue on errors
     for (const batch of batches) {
-      await Promise.all(
+      await Promise.allSettled(
         batch.map(async (filePath) => {
           try {
             const content = await safeReadFile(filePath);

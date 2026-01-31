@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2025-01-XX
+
+### 🎉 Major Changes
+
+- **🆓 Free Mode by Default**: AI is now **opt-in** instead of opt-out. No API key required for basic migrations!
+  - AST transformations work without any API key
+  - Use `--ai` flag to enable AI assistance for complex cases
+  - Reduces barrier to entry and makes the tool accessible to everyone
+
+### Added
+
+- **Free Mode**: Run migrations without API keys using AST transformations only
+- **`--ai` / `--use-ai` flag**: Explicitly enable AI assistance (requires API key)
+- **Improved user messages**: Clear indication of which mode is being used
+- **Better error handling**: Graceful fallback when AI is requested but no key is provided
+
+### Changed
+
+- **Default behavior**: `useAI` is now `false` by default (was `true`)
+- **CLI options**: `--no-ai` is now the default behavior (still available for explicit disabling)
+- **Documentation**: Updated README to emphasize free mode and make AI optional
+
+### Improved
+
+- **User experience**: Clearer messaging about free vs AI-assisted mode
+- **Adoption**: Lower barrier to entry - no API key needed to get started
+- **Positioning**: Better market positioning as "free by default" tool
+
 ## [0.5.0] - 2025-01-28
 
 ### Added

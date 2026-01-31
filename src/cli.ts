@@ -17,9 +17,9 @@ const program = new Command();
 program
   .name("vue-ai-migrator")
   .description(
-    "Automatic Vue 2 → Vue 3 migration with codemods + AI combination",
+    "Automatic Vue 2 → Vue 3 migration - Free mode by default (AST only), optional AI assistance",
   )
-  .version("0.5.0");
+  .version("0.6.0");
 
 program
   .command("migrate")
@@ -49,7 +49,12 @@ program
     "Output file for the report",
     "migration-report.json",
   )
-  .option("--no-ai", "Disable AI usage")
+  .option(
+    "--ai, --use-ai",
+    "Enable AI assistance for complex migrations (requires API key)",
+    false,
+  )
+  .option("--no-ai", "Explicitly disable AI usage (default behavior)")
   .option(
     "--transformations <list>",
     "List of transformations to apply (comma-separated)",
@@ -109,13 +114,31 @@ program
         }
       }
 
-      // Warn if AI is enabled but no key provided
-      if (!options.noAi && !apiKey) {
+      // Determine if AI should be used
+      // AI is enabled only if explicitly requested with --ai/--use-ai flag
+      const shouldUseAI = (options.ai || options.useAi) && !options.noAi;
+      
+      // Warn if AI is requested but no key provided
+      if (shouldUseAI && !apiKey) {
         spinner.warn(
-          "AI is enabled but no API key found. Use --ai-api-key or set environment variable.",
+          "AI assistance requested but no API key found. AI features will be disabled.",
         );
         spinner.info(
-          `For ${provider}, use: ${provider === "openai" ? "OPENAI_API_KEY" : provider === "mistral" ? "MISTRAL_API_KEY" : "ANTHROPIC_API_KEY"}`,
+          `To enable AI, set API key: ${provider === "openai" ? "OPENAI_API_KEY" : provider === "mistral" ? "MISTRAL_API_KEY" : "ANTHROPIC_API_KEY"}`,
+        );
+        spinner.info(
+          "Continuing with AST-only migration (free mode)...",
+        );
+      }
+
+      // Show mode information
+      if (!shouldUseAI || !apiKey) {
+        spinner.info(
+          chalk.blue("Running in free mode (AST transformations only, no AI required)"),
+        );
+      } else {
+        spinner.info(
+          chalk.blue("AI assistance enabled for complex migrations"),
         );
       }
 
@@ -124,7 +147,7 @@ program
         aiApiKey: apiKey,
         aiProvider: provider,
         dryRun: options.dryRun || false,
-        useAI: !options.noAi && !!apiKey,
+        useAI: shouldUseAI && !!apiKey, // Only enable if explicitly requested AND key is available
         outputReport: options.output,
         transformations: options.transformations
           ? options.transformations.split(",")
@@ -134,7 +157,11 @@ program
         enableTypeScript: options.typescript || false,
       };
 
-      spinner.start("Starting migration...");
+      if (shouldUseAI && apiKey) {
+        spinner.start("Starting migration with AI assistance...");
+      } else {
+        spinner.start("Starting migration (free mode - AST transformations only)...");
+      }
 
       const result = await migrate(migrationOptions);
 
@@ -152,15 +179,31 @@ program
       // Show classification summary if available
       if (result.classification) {
         console.log(chalk.cyan(`\n  Classification:`));
+        const total = result.classification.simple + result.classification.medium + result.classification.complex;
+        const freeModeCoverage = result.classification.simple + result.classification.medium;
+        const freeModePercentage = total > 0 ? Math.round((freeModeCoverage / total) * 100) : 0;
+        
         console.log(
-          chalk.green(`    🟢 Simple: ${result.classification.simple}`),
+          chalk.green(`    🟢 Simple: ${result.classification.simple} (free mode handles these)`),
         );
         console.log(
-          chalk.yellow(`    🟡 Medium: ${result.classification.medium}`),
+          chalk.yellow(`    🟡 Medium: ${result.classification.medium} (free mode usually handles these)`),
         );
         console.log(
-          chalk.red(`    🔴 Complex: ${result.classification.complex}`),
+          chalk.red(`    🔴 Complex: ${result.classification.complex} (may benefit from AI)`),
         );
+        
+        // Show free mode coverage
+        if (!shouldUseAI || !apiKey) {
+          console.log(
+            chalk.blue(`\n  💡 Free Mode Coverage: ${freeModePercentage}% of files can be migrated without AI`),
+          );
+          if (result.classification.complex > 0) {
+            console.log(
+              chalk.yellow(`  💡 Tip: ${result.classification.complex} complex file(s) detected. Consider using --ai for better results.`),
+            );
+          }
+        }
       }
 
       // Show diff summary in dry-run mode
@@ -196,6 +239,17 @@ program
             '\n💾 Backups created - use "vue-ai-migrator rollback" to restore',
           ),
         );
+      }
+      
+      // Show helpful next steps
+      if (result.filesModified > 0) {
+        console.log(chalk.blue("\n📝 Next steps:"));
+        console.log(chalk.gray("  1. Review the migrated code"));
+        console.log(chalk.gray("  2. Run your tests: npm test"));
+        console.log(chalk.gray("  3. Install dependencies: npm install"));
+        if (result.classification && result.classification.complex > 0 && (!shouldUseAI || !apiKey)) {
+          console.log(chalk.yellow("  4. Consider using --ai for complex files if needed"));
+        }
       }
     } catch (error) {
       spinner.fail("Error during migration");
@@ -254,15 +308,29 @@ program
         const classifications: Array<{ file: string; classification: any }> =
           [];
 
-        for (const file of analysis.vueFiles.slice(0, 20)) {
-          // Limit to 20 for display
-          try {
-            const content = await fs.readFile(file, "utf-8");
-            const classification = await classifier.classify(file, content);
-            classifications.push({ file, classification });
-          } catch (error) {
-            // Skip files that can't be read
-          }
+        // Optimized: Process classification in parallel batches
+        const filesToClassify = analysis.vueFiles.slice(0, 50); // Increased from 20 to 50
+        const classifyBatchSize = 10;
+        
+        for (let i = 0; i < filesToClassify.length; i += classifyBatchSize) {
+          const batch = filesToClassify.slice(i, i + classifyBatchSize);
+          const batchResults = await Promise.allSettled(
+            batch.map(async (file) => {
+              try {
+                const content = await fs.readFile(file, "utf-8");
+                const classification = await classifier.classify(file, content);
+                return { file, classification };
+              } catch (error) {
+                return null;
+              }
+            })
+          );
+          
+          batchResults.forEach((result) => {
+            if (result.status === 'fulfilled' && result.value) {
+              classifications.push(result.value);
+            }
+          });
         }
 
         spinner.succeed("Classification completed");
@@ -278,9 +346,23 @@ program
           (c) => c.classification.level === "complex",
         ).length;
 
-        console.log(chalk.green(`  🟢 Simple: ${simple}`));
-        console.log(chalk.yellow(`  🟡 Medium: ${medium}`));
-        console.log(chalk.red(`  🔴 Complex: ${complex}`));
+        const total = simple + medium + complex;
+        const freeModeCoverage = simple + medium;
+        const freeModePercentage = total > 0 ? Math.round((freeModeCoverage / total) * 100) : 0;
+        
+        console.log(chalk.green(`  🟢 Simple: ${simple} (free mode ✅)`));
+        console.log(chalk.yellow(`  🟡 Medium: ${medium} (free mode usually ✅)`));
+        console.log(chalk.red(`  🔴 Complex: ${complex} (may need AI)`));
+        
+        // Show free mode recommendation
+        console.log(chalk.blue(`\n  💡 Free Mode Coverage: ${freeModePercentage}%`));
+        if (freeModePercentage >= 80) {
+          console.log(chalk.green(`  ✅ Your project is well-suited for free mode!`));
+        } else if (freeModePercentage >= 50) {
+          console.log(chalk.yellow(`  ⚠️  Consider using --ai for complex files`));
+        } else {
+          console.log(chalk.yellow(`  💡 You may benefit from --ai flag for better results`));
+        }
 
         if (classifications.length > 0) {
           console.log(chalk.cyan("\n  Sample classifications:"));
@@ -292,8 +374,9 @@ program
                   ? "🟡"
                   : "🔴";
             const fileName = file.split("/").pop() || file;
+            const modeHint = classification.level === "complex" ? " (consider --ai)" : " (free mode OK)";
             console.log(
-              chalk.cyan(`    ${emoji} ${fileName}: ${classification.level}`),
+              chalk.cyan(`    ${emoji} ${fileName}: ${classification.level}${modeHint}`),
             );
             if (classification.reasons.length > 0) {
               console.log(

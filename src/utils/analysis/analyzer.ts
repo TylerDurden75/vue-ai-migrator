@@ -74,16 +74,34 @@ export async function analyzeProject(projectPath: string): Promise<ProjectAnalys
 
     analysis.vueFiles = vueFiles;
 
-    // Analyze Vue 2 patterns (sample first 20 files for performance)
-    const sampleSize = Math.min(20, vueFiles.length);
-    for (const filePath of vueFiles.slice(0, sampleSize)) {
-      try {
-        const content = await fs.readFile(filePath, 'utf-8');
-        const patterns = detectVue2Patterns(content);
-        analysis.vue2Patterns.push(...patterns);
-      } catch (error) {
-        // Ignore read errors
-      }
+    // Analyze Vue 2 patterns (optimized: parallel processing with smart sampling)
+    // For large projects, sample more files but process in parallel
+    const sampleSize = Math.min(
+      vueFiles.length < 50 ? vueFiles.length : Math.max(20, Math.floor(vueFiles.length * 0.1)),
+      vueFiles.length
+    );
+    const filesToAnalyze = vueFiles.slice(0, sampleSize);
+    
+    // Process in parallel batches for better performance
+    const analysisBatchSize = 10;
+    for (let i = 0; i < filesToAnalyze.length; i += analysisBatchSize) {
+      const batch = filesToAnalyze.slice(i, i + analysisBatchSize);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (filePath) => {
+          try {
+            const content = await fs.readFile(filePath, 'utf-8');
+            return detectVue2Patterns(content);
+          } catch (error) {
+            return [];
+          }
+        })
+      );
+      
+      batchResults.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          analysis.vue2Patterns.push(...result.value);
+        }
+      });
     }
 
     // Count components

@@ -98,6 +98,10 @@ export class MigrationClassifier {
 
     // Calculate confidence based on number of indicators
     const confidence = Math.min(0.95, 0.5 + reasons.length * 0.1);
+    
+    // Determine if AI is required and if it's auto-migratable
+    const requiresAI = level === 'complex';
+    const autoMigratable = level === 'simple' || level === 'medium';
 
     // Estimate time
     const estimatedTime = this.estimateTime(level, reasons.length);
@@ -107,8 +111,8 @@ export class MigrationClassifier {
       confidence,
       reasons,
       estimatedTime,
-      requiresAI: level === 'complex',
-      autoMigratable: level === 'simple' || level === 'medium',
+      requiresAI,
+      autoMigratable,
     };
   }
 

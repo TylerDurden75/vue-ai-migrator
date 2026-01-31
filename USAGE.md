@@ -22,6 +22,49 @@ npm install
 npm run build
 ```
 
+## 🆓 Free Mode vs AI Mode
+
+**vue-ai-migrator** works in two modes:
+
+### 🆓 Free Mode (Default) - Recommended for Most Projects
+
+**No API key required!** The tool uses AST transformations to migrate your code automatically.
+
+```bash
+# Just run it - works immediately, no setup needed!
+vue-ai-migrator migrate ./my-vue2-project
+```
+
+**What you get:**
+- ✅ Automatic AST-based transformations (~83% coverage)
+- ✅ Vuex → Pinia migration
+- ✅ Router 3 → Router 4 migration
+- ✅ Composition API conversion
+- ✅ Template transformations
+- ✅ Post-migration fixes
+- ✅ TypeScript support (with `--typescript`)
+
+**Perfect for:** Most Vue 2 projects with standard patterns.
+
+### 🤖 AI Mode (Optional) - For Complex Cases
+
+Enable AI assistance for complex migrations:
+
+```bash
+export OPENAI_API_KEY=sk-your-key
+vue-ai-migrator migrate ./my-vue2-project --ai
+```
+
+**What you get (in addition to free mode):**
+- ✅ AI-powered complex case handling
+- ✅ Automatic test generation
+- ✅ Migration planning with AI
+- ✅ Intelligent refactoring suggestions
+
+**Perfect for:** Projects with custom patterns, legacy code, or when you need extra help.
+
+> 💡 **Recommendation**: Start with free mode! Most projects migrate successfully without AI. Only use `--ai` if you encounter complex cases.
+
 ## 🚀 Basic Usage
 
 ### 1. Analyze a Vue 2 Project
@@ -39,7 +82,7 @@ This command will:
 - List detected Vue 2 patterns
 - Provide a complexity estimate
 
-**New in v0.5.0:** Use `--classify` to classify each file by complexity:
+**Use `--classify` to classify each file by complexity:**
 
 ```bash
 vue-ai-migrator analyze ./my-vue2-project --classify
@@ -47,30 +90,32 @@ vue-ai-migrator analyze ./my-vue2-project --classify
 
 This will show:
 
-- 🟢 Simple: Files that can be migrated automatically
-- 🟡 Medium: Files requiring validation
-- 🔴 Complex: Files requiring AI assistance
+- 🟢 Simple: Files that can be migrated automatically (free mode handles these)
+- 🟡 Medium: Files requiring validation (free mode usually handles these too)
+- 🔴 Complex: Files that might benefit from AI assistance
 
-### 2. Basic Migration (without AI)
+### 2. Basic Migration (Free Mode - Recommended)
 
-For a quick migration without using AI:
+**No API key needed!** Just run:
 
 ```bash
-vue-ai-migrator migrate ./my-vue2-project --no-ai
+vue-ai-migrator migrate ./my-vue2-project
 ```
 
-### 3. Migration with AI (recommended)
+This uses AST transformations and works for most projects.
 
-For complex migrations, use AI to handle difficult cases:
+### 3. Migration with AI (Optional)
+
+For complex migrations, enable AI assistance:
 
 ```bash
-vue-ai-migrator migrate ./my-vue2-project \
-  --ai-api-key <your-api-key> \
+export OPENAI_API_KEY=sk-your-key
+vue-ai-migrator migrate ./my-vue2-project --ai \
   --transformations "composition-api,script-setup" \
   --typescript
 ```
 
-**New in v0.5.0:**
+**New in v0.6.0:**
 
 - **Migration Classification**: Automatic complexity classification (🟢 Simple / 🟡 Medium / 🔴 Complex)
 - **Advanced AI Agent**: Multi-provider AI support with intelligent migration assistance

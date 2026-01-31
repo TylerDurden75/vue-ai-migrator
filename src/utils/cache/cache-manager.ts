@@ -21,9 +21,14 @@ export class CacheManager {
 
   /**
    * Calculate hash of file content
+   * Optimized: Use shorter hash for cache keys (16 chars is sufficient for collision avoidance)
    */
   private calculateHash(content: string): string {
-    return crypto.createHash('sha256').update(content).digest('hex').substring(0, 16);
+    // Use faster hash for large files - only hash first 10KB + length for performance
+    const sample = content.length > 10000 
+      ? content.substring(0, 10000) + content.length.toString()
+      : content;
+    return crypto.createHash('sha256').update(sample).digest('hex').substring(0, 16);
   }
 
   /**
@@ -86,9 +91,21 @@ export class CacheManager {
 
   /**
    * Save cache to disk
+   * Optimized: Only save if cache has changed, use compact JSON
    */
+  private lastSavedHash: string | null = null;
+  
   async saveCache(): Promise<void> {
     try {
+      // Quick check: only save if cache actually changed
+      const currentHash = crypto.createHash('md5')
+        .update(JSON.stringify(Array.from(this.cache.values())))
+        .digest('hex');
+      
+      if (this.lastSavedHash === currentHash) {
+        return; // No changes, skip save
+      }
+      
       await fs.mkdir(this.cacheDir, { recursive: true });
       
       const data = {
@@ -97,7 +114,9 @@ export class CacheManager {
         entries: Array.from(this.cache.values()),
       };
       
-      await fs.writeFile(this.cacheFile, JSON.stringify(data, null, 2));
+      // Use compact JSON (no formatting) for smaller file size
+      await fs.writeFile(this.cacheFile, JSON.stringify(data));
+      this.lastSavedHash = currentHash;
     } catch (error) {
       // Silently fail - cache is optional
     }

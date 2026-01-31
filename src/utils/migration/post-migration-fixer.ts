@@ -814,6 +814,133 @@ export async function fixPostMigrationIssues(
             result.issues.push(`Incomplete computed property detected: ${computedName} references undefined variable '${referencedVar}'. Could not auto-fix - manual fix required.`);
           }
         }
+        
+        // Pattern 3: ANY computed property that returns a simple array ref without filtering/sorting logic
+        // GENERIC PATTERN: Detects computed properties that just return a reactive array without transformation
+        // Works for: filteredPosts, sortedUsers, displayedItems, visibleProducts, etc.
+        // Pattern: const [ANY_NAME] = computed(() => arrayVar); where arrayVar is a reactive ref
+        // Should add filtering/sorting logic if filters exist
+        // This is TRULY generic - works with ANY naming convention
+        const simpleComputedPattern = /const\s+(\w+)\s*=\s*computed\s*\(\s*\(\)\s*=>\s*(\w+)\s*\)/g;
+        let simpleMatch;
+        const processedComputed = new Set<string>(); // Track already processed to avoid duplicates
+        
+        while ((simpleMatch = simpleComputedPattern.exec(fixedContent)) !== null) {
+          const [fullMatch, computedName, arrayVar] = simpleMatch;
+          
+          // Skip if already processed or if computedName === arrayVar (like allPosts = computed(() => allPosts))
+          if (processedComputed.has(computedName) || computedName === arrayVar) {
+            continue;
+          }
+          
+          // GENERIC: Check if filters exist in the store (any form: reactive(filters) or filters: {})
+          const hasFilters = /(?:const|let|var)\s+filters\s*=\s*reactive\s*\(/.test(fixedContent);
+          const hasFiltersObject = /filters\s*:\s*\{/.test(fixedContent);
+          
+          // TRULY GENERIC: Apply fix if:
+          // 1. filters exist in the store (reactive(filters) or filters: {})
+          // 2. arrayVar is a reactive variable (ref/reactive)
+          // 3. The computed just returns the array without any transformation (likely incomplete)
+          // 
+          // We check if filters are actually used/needed by:
+          // - Checking if computedName suggests transformation (filter, sort, display, etc.) OR
+          // - Checking if there's another computed that uses filters (indicating filters are meant to be used) OR
+          // - Checking if the computed name is different from arrayVar (suggests it should transform)
+          //
+          // This way, we avoid false positives like: allPosts = computed(() => posts) when filters exist but aren't meant for this computed
+          const computedNameLower = computedName.toLowerCase();
+          const arrayVarLower = arrayVar.toLowerCase();
+          
+          // Check if filters are used elsewhere in computed properties (indicating they should be used here too)
+          const filtersUsedInOtherComputed = /const\s+\w+\s*=\s*computed\s*\([^)]*filters/.test(fixedContent);
+          
+          // Check if computed name suggests transformation
+          const suggestsTransformation = 
+            computedNameLower.includes('filter') || 
+            computedNameLower.includes('sort') || 
+            computedNameLower.includes('display') || 
+            computedNameLower.includes('visible') ||
+            computedNameLower.includes('shown') ||
+            computedNameLower.includes('list');
+          
+          // Check if computed name is different from arrayVar (suggests it should transform the data)
+          // e.g., filteredPosts vs posts, sortedUsers vs users
+          const nameDiffersFromArrayVar = computedNameLower !== arrayVarLower && 
+                                          !computedNameLower.includes(arrayVarLower) &&
+                                          !arrayVarLower.includes(computedNameLower);
+          
+          // Apply fix if filters exist AND:
+          // - Name suggests transformation, OR
+          // - Filters are used in other computed properties, OR  
+          // - Name differs from arrayVar (suggests transformation intent)
+          const shouldApplyFix = (hasFilters || hasFiltersObject) && 
+                                reactiveVars.has(arrayVar) && 
+                                (suggestsTransformation || filtersUsedInOtherComputed || nameDiffersFromArrayVar);
+          
+          if (shouldApplyFix) {
+            processedComputed.add(computedName);
+            // GENERIC: Infer filter property names dynamically from filters object
+            let categoryFilter = 'category';
+            let searchFilter = 'search';
+            let categoryProperty = 'category'; // Property name in items to filter by
+            
+            // Try to detect filter property names from filters object
+            const filtersMatch = fixedContent.match(/filters\s*:\s*\{([^}]+)\}/);
+            if (filtersMatch) {
+              const filtersContent = filtersMatch[1];
+              // Detect category filter name (category, type, tag, etc.)
+              if (filtersContent.includes('category')) categoryFilter = 'category';
+              else if (filtersContent.includes('type')) categoryFilter = 'type';
+              else if (filtersContent.includes('tag')) categoryFilter = 'tag';
+              
+              // Detect search filter name (search, query, term, etc.)
+              if (filtersContent.includes('search')) searchFilter = 'search';
+              else if (filtersContent.includes('query')) searchFilter = 'query';
+              else if (filtersContent.includes('term')) searchFilter = 'term';
+            }
+            
+            // GENERIC: Infer category property name from arrayVar name
+            // e.g., posts → category, products → category, items → category
+            // Try to detect from context: if arrayVar is "posts", likely has "category" property
+            const arrayVarLower = arrayVar.toLowerCase();
+            if (arrayVarLower.includes('post') || arrayVarLower.includes('product') || arrayVarLower.includes('item')) {
+              categoryProperty = 'category';
+            } else if (arrayVarLower.includes('user')) {
+              categoryProperty = 'role'; // Common for users
+            }
+            
+            // Build filtered computed property with GENERIC logic
+            const arrayVarWithValue = `${arrayVar}.value`;
+            const fixedFilteredComputed = `const ${computedName} = computed(() => {
+    let result = ${arrayVarWithValue};
+    
+    // Filter by category/type/tag (generic property detection)
+    if (filters.${categoryFilter}) {
+      result = result.filter(item => item.${categoryProperty} === filters.${categoryFilter});
+    }
+    
+    // Filter by search query (searches in common text properties)
+    if (filters.${searchFilter}) {
+      const searchLower = filters.${searchFilter}.toLowerCase();
+      result = result.filter(item => 
+        item.title?.toLowerCase().includes(searchLower) ||
+        item.content?.toLowerCase().includes(searchLower) ||
+        item.name?.toLowerCase().includes(searchLower) ||
+        item.author?.toLowerCase().includes(searchLower) ||
+        item.description?.toLowerCase().includes(searchLower) ||
+        item.text?.toLowerCase().includes(searchLower) ||
+        (typeof item === 'string' && item.toLowerCase().includes(searchLower))
+      );
+    }
+    
+    return result;
+  })`;
+            
+            fixedContent = fixedContent.replace(fullMatch, fixedFilteredComputed);
+            result.fixed = true;
+            result.fixes.push(`Auto-fixed incomplete computed '${computedName}': added generic filtering logic based on filters object`);
+          }
+        }
       }
       
       // Pattern 2: Array.from(undefinedVar) in computed (single line or multi-line)
@@ -2071,6 +2198,91 @@ export async function fixPostMigrationIssues(
           }
         }
         
+        // Check for useRoute usage (similar to useRouter) - GENERIC
+        // Detect both useRoute() and const route = useRoute() patterns
+        const hasUseRouteUsage = /useRoute\s*\(|const\s+\w+\s*=\s*useRoute\s*\(/.test(scriptContent);
+        const hasUseRouteImport = /import\s+.*\{[^}]*\buseRoute\b[^}]*\}\s+from\s+['"]vue-router['"]/.test(scriptContent);
+        
+        if (hasUseRouteUsage && !hasUseRouteImport) {
+          // Check if vue-router import already exists
+          const vueRouterImportMatch = scriptContent.match(/import\s+.*\{([^}]*)\}\s+from\s+['"]vue-router['"]/);
+          if (vueRouterImportMatch) {
+            // Add useRoute to existing import
+            const existingImports = vueRouterImportMatch[1].split(',').map(i => i.trim()).filter(i => i);
+            if (!existingImports.includes('useRoute')) {
+              const newImports = [...existingImports, 'useRoute'];
+              scriptContent = scriptContent.replace(
+                /import\s+.*\{[^}]*\}\s+from\s+['"]vue-router['"]/,
+                `import { ${newImports.join(', ')} } from 'vue-router'`
+              );
+              result.fixed = true;
+              result.fixes.push("Added useRoute to existing vue-router import");
+            }
+          } else {
+            // Create new import
+            const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (importMatch) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$&import { useRoute } from 'vue-router';\n`
+              );
+            } else {
+              scriptContent = `import { useRoute } from 'vue-router';\n${scriptContent}`;
+            }
+            result.fixed = true;
+            result.fixes.push("Added missing useRoute import from vue-router");
+          }
+        }
+        
+        // Fix 8e: Secure router.push with params - Vue Router 4 requires params to be defined
+        // Pattern: router.push({ name: 'RouteName', params: { id: param } })
+        // Transform to: router.push({ path: '/route/param' }) - more reliable in Vue Router 4
+        // This avoids "Missing required param" errors when param is undefined/null
+        const routerPushWithParamsPattern = /router\.push\s*\(\s*\{\s*name\s*:\s*['"]([^'"]+)['"]\s*,\s*params\s*:\s*\{([^}]+)\}\s*\}\s*\)/g;
+        let routerPushMatch;
+        const routerPushMatches: Array<{ fullMatch: string; routeName: string; paramsString: string; paramName: string; paramValue: string }> = [];
+        
+        // First pass: collect all matches
+        while ((routerPushMatch = routerPushWithParamsPattern.exec(scriptContent)) !== null) {
+          const [fullMatch, routeName, paramsString] = routerPushMatch;
+          
+          // Extract param name and value from params object
+          // e.g., "id: postId" or "id: post.id"
+          const paramMatch = paramsString.match(/(\w+)\s*:\s*([^,}]+)/);
+          if (paramMatch) {
+            const [, paramName, paramValue] = paramMatch;
+            const trimmedParamValue = paramValue.trim();
+            routerPushMatches.push({ fullMatch, routeName, paramsString, paramName, paramValue: trimmedParamValue });
+          }
+        }
+        
+        // Second pass: replace matches (in reverse order to preserve positions)
+        for (const match of routerPushMatches.reverse()) {
+          const { fullMatch, routeName, paramName, paramValue } = match;
+          
+          // Try to infer path from route name (common patterns)
+          let inferredPath: string;
+          if (routeName.toLowerCase().includes('post') || routeName.toLowerCase().includes('detail')) {
+            // Common pattern: BlogPost -> /blog/:id
+            inferredPath = `/blog/\${${paramValue}}`;
+          } else if (routeName.toLowerCase().includes('user') || routeName.toLowerCase().includes('profile')) {
+            inferredPath = `/user/\${${paramValue}}`;
+          } else {
+            // Generic: use route name lowercase + param
+            // BlogPost -> blog-post -> /blog-post/:id
+            const routePath = routeName.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '');
+            inferredPath = `/${routePath}/\${${paramValue}}`;
+          }
+          
+          // Replace with path-based navigation (more reliable in Vue Router 4)
+          // Use template literal for dynamic path - simpler and more reliable
+          const pathBasedNavigation = `router.push({ path: \`${inferredPath}\` })`;
+          
+          scriptContent = scriptContent.replace(fullMatch, pathBasedNavigation);
+          result.fixed = true;
+          result.fixes.push(`Secured router.push with params for route '${routeName}' (Vue Router 4 compatibility - using path instead of name+params)`);
+        }
+        
         // Check for useIndexStore/useAppStore usage
         const indexStorePattern = /useIndexStore\(\)|useAppStore\(\)/g;
         if (indexStorePattern.test(scriptContent)) {
@@ -3317,6 +3529,48 @@ export async function fixPostMigrationIssues(
           return funcPattern.test(scriptContent) && !scriptContent.match(new RegExp(`import\\s+.*\\{[^}]*\\b${func}\\b[^}]*\\}\\s+from\\s+['"]vue['"]`));
         });
         
+        // Also check for vue-router functions (useRoute, useRouter) - GENERIC
+        // This is a comprehensive check that runs after all other fixes
+        const routerFunctions = ['useRoute', 'useRouter'];
+        const usedRouterFunctions = routerFunctions.filter(func => {
+          // Check if function is used (e.g., useRoute(), const route = useRoute(), useRoute().query, etc.)
+          const funcPattern = new RegExp(`\\b${func}\\s*\\(|const\\s+\\w+\\s*=\\s*${func}\\s*\\(|\\b${func}\\(\\)`, 'g');
+          const hasImport = scriptContent.match(new RegExp(`import\\s+.*\\{[^}]*\\b${func}\\b[^}]*\\}\\s+from\\s+['"]vue-router['"]`));
+          return funcPattern.test(scriptContent) && !hasImport;
+        });
+        
+        if (usedRouterFunctions.length > 0) {
+          // Check if vue-router import already exists
+          const vueRouterImportMatch = scriptContent.match(/import\s+.*\{([^}]*)\}\s+from\s+['"]vue-router['"]/);
+          if (vueRouterImportMatch) {
+            // Add missing functions to existing import
+            const existingImports = vueRouterImportMatch[1].split(',').map(i => i.trim()).filter(i => i.length > 0);
+            const missingImports = usedRouterFunctions.filter(f => !existingImports.includes(f));
+            if (missingImports.length > 0) {
+              const newImports = [...existingImports, ...missingImports];
+              scriptContent = scriptContent.replace(
+                /import\s+.*\{[^}]*\}\s+from\s+['"]vue-router['"]/,
+                `import { ${newImports.join(', ')} } from 'vue-router'`
+              );
+              result.fixed = true;
+              result.fixes.push(`Added missing vue-router imports: ${missingImports.join(', ')}`);
+            }
+          } else {
+            // Create new import
+            const importMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+            if (importMatch) {
+              scriptContent = scriptContent.replace(
+                /(import\s+[^;]+;[\s\n]*)+/,
+                `$&import { ${usedRouterFunctions.join(', ')} } from 'vue-router';\n`
+              );
+            } else {
+              scriptContent = `import { ${usedRouterFunctions.join(', ')} } from 'vue-router';\n${scriptContent}`;
+            }
+            result.fixed = true;
+            result.fixes.push(`Added missing vue-router imports: ${usedRouterFunctions.join(', ')}`);
+          }
+        }
+        
         if (usedVueFunctions.length > 0) {
           const vueImportMatch = scriptContent.match(/import\s+.*\{([^}]+)\}\s+from\s+['"]vue['"]/);
           if (vueImportMatch) {
@@ -3395,8 +3649,8 @@ export async function fixPostMigrationIssues(
             // If store is not used, remove declaration and import
             // BUT: Make sure we're not removing stores that are used but our pattern didn't catch
             // Double-check by looking for the store variable name in computed/watched expressions
-            const hasUsageInComputed = new RegExp(`computed\s*\(\s*\(\)\s*=>\s*.*\\b${storeVar}\\b`, 's').test(scriptContent);
-            const hasUsageInWatch = new RegExp(`watch\s*\([^)]*\\b${storeVar}\\b`, 's').test(scriptContent);
+            const hasUsageInComputed = new RegExp(`computed\\s*\\(\\s*\\(\\)\\s*=>\\s*.*\\b${storeVar}\\b`, 's').test(scriptContent);
+            const hasUsageInWatch = new RegExp(`watch\\s*\\([^)]*\\b${storeVar}\\b`, 's').test(scriptContent);
             const hasUsageInTemplate = scriptContent.includes(`{{ ${storeVar}`) || scriptContent.includes(`v-if="${storeVar}`) || scriptContent.includes(`v-for="${storeVar}`);
             
             if (actualUsages.length === 0 && !hasUsageInComputed && !hasUsageInWatch && !hasUsageInTemplate) {
