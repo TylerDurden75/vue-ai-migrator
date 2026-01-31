@@ -104,6 +104,25 @@ vue-ai-migrator migrate ./my-vue2-project
 
 This uses AST transformations and works for most projects.
 
+**After migration, reinstall dependencies:**
+
+After migrating, your `package.json` will be updated with Vue 3 dependencies. You should reinstall dependencies:
+
+```bash
+# Option 1: Automatic reinstall after migration (recommended)
+vue-ai-migrator migrate ./my-vue2-project --install
+
+# Option 2: Clean install (removes node_modules first, recommended for clean state)
+vue-ai-migrator migrate ./my-vue2-project --clean-install
+
+# Option 3: Manual reinstall
+cd ./my-vue2-project
+rm -rf node_modules package-lock.json
+npm install
+```
+
+> 💡 **Tip**: Use `--clean-install` for a fresh dependency installation, especially if you encounter dependency conflicts after migration.
+
 ### 3. Migration with AI (Optional)
 
 For complex migrations, enable AI assistance:
@@ -185,6 +204,36 @@ Available transformations:
 - `filters` : Remove filters
 - `v-model` : Adapt v-model Vue 2 → Vue 3
 - `event-api` : Replace $on/$off/$once
+
+### 6. Dependency Management
+
+After migration, your dependencies need to be updated. The tool provides flags to automate this:
+
+```bash
+# Automatic reinstall after migration
+vue-ai-migrator migrate ./my-vue2-project --install
+
+# Clean install (removes node_modules and package-lock.json first)
+vue-ai-migrator migrate ./my-vue2-project --clean-install
+
+# With TypeScript support
+vue-ai-migrator migrate ./my-vue2-project --typescript --clean-install
+```
+
+**When to use `--clean-install`:**
+- After migration to ensure clean dependency state
+- If you encounter dependency conflicts
+- When switching between Vue 2 and Vue 3 during testing
+
+**Rollback with dependency reinstall:**
+
+```bash
+# Rollback and reinstall Vue 2 dependencies
+vue-ai-migrator rollback ./my-vue2-project --all --install
+
+# Rollback with clean install
+vue-ai-migrator rollback ./my-vue2-project --all --clean-install
+```
 
 ## 🔧 Advanced Configuration
 

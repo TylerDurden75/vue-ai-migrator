@@ -447,6 +447,8 @@ vue-ai-migrator migrate <project-path> [options]
 - `--no-rollback`: Disable automatic backups
 - `-o, --output <file>`: Output file for migration report
 - `--typescript`: Enable TypeScript type annotations in migrated code (see [TypeScript Support](#typescript-support))
+- `--install`: Automatically reinstall dependencies after migration
+- `--clean-install`: Remove `node_modules` and `package-lock.json` before reinstalling dependencies (recommended after migration)
 
 **Examples:**
 
@@ -475,6 +477,15 @@ vue-ai-migrator migrate ./src --transformations "async-components,render-functio
 
 # Explicitly generate <script setup lang="ts">
 vue-ai-migrator migrate ./my-project --transformations "script-setup" --typescript
+
+# Migrate and automatically reinstall dependencies
+vue-ai-migrator migrate ./my-project --install
+
+# Migrate with clean install (removes node_modules first, recommended)
+vue-ai-migrator migrate ./my-project --clean-install
+
+# Migrate with TypeScript and clean install
+vue-ai-migrator migrate ./my-project --typescript --clean-install
 ```
 
 > 💡 **Note**: With `--typescript`, the migrated code automatically generates `<script setup lang="ts">` if the code is transformed to Composition API. See [EXPLICATION_SCRIPT_SETUP.md](EXPLICATION_SCRIPT_SETUP.md) for more details.
@@ -542,6 +553,8 @@ vue-ai-migrator rollback <project-path> [options]
 
 - `-a, --all`: Rollback all files
 - `-f, --file <file>`: Rollback a specific file
+- `--install`: Automatically reinstall dependencies after rollback
+- `--clean-install`: Remove `node_modules` and `package-lock.json` before reinstalling dependencies (recommended after rollback)
 
 **Examples:**
 
@@ -551,6 +564,12 @@ vue-ai-migrator rollback ./my-project
 
 # Rollback specific file
 vue-ai-migrator rollback ./my-project --file src/components/MyComponent.vue
+
+# Rollback and automatically reinstall dependencies
+vue-ai-migrator rollback ./my-project --all --install
+
+# Rollback with clean install (removes node_modules first)
+vue-ai-migrator rollback ./my-project --all --clean-install
 ```
 
 ### Programmatic API
