@@ -26,7 +26,7 @@ export async function migrateVueConfig(
   const vueConfigPath = path.join(projectPath, "vue.config.js");
 
   try {
-    let content = await fs.readFile(vueConfigPath, "utf-8");
+    const content = await fs.readFile(vueConfigPath, "utf-8");
     let modifiedContent = content;
 
     // Ensure path module is imported if we're going to use path.resolve() for TypeScript

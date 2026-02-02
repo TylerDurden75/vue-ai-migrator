@@ -12,7 +12,6 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
   const root = j(fileInfo.source);
 
   let hasChanges = false;
-  let needsAppContext = false;
   let appVariableName = "app"; // Default app variable name
 
   // Check if this is a main.js/main.ts entry point file
@@ -152,7 +151,6 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
       // These need to be called on the app instance
       // Vue.use(plugin) → app.use(plugin)
       // We'll mark them and suggest app context
-      needsAppContext = true;
       hasChanges = true;
 
       // Try to find if there's an app variable nearby
@@ -178,7 +176,6 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
     ) {
       // Vue.component('name', Component) → app.component('name', Component)
       // This requires app context
-      needsAppContext = true;
       hasChanges = true;
     }
   });
@@ -264,7 +261,6 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
   // Check if Pinia store is imported (for main.js initialization)
   let hasPiniaStoreImport = false;
   let hasPiniaImport = false;
-  let storeImportPath: any = null;
   let storeVariableName = "store";
 
   if (isMainFile) {
@@ -277,7 +273,6 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
         (source.includes("store") || source.includes("Store"))
       ) {
         hasPiniaStoreImport = true;
-        storeImportPath = path;
         // Get the imported variable name
         const specifiers = path.value.specifiers || [];
         if (specifiers.length > 0) {
@@ -518,12 +513,10 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
   if (hasChanges) {
     const imports = root.find(j.ImportDeclaration);
     let hasVueImport = false;
-    let vueImportPath: any = null;
 
     imports.forEach((path: any) => {
       if (path.value.source.value === "vue") {
         hasVueImport = true;
-        vueImportPath = path;
         const specifiers = path.value.specifiers || [];
 
         // Check if it's a default import: import Vue from 'vue'

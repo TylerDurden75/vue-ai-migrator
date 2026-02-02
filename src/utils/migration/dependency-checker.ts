@@ -106,8 +106,8 @@ export async function checkDependencyConflicts(
 
         // Check for duplicate package versions in lock file
         const packageVersions = new Map<string, Set<string>>();
-
-        function checkDependencies(deps: any) {
+        
+        const checkDependencies = (deps: any) => {
           if (!deps) return;
           for (const [name, version] of Object.entries(deps)) {
             if (typeof version === "string") {
@@ -117,7 +117,7 @@ export async function checkDependencyConflicts(
               packageVersions.get(name)!.add(version);
             }
           }
-        }
+        };
 
         if (lockJson.dependencies) {
           checkDependencies(lockJson.dependencies);

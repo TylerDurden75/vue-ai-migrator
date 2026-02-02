@@ -4,8 +4,6 @@
  */
 
 import { Transform } from "jscodeshift";
-import { ClassificationResult } from "../core/classifier";
-import { DiffResult } from "../utils/codegen";
 
 /**
  * Transformation interface for codemods

@@ -38,12 +38,12 @@ export const regexCache = new RegexCache();
 // Pre-compile common patterns for immediate use
 export const commonPatterns = {
   // Vue imports
-  vueImport: regexCache.get('import\\s+.*\\{([^}]+)\\}\s+from\\s+[\'"]vue[\'"]'),
-  vueImportMatch: regexCache.get('import\\s+.*\\{([^}]+)\\}\s+from\\s+[\'"]vue[\'"]'),
+  vueImport: regexCache.get('import\\s+.*\\{([^}]+)\\}\\s+from\\s+[\'"]vue[\'"]'),
+  vueImportMatch: regexCache.get('import\\s+.*\\{([^}]+)\\}\\s+from\\s+[\'"]vue[\'"]'),
   
   // Store patterns
   storeDeclaration: regexCache.get('const\\s+(\\w+Store)\\s*=\\s*(use\\w+Store)\\(\\)', 'g'),
-  storeImport: regexCache.get('import\\s+.*\\{([^}]*)\\}\s+from\\s+[\'"]@/store'),
+  storeImport: regexCache.get('import\\s+.*\\{([^}]*)\\}\\s+from\\s+[\'"]@/store'),
   
   // Script setup
   scriptSetup: regexCache.get('<script\\s+setup[^>]*>'),

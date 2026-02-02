@@ -2,7 +2,8 @@ import { Transform, FileInfo, API } from 'jscodeshift';
 
 /**
  * Transforms Vue 2 mixins to Vue 3 compatible format
- * Vue 3 supports mixins but they work differently with Composition API
+ * This transform prepares mixins for conversion to composables in post-migration-fixer
+ * Vue 3 supports mixins but the recommended approach is to use composables
  */
 export const mixinsTransform: Transform = (fileInfo: FileInfo, api: API) => {
   const j = api.jscodeshift;
@@ -10,34 +11,7 @@ export const mixinsTransform: Transform = (fileInfo: FileInfo, api: API) => {
 
   let hasChanges = false;
 
-  // Transform mixins array in component options
-  root.find(j.ExportDefaultDeclaration).forEach((path: any) => {
-    const declaration = path.value.declaration;
-    
-    if (
-      declaration &&
-      declaration.type === 'ObjectExpression' &&
-      isVueComponent(declaration)
-    ) {
-      const mixinsProp = findProperty(declaration, 'mixins');
-      
-      if (mixinsProp && mixinsProp.value.type === 'ArrayExpression') {
-        // Mixins are still supported in Vue 3, but we can suggest Composition API
-        // For now, we just ensure they're properly formatted
-        // Complex mixin transformations should use AI
-        
-        // Check if mixins contain Options API patterns that need conversion
-        mixinsProp.value.elements.forEach((mixin: any) => {
-          if (mixin.type === 'Identifier' || mixin.type === 'CallExpression') {
-            // Mark for review - mixins might need manual conversion
-            hasChanges = true;
-          }
-        });
-      }
-    }
-  });
-
-  // Transform Vue.mixin() global calls
+  // Transform Vue.mixin() global calls to app.mixin() (will be handled by post-migration-fixer)
   root.find(j.CallExpression).forEach((path: any) => {
     const callee = path.value.callee;
     
@@ -49,9 +23,41 @@ export const mixinsTransform: Transform = (fileInfo: FileInfo, api: API) => {
       callee.property.name === 'mixin'
     ) {
       // Vue.mixin() is removed in Vue 3
-      // This should be converted to app.mixin() or use Composition API
-      // Mark for AI processing
-      hasChanges = true;
+      // Transform to app.mixin() - post-migration-fixer will handle composable conversion
+      if (path.value.arguments && path.value.arguments.length > 0) {
+        const mixinArg = path.value.arguments[0];
+        // Replace Vue with app
+        j(path).replaceWith(
+          j.callExpression(
+            j.memberExpression(
+              j.identifier('app'),
+              j.identifier('mixin')
+            ),
+            [mixinArg]
+          )
+        );
+        hasChanges = true;
+      }
+    }
+  });
+
+  // Note: mixins: [mixinName] in components will be transformed to composables
+  // by post-migration-fixer.ts, so we just mark them here for processing
+  root.find(j.ExportDefaultDeclaration).forEach((path: any) => {
+    const declaration = path.value.declaration;
+    
+    if (
+      declaration &&
+      declaration.type === 'ObjectExpression' &&
+      isVueComponent(declaration)
+    ) {
+      const mixinsProp = findProperty(declaration, 'mixins');
+      
+      if (mixinsProp && mixinsProp.value.type === 'ArrayExpression') {
+        // Mixins will be converted to composables in post-migration-fixer
+        // This transform just ensures they're detected
+        hasChanges = true;
+      }
     }
   });
 

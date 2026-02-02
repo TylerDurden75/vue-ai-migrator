@@ -11,7 +11,9 @@ module.exports = {
   ],
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json"],
   transform: {
-    "^.+\\.ts$": "ts-jest",
+    "^.+\\.ts$": ["ts-jest", {
+      tsconfig: "tsconfig.test.json",
+    }],
   },
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",

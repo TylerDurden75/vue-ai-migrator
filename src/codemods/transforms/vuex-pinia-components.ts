@@ -11,7 +11,6 @@ import { Transform, FileInfo, API } from "jscodeshift";
 export const vuexPiniaComponentsTransform: Transform = (
   fileInfo: FileInfo,
   api: API,
-  options: any = {},
 ) => {
   const j = api.jscodeshift;
   const root = j(fileInfo.source);
@@ -75,9 +74,6 @@ export const vuexPiniaComponentsTransform: Transform = (
         );
         const mountedProp = properties.find(
           (p: any) => p.key && p.key.name === "mounted",
-        );
-        const watchProp = properties.find(
-          (p: any) => p.key && p.key.name === "watch",
         );
 
         // Build setup() function

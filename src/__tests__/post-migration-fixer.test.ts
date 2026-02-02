@@ -1,7 +1,6 @@
 import {
   fixPostMigrationIssues,
   fixImportPaths,
-  FixResult,
 } from '../utils/migration/post-migration-fixer';
 import * as path from 'path';
 

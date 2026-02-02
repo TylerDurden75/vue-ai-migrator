@@ -25,8 +25,7 @@ export interface PropertyAnalysis {
  */
 export function analyzeArrayItemProperties(
   code: string,
-  arrayVarName: string,
-  projectRoot?: string
+  arrayVarName: string
 ): PropertyAnalysis {
   const result: PropertyAnalysis = {
     properties: new Set<string>(),
@@ -233,7 +232,7 @@ export function analyzeFilterProperties(code: string): {
     
     // Infer category and search filters
     const filters = Array.from(result.allFilters);
-    const categoryCandidates = ['category', 'type', 'tag', 'kind', 'group'];
+    const categoryCandidates = ['category', 'type', 'tag', 'kind', 'group', 'role', 'status'];
     const searchCandidates = ['search', 'query', 'term', 'filter'];
     
     for (const candidate of categoryCandidates) {
@@ -260,8 +259,7 @@ export function analyzeFilterProperties(code: string): {
  * Analyze store structure to find array properties and their item structures
  */
 export async function analyzeStoreStructure(
-  storeCode: string,
-  projectRoot?: string
+  storeCode: string
 ): Promise<Map<string, PropertyAnalysis>> {
   const result = new Map<string, PropertyAnalysis>();
   
@@ -273,7 +271,7 @@ export async function analyzeStoreStructure(
     const arrayName = match[1];
     
     // Analyze properties of items in this array
-    const analysis = analyzeArrayItemProperties(storeCode, arrayName, projectRoot);
+    const analysis = analyzeArrayItemProperties(storeCode, arrayName);
     if (analysis.properties.size > 0 || analysis.sampleCount > 0) {
       result.set(arrayName, analysis);
     }
@@ -300,7 +298,6 @@ export function analyzeTemplateProperties(templateCode: string): Set<string> {
   const vForPattern = /v-for=["']\s*(\w+)\s+in\s+(\w+)/g;
   while ((match = vForPattern.exec(templateCode)) !== null) {
     const itemName = match[1];
-    const arrayName = match[2];
     
     // Find item.property in template
     const itemPropertyPattern = new RegExp(`${itemName}\\.(\\w+)`, 'g');

@@ -2,7 +2,6 @@ import {
   analyzeArrayItemProperties,
   analyzeFilterProperties,
   analyzeStoreStructure,
-  PropertyAnalysis,
 } from '../utils/migration/property-analyzer';
 
 describe('Property Analyzer', () => {
