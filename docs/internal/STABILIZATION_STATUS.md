@@ -1,5 +1,7 @@
 # État d'Avancement - Stabilisation vers 1.0.0
 
+> **Note** : Document historique. Le fixer legacy (multi-pass) a été supprimé ; seul le moteur de règles (single-pass) est utilisé.
+
 ## ✅ Ce qui a été fait
 
 ### Architecture Modulaire
@@ -35,9 +37,8 @@
 - ✅ Réduction du re-parsing de 3x à 1x
 
 ### Intégration dans Migrator
-- ✅ **Flag `useOptimizedFixer`** : Option pour utiliser le nouveau système
-- ✅ **Modification migrator.ts** : Utilise nouveau système par défaut (single pass)
-- ✅ **Fallback legacy** : Ancien système disponible si `useOptimizedFixer: false`
+- ✅ **Migrator** : Utilise uniquement le moteur de règles (single pass)
+- ✅ **Legacy supprimé** : Plus de mode multi-pass ni de flag `--legacy`
 
 ### Nouvelles Règles Migrées
 - ✅ **import-fixes.ts** :
@@ -202,7 +203,7 @@
 5. ✅ **Tests unitaires créés** (rule-engine, parallel-processor) ✅
 6. ✅ **Scripts de benchmark et validation créés** ✅
 7. ✅ **Toutes les règles principales migrées** (type-fixes, store-script-setup-fixes) ✅
-8. ✅ **Scripts de benchmark et validation améliorés** pour comparer réellement legacy vs optimized ✅
+8. ✅ **Scripts de benchmark et validation** (fixer unique) ✅
 9. ✅ **Tests unitaires ajoutés** pour import-fixes, computed-fixes, router-fixes, vue-script-setup ✅
 10. ✅ **Tests corrigés** : computedSyntaxRule test ajusté ✅
 11. **Exécuter benchmarks** : `npm run benchmark` pour mesurer gains réels
@@ -213,12 +214,9 @@
 
 ## 📝 Notes Importantes
 
-- **Compatibilité** : L'ancien `post-migration-fixer.ts` reste fonctionnel
-- **Migration progressive** : Nouvelle architecture côte à côte
-- **Flag optionnel** : `useOptimizedFixer: false` pour utiliser l'ancien système (nouveau système par défaut)
-- **Validation** : Comparer résultats avant de remplacer complètement
+- **Legacy supprimé** : Plus d'ancien fixer multi-pass ; un seul fixer (rule engine).
 - **Cache AST** : Implémenté et intégré dans le rule engine
-- **Single Pass** : Nouveau système utilise 1 passe au lieu de 3 (66% réduction)
+- **Single Pass** : 1 passe au lieu de 3 (66% réduction)
 
 ## 🚀 Dernières Modifications
 
@@ -229,9 +227,7 @@
 - Intégré dans `rule-engine.ts` et `index.ts`
 
 ### Intégration Migrator (✅ Implémenté)
-- Flag `useOptimizedFixer` ajouté à `MigrationOptions`
-- Nouveau système utilisé par défaut (single pass)
-- Ancien système disponible avec `useOptimizedFixer: false`
+- Un seul fixer : rule engine (single pass)
 - Réduction de 3 passes à 1 passe (66% réduction)
 
 ### Parallélisation (✅ Implémenté)

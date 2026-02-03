@@ -2,8 +2,7 @@
 
 ## Statut actuel
 
-- **Legacy** (`post-migration-fixer-multi-pass.ts`) : stable. Utiliser `--legacy` en CLI.
-- **Optimisé** (`post-migration-fixer/index.ts`) : piniaStoreCrossStoreDepsRule corrigé (plus de dépendance au disk read). À valider sur projets réels.
+- **Fixer unique** : `post-migration-fixer/index.ts` (moteur de règles, une passe, traitement parallèle). Plus de mode legacy.
 
 ## Objectif
 Réduire les passes multiples et simplifier `post-migration-fixer.ts` (12k+ lignes) en modules séparés.

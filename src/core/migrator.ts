@@ -55,7 +55,6 @@ export interface MigrationOptions {
   classifyFiles?: boolean;
   enableTypeScript?: boolean;
   verbose?: boolean; // Enable verbose logging (DEBUG messages, detailed fixes)
-  useOptimizedFixer?: boolean; // Use new optimized rule engine (single pass) instead of legacy multi-pass system
 }
 
 export interface MigrationResult {
@@ -235,16 +234,7 @@ export async function migrate(
     // Cache for file content hashes to avoid reprocessing unchanged files (fallback)
     const fileCache = new Map<string, string>();
 
-    // Resolve post-migration fixer: optimized (default) or legacy when --legacy is set
-    let fixPostMigrationIssuesFn = fixPostMigrationIssues;
-    let fixImportPathsFn = fixImportPaths;
-    if (options.useOptimizedFixer === false) {
-      const legacy = await import(
-        "../utils/migration/post-migration-fixer-legacy"
-      );
-      fixPostMigrationIssuesFn = legacy.fixPostMigrationIssues;
-      fixImportPathsFn = legacy.fixImportPaths;
-    }
+    const fixImportPathsFn = fixImportPaths;
 
     // Determine transformations to apply
     let transformationsToApply =
@@ -547,7 +537,7 @@ export async function migrate(
                 if (!dryRun) {
                   // Apply post-migration fixes
                   try {
-                    fixResult = await fixPostMigrationIssuesFn(
+                    fixResult = await fixPostMigrationIssues(
                       filePath,
                       finalCode,
                       options.enableTypeScript || false,
@@ -847,7 +837,7 @@ export async function migrate(
       }
 
       // Migrate to Vite (recommended for Vue 3)
-      // This will create vite.config.ts/js, update package.json, and clean up legacy files
+      // This will create vite.config.ts/js, update package.json, and clean up old config files
       try {
         viteConfigResult = await migrateToViteConfig(
           projectPath,
@@ -862,11 +852,11 @@ export async function migrate(
           result.warnings.push(...viteConfigResult.warnings);
         }
       } catch (error) {
-        // Vite migration failed, continue with legacy migration
+        // Vite migration failed, continue with vue.config.js / webpack path
         viteConfigResult = null;
       }
 
-      // Skip legacy vue.config.js migration if Vite migration was successful
+      // Skip vue.config.js migration if Vite migration was successful
       // Vite is the recommended approach for Vue 3, and we've already cleaned up vue.config.js
       if (!viteConfigResult || (!viteConfigResult.modified && !viteConfigResult.created)) {
         // Only migrate vue.config.js for Vue CLI compatibility if Vite migration didn't happen
@@ -878,7 +868,7 @@ export async function migrate(
         );
         if (vueConfigResult.modified) {
           result.warnings.push(
-            ...vueConfigResult.changes.map((c) => `Vue Config (legacy): ${c}`)
+            ...vueConfigResult.changes.map((c) => `Vue Config: ${c}`)
           );
           result.warnings.push(...vueConfigResult.warnings);
           result.warnings.push(
@@ -934,161 +924,84 @@ export async function migrate(
       }
     }
 
-    // Post-migration fixes: Use optimized rule engine (single pass) or legacy system (multi-pass)
+    // Post-migration fixes: single-pass rule engine with parallel processing
     if (!dryRun && result.filesModified > 0) {
       try {
-        const useOptimized = options.useOptimizedFixer !== false; // Default to true (new system)
-        
-        if (useOptimized) {
-          // NEW: Single-pass optimized rule engine with parallel processing
-          // Include .vue files and store files (.ts/.js) so defineStore closing fix runs on stores
-          const vueOnly = vueFiles.filter(
-            (file) =>
-              file.endsWith(".vue") &&
-              !file.includes("node_modules") &&
-              !file.includes("dist")
-          );
-          const storeFiles = await glob("**/store/**/*.{ts,js}", {
-            cwd: projectPath,
-            ignore: ["node_modules/**", "dist/**", "build/**"],
-            absolute: true,
-          });
-          const mainFiles = await glob("**/main.{ts,js}", {
-            cwd: projectPath,
-            ignore: ["node_modules/**", "dist/**", "build/**"],
-            absolute: true,
-          });
-          const vueFilesToFix = [...vueOnly, ...storeFiles, ...mainFiles];
+        // Include .vue files and store files (.ts/.js) so defineStore closing fix runs on stores
+        const vueOnly = vueFiles.filter(
+          (file) =>
+            file.endsWith(".vue") &&
+            !file.includes("node_modules") &&
+            !file.includes("dist")
+        );
+        const storeFiles = await glob("**/store/**/*.{ts,js}", {
+          cwd: projectPath,
+          ignore: ["node_modules/**", "dist/**", "build/**"],
+          absolute: true,
+        });
+        const mainFiles = await glob("**/main.{ts,js}", {
+          cwd: projectPath,
+          ignore: ["node_modules/**", "dist/**", "build/**"],
+          absolute: true,
+        });
+        const vueFilesToFix = [...vueOnly, ...storeFiles, ...mainFiles];
 
-          // Import optimized fixer and parallel processor
-          const { fixPostMigrationIssues: fixPostMigrationIssuesOptimized } =
-            await import("../utils/migration/post-migration-fixer");
-          const { processFilesInParallel, getOptimalConcurrency } =
-            await import("../utils/migration/post-migration-fixer/utils/parallel-processor");
+        const { fixPostMigrationIssues: fixPostMigrationIssuesBatch } =
+          await import("../utils/migration/post-migration-fixer");
+        const { processFilesInParallel, getOptimalConcurrency } =
+          await import("../utils/migration/post-migration-fixer/utils/parallel-processor");
 
-          // Read all files first (parallel)
-          const filesToProcess = await Promise.all(
-            vueFilesToFix.map(async (filePath: string) => {
+        const filesToProcess = await Promise.all(
+          vueFilesToFix.map(async (filePath: string) => {
+            try {
+              const content = await safeReadFile(filePath);
+              return content ? { filePath, content } : null;
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        const validFiles = filesToProcess.filter(
+          (f): f is { filePath: string; content: string } => f !== null
+        );
+
+        const concurrency = getOptimalConcurrency();
+        const processingResults = await processFilesInParallel(
+          validFiles.map(({ filePath, content }) => ({
+            filePath,
+            content,
+            enableTypeScript: options.enableTypeScript || false,
+            projectRoot: projectPath,
+            fixFunction: fixPostMigrationIssuesBatch
+          })),
+          concurrency
+        );
+
+        await Promise.all(
+          processingResults.map(async ({ filePath, result: fixResult }) => {
+            if (fixResult.fixed && fixResult.fixes.length > 0) {
               try {
-                const content = await safeReadFile(filePath);
-                return content ? { filePath, content } : null;
+                await safeWriteFile(filePath, fixResult.content);
               } catch {
-                return null;
+                // Skip files that can't be written
               }
-            })
-          );
-
-          // Filter out nulls and prepare for parallel processing
-          const validFiles = filesToProcess.filter(
-            (f): f is { filePath: string; content: string } => f !== null
-          );
-
-          // Process files in parallel batches
-          const concurrency = getOptimalConcurrency();
-          const processingResults = await processFilesInParallel(
-            validFiles.map(({ filePath, content }) => ({
-              filePath,
-              content,
-              enableTypeScript: options.enableTypeScript || false,
-              projectRoot: projectPath,
-              fixFunction: fixPostMigrationIssuesOptimized
-            })),
-            concurrency
-          );
-
-          // Write results (parallel) and collect warnings
-          await Promise.all(
-            processingResults.map(async ({ filePath, result: fixResult }) => {
-              if (fixResult.fixed && fixResult.fixes.length > 0) {
-                try {
-                  await safeWriteFile(filePath, fixResult.content);
-                } catch (error) {
-                  // Skip files that can't be written
-                }
-              }
-            })
-          );
-          
-          // Collect all warnings from results (add to migrator result.warnings)
-          processingResults.forEach(({ filePath, result: fixResult }) => {
-            if (options.verbose === true && fixResult.fixes.length > 0) {
-              result.warnings.push(
-                `Post-migration fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
-              );
             }
-            if (fixResult.issues && fixResult.issues.length > 0) {
-              result.warnings.push(
-                `Issues in ${path.relative(projectPath, filePath)}: ${fixResult.issues.join(", ")}`
-              );
-            }
-          });
-        } else {
-          // LEGACY: Multi-pass system (kept for compatibility)
-          // Clear the store analysis cache to force re-analysis with migrated stores
-          const { clearStoreAnalysisCache } =
-            await import("../utils/migration/post-migration-fixer-legacy");
-          if (clearStoreAnalysisCache) {
-            clearStoreAnalysisCache();
+          })
+        );
+
+        processingResults.forEach(({ filePath, result: fixResult }) => {
+          if (options.verbose === true && fixResult.fixes.length > 0) {
+            result.warnings.push(
+              `Post-migration fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
+            );
           }
-
-          // Re-process Vue files to fix remaining issues (missing store imports, etc.)
-          const vueFilesToFix = vueFiles.filter(
-            (file) =>
-              file.endsWith(".vue") &&
-              !file.includes("node_modules") &&
-              !file.includes("dist")
-          );
-
-          // Second pass
-          for (const filePath of vueFilesToFix) {
-            try {
-              const content = await safeReadFile(filePath);
-              if (content) {
-                const fixResult = await fixPostMigrationIssuesFn(
-                  filePath,
-                  content,
-                  options.enableTypeScript || false,
-                  projectPath
-                );
-                if (fixResult.fixed && fixResult.fixes.length > 0) {
-                  await safeWriteFile(filePath, fixResult.content);
-                  if (options.verbose === true) {
-                    result.warnings.push(
-                      `Second pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
-                    );
-                  }
-                }
-              }
-            } catch (error) {
-              // Skip files that can't be read or fixed
-            }
+          if (fixResult.issues && fixResult.issues.length > 0) {
+            result.warnings.push(
+              `Issues in ${path.relative(projectPath, filePath)}: ${fixResult.issues.join(", ")}`
+            );
           }
-
-          // Third pass: Clean up duplicates and final fixes
-          for (const filePath of vueFilesToFix) {
-            try {
-              const content = await safeReadFile(filePath);
-              if (content) {
-                const fixResult = await fixPostMigrationIssuesFn(
-                  filePath,
-                  content,
-                  options.enableTypeScript || false,
-                  projectPath
-                );
-                if (fixResult.fixed && fixResult.fixes.length > 0) {
-                  await safeWriteFile(filePath, fixResult.content);
-                  if (options.verbose === true) {
-                    result.warnings.push(
-                      `Third pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
-                    );
-                  }
-                }
-              }
-            } catch (error) {
-              // Skip files that can't be read or fixed
-            }
-          }
-        }
+        });
       } catch (error) {
         // Pass failed, but don't fail the entire migration
         result.warnings.push(

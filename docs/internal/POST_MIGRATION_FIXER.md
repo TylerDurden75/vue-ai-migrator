@@ -1,29 +1,21 @@
-# Post-Migration Fixer - Two Modes
+# Post-Migration Fixer
 
 ## Overview
 
-The post-migration fixer corrects common issues after the main migration (Vuex→Pinia, computed syntax, store dependencies, etc.). Two implementations exist:
+The post-migration fixer corrects common issues after the main migration (Vuex→Pinia, computed syntax, store dependencies, imports, etc.). It uses a **single-pass rule engine** (`post-migration-fixer/index.ts`) with parallel processing.
 
-| Mode | File | CLI Flag | Status |
-|------|------|----------|--------|
-| **Legacy** | `post-migration-fixer-multi-pass.ts` | `--legacy` | ✅ Stable, recommended |
-| **Optimized** | `post-migration-fixer/index.ts` (rule engine) | default | 🔄 Being stabilized |
+## Usage
 
-## Recommended Usage
+No CLI flag needed — the fixer runs automatically after the main migration:
 
 ```bash
-vue-ai-migrator migrate ./my-project --legacy
+vue-ai-migrator migrate ./my-project
 ```
 
-## Why Two Modes?
+## Architecture
 
-- **Legacy**: Multi-pass system, battle-tested, handles edge cases
-- **Optimized**: Single-pass rule engine, modular, faster — but has known issues to fix
+- **Rule engine** with dependency ordering (topological sort)
+- **Single pass** per file, with parallel batch processing
+- **Modular rules** in `post-migration-fixer/rules/` (store-fixes, router-fixes, template-fixes, etc.)
 
-## Fixes Applied (Optimized)
-
-- **piniaStoreCrossStoreDepsRule**: No longer depends on `getStoreMethodMap` (disk read). Now infers module from store var (userStore → user) - works regardless of file processing order.
-
-## Roadmap
-
-See [ROADMAP.md](../ROADMAP.md) - Post-Migration Fixer section for stabilization tasks.
+See [post-migration-fixer-architecture.md](./post-migration-fixer-architecture.md) for structure and conventions.

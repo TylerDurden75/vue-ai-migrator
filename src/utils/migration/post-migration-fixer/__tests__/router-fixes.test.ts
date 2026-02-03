@@ -27,7 +27,7 @@ describe("Router Fixes Rules", () => {
   });
 
   describe("vue2GlobalApiRule", () => {
-    it("should comment out Vue.filter (legacy style - filters removed in Vue 3)", async () => {
+    it("should comment out Vue.filter (filters removed in Vue 3)", async () => {
       const content = `import { createApp } from "vue";
 import App from "./App.vue";
 import { capitalize, currency } from "./filters";

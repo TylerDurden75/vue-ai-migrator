@@ -248,7 +248,7 @@ export const duplicateKeysRule: FixRule = {
 /**
  * Fix: In Pinia store files, convert Vuex getters['module/getter'] and dispatch('module/action')
  * to storeVar.getter / storeVar.action(), and add import + const storeVar = useXxxStore().
- * Aligns with legacy fixer behavior.
+ * Keeps store return shape consistent.
  */
 export const storeVuexGettersDispatchRule: FixRule = {
   id: "store-vuex-getters-dispatch",

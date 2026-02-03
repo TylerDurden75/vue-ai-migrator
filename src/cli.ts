@@ -90,11 +90,6 @@ program
     "Enable verbose logging (show DEBUG messages and detailed fixes)",
     false,
   )
-  .option(
-    "--legacy",
-    "Use legacy post-migration fixer (multi-pass) instead of optimized rule engine",
-    false,
-  )
   .action(async (projectPath: string, options) => {
     const spinner = ora("Analyzing project...").start();
 
@@ -176,7 +171,6 @@ program
         generateTests: options.generateTests || false,
         enableTypeScript: !!options.typescript,
         verbose: options.verbose || false,
-        useOptimizedFixer: !options.legacy,
       };
 
       if (shouldUseAI && apiKey) {
@@ -206,23 +200,22 @@ program
         const freeModePercentage = total > 0 ? Math.round((freeModeCoverage / total) * 100) : 0;
         
         console.log(
-          chalk.green(`    🟢 Simple: ${result.classification.simple} (free mode handles these)`),
+          chalk.green(`    🟢 Simple: ${result.classification.simple} (auto-migrated)`),
         );
         console.log(
-          chalk.yellow(`    🟡 Medium: ${result.classification.medium} (free mode usually handles these)`),
+          chalk.yellow(`    🟡 Medium: ${result.classification.medium} (auto-migrated, validated)`),
         );
         console.log(
-          chalk.red(`    🔴 Complex: ${result.classification.complex} (may benefit from AI)`),
+          chalk.red(`    🔴 Complex: ${result.classification.complex} (heuristic: more patterns; often still migrated in free mode)`),
         );
         
-        // Show free mode coverage
         if (!shouldUseAI || !apiKey) {
           console.log(
-            chalk.blue(`\n  💡 Free Mode Coverage: ${freeModePercentage}% of files can be migrated without AI`),
+            chalk.blue(`\n  💡 ${freeModePercentage}% of files classified as Simple or Medium (${freeModeCoverage}/${total})`),
           );
           if (result.classification.complex > 0) {
             console.log(
-              chalk.yellow(`  💡 Tip: ${result.classification.complex} complex file(s) detected. Consider using --ai for better results.`),
+              chalk.yellow(`  💡 ${result.classification.complex} file(s) classified Complex. Use --ai only if you see issues after migration.`),
             );
           }
         }

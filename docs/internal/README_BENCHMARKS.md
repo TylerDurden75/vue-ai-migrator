@@ -1,6 +1,6 @@
 # Benchmarks et Tests de Validation
 
-Ce document décrit comment exécuter les benchmarks de performance et les tests de validation pour comparer l'ancien système (multi-pass) avec le nouveau système optimisé (single-pass).
+Ce document décrit comment exécuter les benchmarks de performance et les tests de validation du post-migration fixer (moteur de règles, single-pass).
 
 ## Tests Unitaires
 

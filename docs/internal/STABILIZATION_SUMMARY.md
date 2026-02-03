@@ -1,5 +1,7 @@
 # Résumé de Stabilisation - Vue AI Migrator v1.0.0
 
+> **Note** : Document historique. Le fixer legacy a été supprimé ; un seul fixer (rule engine) est utilisé.
+
 ## 🎯 Objectif
 Stabiliser le package `vue-ai-migrator` vers la version 1.0.0 en réduisant les passes multiples, simplifiant le code et améliorant les performances.
 
@@ -117,12 +119,6 @@ Stabiliser le package `vue-ai-migrator` vers la version 1.0.0 en réduisant les 
 node dist/cli.js migrate test-project --typescript
 ```
 
-### Ancien Système (Fallback)
-```bash
-# Pour utiliser l'ancien système multi-pass
-# Nécessite modification du code pour passer useOptimizedFixer: false
-```
-
 ### Tests
 ```bash
 # Tests unitaires
@@ -164,7 +160,7 @@ src/utils/migration/post-migration-fixer/
 
 ## 🎯 Prochaines Étapes
 
-1. ✅ **Scripts de benchmark et validation améliorés** pour comparer réellement legacy vs optimized ✅
+1. ✅ **Scripts de benchmark et validation** (fixer unique, plus de comparaison legacy) ✅
 2. ✅ **Toutes les règles principales migrées** (27 règles sur 30) ✅
 3. ✅ **Compilation réussie** : Tous les fichiers TypeScript compilent sans erreur ✅
 4. **Exécuter les benchmarks** : `npm run benchmark` pour mesurer les gains réels
@@ -174,10 +170,8 @@ src/utils/migration/post-migration-fixer/
 
 ## 📝 Notes Importantes
 
-- **Compatibilité** : L'ancien système reste fonctionnel en fallback
-- **Migration progressive** : Nouvelle architecture côte à côte avec l'ancienne
-- **Flag optionnel** : `useOptimizedFixer: false` pour utiliser l'ancien système
-- **Validation requise** : Comparer résultats avant de remplacer complètement l'ancien système
+- **Fixer unique** : Le legacy multi-pass a été supprimé ; seul le rule engine est utilisé.
+- **Scripts** : `npm run benchmark` et `npm run validate` testent le fixer actuel.
 
 ## ✨ Points Forts du Nouveau Système
 

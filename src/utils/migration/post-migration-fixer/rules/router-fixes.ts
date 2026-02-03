@@ -50,7 +50,7 @@ export const createAppSyntaxRule: FixRule = {
       result.fixes.push("Fixed createApp syntax");
     }
 
-    // Ensure app.use(router) is present when router is imported (legacy main order)
+    // Ensure app.use(router) is present when router is imported (main.js order)
     if (fixed.includes("import router from") && !fixed.includes("app.use(router)")) {
       const appUsePiniaMatch = fixed.match(/app\.use\(createPinia\(\)\)\s*;?\s*\n/);
       const createAppMatch = fixed.match(/const app = createApp\([^)]+\)/);
@@ -103,7 +103,7 @@ export const createAppSyntaxRule: FixRule = {
 };
 
 /**
- * Fix: Convert Vue 2 global API calls to Vue 3 app API (main.ts/main.js) - aligned with legacy.
+ * Fix: Convert Vue 2 global API calls to Vue 3 app API (main.ts/main.js).
  * Vue.filter → commented out (filters removed in Vue 3)
  * Vue.directive → app.directive, Vue.component → app.component, Vue.mixin → app.mixin
  * Comment out app.mixin when mixin was transformed to composable.
@@ -111,7 +111,7 @@ export const createAppSyntaxRule: FixRule = {
  */
 export const vue2GlobalApiRule: FixRule = {
   id: "vue2-global-api",
-  description: "Convert Vue 2 global API to Vue 3 app API (legacy style: comment filters)",
+  description: "Convert Vue 2 global API to Vue 3 app API (comment out filters)",
   priority: 94,
   dependencies: ["create-app-syntax"],
   shouldApply: (filePath, content) => {
@@ -138,7 +138,7 @@ export const vue2GlobalApiRule: FixRule = {
     let fixed = content;
     const projectRoot = context.projectRoot;
 
-    // Vue.filter → comment out (legacy: filters removed in Vue 3 - use functions/computed instead)
+    // Vue.filter → comment out (filters removed in Vue 3 - use functions/computed instead)
     const filterPattern = /Vue\.filter\s*\([^)]+\)\s*;?/g;
     let filterMatch;
     while ((filterMatch = filterPattern.exec(fixed)) !== null) {
@@ -231,7 +231,7 @@ export const vue2GlobalApiRule: FixRule = {
       }
     }
 
-    // Comment out mixin import when composable exists (legacy)
+    // Comment out mixin import when composable exists
     const mixinImportPattern = /import\s+\{\s*(\w+)\s*\}\s+from\s+['"]\.\/mixins\/(\w+)['"]\s*;?\n?/g;
     const mixinImports: Array<{ match: string; mixinName: string; index: number }> = [];
     let importMatch;

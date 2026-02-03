@@ -48,7 +48,6 @@ export interface CreateMigrationServicesOptions {
   useAI?: boolean;
   useCache?: boolean;
   enableRollback?: boolean;
-  useOptimizedFixer?: boolean;
   enableTypeScript?: boolean;
 }
 
@@ -63,7 +62,6 @@ export async function createDefaultMigrationServices(
   const { createAIService } = await import("../ai/unified-service");
   const { CacheManager } = await import("../utils/cache");
   const { RollbackManager } = await import("../utils/safety");
-  const useOptimized = options.useOptimizedFixer !== false;
 
   const codemodRunner = new CodemodRunner();
   const aiService: IAIService | null =
@@ -77,7 +75,6 @@ export async function createDefaultMigrationServices(
     ? new RollbackManager(options.projectPath)
     : null;
 
-  // Per-file fixer: always use optimized (includes import paths). Legacy is only for the optional second batch pass.
   const { fixPostMigrationIssues } = await import(
     "../utils/migration/post-migration-fixer/index"
   );

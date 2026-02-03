@@ -1,7 +1,6 @@
 /**
- * Post-migration fixer - delegates to optimized rule engine
- * This file ensures the migration pipeline uses the modular rule-based fixer
- * (post-migration-fixer/index.ts) instead of the legacy implementation.
+ * Post-migration fixer - entry point for the rule engine.
+ * Re-exports from post-migration-fixer/index.ts for the migration pipeline.
  */
 
 export {

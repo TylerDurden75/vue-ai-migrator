@@ -1,7 +1,7 @@
 /**
  * Fixes import paths to use the @ alias for src/ directory.
  * Converts relative imports (e.g. ../../store/) to alias imports (e.g. @/store/).
- * Standalone util used by the post-migration fixer (no dependency on legacy multi-pass).
+ * Standalone util used by the post-migration fixer.
  */
 
 import * as path from "path";

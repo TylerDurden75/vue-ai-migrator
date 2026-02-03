@@ -20,8 +20,6 @@ _AST-based transformations + AI integration for reliable migrations_
 
 > 🎯 **Vision**: Build a migration tool that is **assisted, reliable, explainable and secure**, not a magic one-click migration.
 
-> ⚠️ **Post-migration fixer** : Use the `--legacy` flag for reliable migrations. The optimized fixer is being stabilized.
-
 Automatic Vue 2 → Vue 3 migration combining:
 
 - **🆓 Free Mode (Default)**: AST-based transformations - **No API key required**
@@ -330,8 +328,7 @@ vue-ai-migrator migrate ./my-vue2-project --dry-run --show-diff
 3. **Run actual migration** (free mode - works immediately, no setup needed):
 
 ```bash
-# Recommended: use --legacy for the post-migration fixer (more stable currently)
-vue-ai-migrator migrate ./my-vue2-project --legacy
+vue-ai-migrator migrate ./my-vue2-project
 ```
 
 **That's it!** Most projects migrate successfully in free mode.
@@ -455,16 +452,14 @@ vue-ai-migrator migrate <project-path> [options]
 - `--typescript`: Enable TypeScript type annotations in migrated code (see [TypeScript Support](#typescript-support))
 - `--install`: Automatically reinstall dependencies after migration
 - `--clean-install`: Remove `node_modules` and `package-lock.json` before reinstalling dependencies (recommended after migration)
-- `--legacy`: Use legacy post-migration fixer (multi-pass) - **recommended for now** (optimized version being stabilized)
-
 **Examples:**
 
 ```bash
 # Free mode (default) - AST transformations only, no API key required
 vue-ai-migrator migrate ./my-project --dry-run --show-diff
 
-# Full migration in free mode (recommended: --legacy for post-migration fixer)
-vue-ai-migrator migrate ./my-project --legacy --generate-tests
+# Full migration in free mode
+vue-ai-migrator migrate ./my-project --generate-tests
 
 # Migration with AI assistance (requires API key)
 export OPENAI_API_KEY=sk-your-key
@@ -1174,22 +1169,15 @@ If you want AI assistance:
 
 **Solution**:
 
-1. **Use `--legacy`** : the legacy post-migration fixer is more stable currently
-2. Check the migration report for details
-3. Use `--dry-run` mode to preview changes
-4. Try enabling AI assistance: `--ai` (if you have an API key)
-5. Check if the file needs manual intervention (marked as Complex)
-6. Most files work fine in free mode - try without `--ai` first
+1. Check the migration report for details
+2. Use `--dry-run` mode to preview changes
+3. Try enabling AI assistance: `--ai` (if you have an API key)
+4. Check if the file needs manual intervention (marked as Complex)
+5. Most files work fine in free mode - try without `--ai` first
 
 #### Errors after migration (userStore not defined, computed syntax, etc.)
 
-**Solution**: Use the `--legacy` flag for the post-migration fixer:
-
-```bash
-vue-ai-migrator migrate ./my-project --legacy
-```
-
-The optimized fixer version is being stabilized.
+**Solution**: Re-run the migration from a clean state (or rollback then migrate again). If issues persist, check the report and fix manually; open an issue if you think it's a bug.
 
 #### Rollback not working
 
