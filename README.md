@@ -14,7 +14,7 @@ _AST-based transformations + AI integration for reliable migrations_
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D16.0.0-green?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 
-[Documentation](./USAGE.md) • [Examples](./EXAMPLES.md) • [API Keys](./API_KEYS.md) • [Changelog](./CHANGELOG.md)
+[Documentation](./USAGE.md) • [API Keys](./API_KEYS.md) • [Changelog](./CHANGELOG.md) • [Roadmap](./docs/ROADMAP.md)
 
 </div>
 
@@ -29,7 +29,7 @@ Automatic Vue 2 → Vue 3 migration combining:
 - **Migration Rules** for Vue 2 → Vue 3 patterns
 - **🤖 Optional AI Agent** (LLM) for complex cases - Enable with `--ai` flag
 
-> 📖 **Not a developer?** 👉 Check out the **[Simple Guide (GUIDE_SIMPLE.md)](GUIDE_SIMPLE.md)** - Simple explanation without technical jargon, with concrete examples.
+> 📖 **Full usage** → [USAGE.md](./USAGE.md) — installation, commands, configuration, and examples.
 
 ## 📑 Table of Contents
 
@@ -188,10 +188,12 @@ graph LR
 
 ## 📖 Documentation
 
-- **[Simple Guide (GUIDE_SIMPLE.md)](GUIDE_SIMPLE.md)** - For non-developers, simple language explanation
-- **[README.md](README.md)** - Complete documentation for developers (you are here)
-- **[Post-Migration Fixer (docs/POST_MIGRATION_FIXER.md)](docs/POST_MIGRATION_FIXER.md)** - Legacy vs optimized fixer, `--legacy` usage
-- **[COVERAGE_ANALYSIS.md](COVERAGE_ANALYSIS.md)** - Coverage analysis of Vue 3 breaking changes
+- **[USAGE.md](./USAGE.md)** — Installation, commands, configuration, examples (main user guide)
+- **[API_KEYS.md](./API_KEYS.md)** — Configure AI provider API keys (optional, for `--ai` mode)
+- **[CHANGELOG.md](./CHANGELOG.md)** — Version history
+- **[docs/ROADMAP.md](./docs/ROADMAP.md)** — Roadmap and planned features
+- **[docs/README.md](./docs/README.md)** — Documentation layout (root vs `docs/` vs `docs/internal/`)
+- **Contributors** — Internal/technical docs (fixer architecture, benchmarks, stabilization) are in [docs/internal/](./docs/internal/)
 
 ## 📦 Installation
 
@@ -1043,15 +1045,15 @@ vue-ai-migrator rollback ./my-vue2-project --file src/components/MyComponent.vue
 
 ## 📚 Documentation
 
-- **[Usage Guide](./USAGE.md)**: Complete usage instructions and examples
-- **[Examples](./EXAMPLES.md)**: Real-world migration examples
-- **[API Keys Configuration](./API_KEYS.md)**: How to configure AI provider API keys
-- **[Roadmap](./ROADMAP.md)**: Future development plans
-- **[Changelog](./CHANGELOG.md)**: Version history and changes
+- **[Usage Guide](./USAGE.md)** — Complete usage instructions and examples
+- **[API Keys](./API_KEYS.md)** — Configure AI provider API keys
+- **[Roadmap](./docs/ROADMAP.md)** — Future development plans
+- **[Changelog](./CHANGELOG.md)** — Version history and changes
+- **More** — See [docs/README.md](./docs/README.md) for full documentation layout.
 
 ## 🗺️ Roadmap
 
-See [ROADMAP.md](./ROADMAP.md) for detailed roadmap and future plans.
+See [ROADMAP.md](./docs/ROADMAP.md) for detailed roadmap and future plans.
 
 **Current Version**: v0.6.0 - Free Mode by Default
 
@@ -1196,7 +1198,7 @@ The optimized fixer version is being stabilized.
 ### Getting Help
 
 - **GitHub Issues**: [Report a bug or request a feature](https://github.com/TylerDurden75/vue-ai-migrator/issues)
-- **Documentation**: Check [USAGE.md](./USAGE.md) and [EXAMPLES.md](./EXAMPLES.md)
+- **Documentation**: Check [USAGE.md](./USAGE.md)
 - **API Keys**: See [API_KEYS.md](./API_KEYS.md) for configuration help
 
 ## 📝 License

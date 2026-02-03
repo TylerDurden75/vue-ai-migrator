@@ -5,6 +5,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Backup files (e.g. vue.config.js.backup created during migration)
+*.backup
+
 # Logs
 *.log
 npm-debug.log*
@@ -43,22 +46,22 @@ test-report.md
 *.report.json
 *.report.md
 
-# Internal documentation (development notes - not needed in repo)
-ANALYSIS_PRIORITY.md
-TRANSFORMATIONS_PRIORITY.md
-CHANGELOG_NEW_TRANSFORMATIONS.md
-EXAMPLE-README.md
-
 # Temporary files
 tmp/
 temp/
 *.tmp
 
-
 # Test project (for local testing only)
 test-project/
 
-# Internal documentation (development notes - not needed in repo)
+# Test e2e (keep for development but don't publish)
+test-e2e/
+
+# Internal / one-off docs (not committed; dev notes live in docs/internal/)
+ANALYSIS_PRIORITY.md
+TRANSFORMATIONS_PRIORITY.md
+CHANGELOG_NEW_TRANSFORMATIONS.md
+EXAMPLE-README.md
 PREPUBLISH_CHECKLIST.md
 VALIDATION_RESULTS.md
 test-report.md
@@ -72,6 +75,3 @@ VISION_CHECKLIST.md
 COMPETITIVE_ANALYSIS.md
 VISUAL_IMPROVEMENTS.md
 IMPROVEMENTS.md
-
-# Test e2e (keep for development but don't publish)
-test-e2e/
