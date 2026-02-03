@@ -7,6 +7,60 @@ import { getCachedRegex } from "../utils/regex-cache";
 import { getStoreMethodMap } from "../utils/store-analysis-cache";
 
 /**
+ * Fix: Add missing Vue imports (ref, computed, watch) when used in script setup but not imported.
+ */
+export const missingVueImportsRule: FixRule = {
+  id: "missing-vue-imports",
+  description: "Add ref, computed, watch to vue import when used in script setup but not imported",
+  priority: 91,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    const usesRef = /\bref\s*\(/.test(script);
+    const usesComputed = /\bcomputed\s*\(/.test(script);
+    const usesWatch = /\bwatch\s*\(/.test(script);
+    if (!usesRef && !usesComputed && !usesWatch) return false;
+    const vueImport = script.match(/import\s*\{([^}]*)\}\s*from\s*['"]vue['"]/);
+    const hasRef = vueImport ? /\bref\b/.test(vueImport[1]) : false;
+    const hasComputed = vueImport ? /\bcomputed\b/.test(vueImport[1]) : false;
+    const hasWatch = vueImport ? /\bwatch\b/.test(vueImport[1]) : false;
+    return (usesRef && !hasRef) || (usesComputed && !hasComputed) || (usesWatch && !hasWatch);
+  },
+  apply: async (filePath, content, context) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+    const usesRef = /\bref\s*\(/.test(scriptContent);
+    const usesComputed = /\bcomputed\s*\(/.test(scriptContent);
+    const usesWatch = /\bwatch\s*\(/.test(scriptContent);
+    const vueImportRegex = /import\s*\{([^}]*)\}\s*from\s*['"]vue['"]\s*;?/;
+    const m = scriptContent.match(vueImportRegex);
+    const toAdd: string[] = [];
+    if (usesRef && (!m || !/\bref\b/.test(m[1]))) toAdd.push("ref");
+    if (usesComputed && (!m || !/\bcomputed\b/.test(m[1]))) toAdd.push("computed");
+    if (usesWatch && (!m || !/\bwatch\b/.test(m[1]))) toAdd.push("watch");
+    if (toAdd.length === 0) return result;
+    if (m) {
+      const existing = m[1].trim().split(/\s*,\s*/).filter(Boolean);
+      const combined = [...new Set([...existing, ...toAdd])].join(", ");
+      scriptContent = scriptContent.replace(vueImportRegex, `import { ${combined} } from 'vue';`);
+    } else {
+      const firstImportMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+      const afterImports = firstImportMatch ? firstImportMatch[0].length : 0;
+      scriptContent =
+        scriptContent.slice(0, afterImports) +
+        `import { ${toAdd.join(", ")} } from 'vue';\n` +
+        scriptContent.slice(afterImports);
+    }
+    result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+    result.fixed = true;
+    result.fixes.push(`Added missing Vue imports: ${toAdd.join(", ")}`);
+    return result;
+  }
+};
+
+/**
  * Fix: Split imports on the same line (';import or ";import → newline + import).
  */
 export const splitImportsOnSameLineRule: FixRule = {
@@ -426,73 +480,89 @@ export const correctWrongStoreImportsRule: FixRule = {
       });
     }
 
-    // Determine correct module for each store variable based on its usage
+    // Map: for each canonical storeVar, which actual variable names are assigned from it (e.g. productStore = useUserStore() -> userStore has actualVar productStore)
+    const storeVarToActualVars = new Map<string, string[]>();
+    const initPattern = /const\s+(\w+Store)\s*=\s*use(\w+)Store\s*\(\s*\)/g;
+    while ((match = initPattern.exec(scriptContent)) !== null) {
+      const [, actualVar, storeName] = match;
+      const canonical = `${storeName.charAt(0).toLowerCase() + storeName.slice(1)}Store`;
+      if (!storeVarToActualVars.has(canonical)) {
+        storeVarToActualVars.set(canonical, []);
+      }
+      if (!storeVarToActualVars.get(canonical)!.includes(actualVar)) {
+        storeVarToActualVars.get(canonical)!.push(actualVar);
+      }
+    }
+
+    // Determine correct module for each store variable based on its usage (aggregate usage from canonical var and all actual vars)
     const wrongImports: Array<{
       importLine: string;
       wrongStore: string;
       wrongStoreVar: string;
       wrongModule: string;
       correctModule: string;
+      actualVarNames: string[];
     }> = [];
 
     storeImports.forEach(({ importLine, storeName, storeVar, importedModule }) => {
-      const usage = storeVarUsage.get(storeVar);
-      if (!usage || usage.size === 0) {
-        return; // No usage detected for this store variable
+      const actualVars = [storeVar, ...(storeVarToActualVars.get(storeVar) || [])].filter((v, i, a) => a.indexOf(v) === i);
+      const aggregatedUsage = new Map<string, number>();
+      for (const av of actualVars) {
+        const usage = storeVarUsage.get(av);
+        if (usage) {
+          usage.forEach((count, module) => {
+            aggregatedUsage.set(module, (aggregatedUsage.get(module) || 0) + count);
+          });
+        }
       }
+      if (aggregatedUsage.size === 0) return;
 
-      // Find module with highest usage score for this store variable
       let correctModule = importedModule;
       let maxUsage = 0;
-      usage.forEach((count, module) => {
+      aggregatedUsage.forEach((count, module) => {
         if (count > maxUsage) {
           maxUsage = count;
           correctModule = module;
         }
       });
 
-      // If imported module doesn't match the correct module, mark as wrong
-      if (importedModule !== correctModule && maxUsage > 0) {
+      const storeNameFromImport = storeVar.replace(/Store$/, ""); // e.g. productStore -> product
+      const wrongModulePath = importedModule !== correctModule;
+      const wrongStoreName = storeNameFromImport !== correctModule; // e.g. importing useProductStore but usage says user
+      if (maxUsage > 0 && (wrongModulePath || wrongStoreName)) {
         wrongImports.push({
           importLine,
           wrongStore: storeName,
           wrongStoreVar: storeVar,
           wrongModule: importedModule,
-          correctModule
+          correctModule,
+          actualVarNames: actualVars
         });
       }
     });
 
     // Fix wrong imports
     if (wrongImports.length > 0) {
-      wrongImports.forEach(({ importLine, wrongStore, wrongModule, correctModule }) => {
+      wrongImports.forEach(({ importLine, wrongStore, wrongModule, correctModule, actualVarNames }) => {
         const correctStore = `use${correctModule.charAt(0).toUpperCase() + correctModule.slice(1)}Store`;
         const correctImport = `import { ${correctStore} } from '@/store/modules/${correctModule}'`;
-        
-        // Extract wrong store variable name from wrongStore (e.g., useProductStore → productStore)
-        const wrongStoreNameMatch = wrongStore.match(/use(\w+)Store/);
-        const wrongStoreVarName = wrongStoreNameMatch 
-          ? `${wrongStoreNameMatch[1].charAt(0).toLowerCase() + wrongStoreNameMatch[1].slice(1)}Store`
-          : `${wrongModule}Store`;
-        
         const correctStoreVar = `${correctModule}Store`;
-        
-        // Replace import
+
         scriptContent = scriptContent.replace(importLine, correctImport);
 
-        // Replace store initialization (escape special regex chars in variable names)
-        const escapedWrongStoreVar = wrongStoreVarName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const escapedWrongStore = wrongStore.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        scriptContent = scriptContent.replace(
-          new RegExp(`const\\s+${escapedWrongStoreVar}\\s*=\\s*${escapedWrongStore}\\(\\)`, "g"),
-          `const ${correctStoreVar} = ${correctStore}()`
-        );
-
-        // Replace store usage (escape special regex chars)
-        scriptContent = scriptContent.replace(
-          new RegExp(`\\b${escapedWrongStoreVar}\\.`, "g"),
-          `${correctStoreVar}.`
-        );
+        for (const wrongStoreVarName of actualVarNames) {
+          if (wrongStoreVarName === correctStoreVar) continue;
+          const escapedWrongStoreVar = wrongStoreVarName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const escapedWrongStore = wrongStore.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          scriptContent = scriptContent.replace(
+            new RegExp(`const\\s+${escapedWrongStoreVar}\\s*=\\s*${escapedWrongStore}\\(\\)`, "g"),
+            `const ${correctStoreVar} = ${correctStore}()`
+          );
+          scriptContent = scriptContent.replace(
+            new RegExp(`\\b${escapedWrongStoreVar}\\.`, "g"),
+            `${correctStoreVar}.`
+          );
+        }
       });
 
       if (scriptContent !== originalScriptContent) {

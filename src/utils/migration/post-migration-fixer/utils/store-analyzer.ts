@@ -62,9 +62,11 @@ export async function analyzePiniaStores(
               while (
                 (propMatch = propertyPattern.exec(returnContent)) !== null
               ) {
-                const exportedName = propMatch[2] || propMatch[1]; // Use alias if present, otherwise original name
-                const internalName = propMatch[1];
+                const exportedKey = propMatch[1]; // key in return { key: value }
+                const exportedName = propMatch[2] || propMatch[1]; // value identifier if alias, else key
 
+                // Always map the exported key (what consumers use) to the module
+                methodToStoreMap.set(exportedKey, moduleName);
                 if (
                   ![
                     "ref",
@@ -75,13 +77,10 @@ export async function analyzePiniaStores(
                     "onUnmounted",
                     "undefined",
                     "null",
-                  ].includes(exportedName)
+                  ].includes(exportedName) &&
+                  exportedKey !== exportedName
                 ) {
-                  // Map both the exported name and internal name to the module
                   methodToStoreMap.set(exportedName, moduleName);
-                  if (internalName !== exportedName) {
-                    methodToStoreMap.set(internalName, moduleName);
-                  }
                 }
               }
             }

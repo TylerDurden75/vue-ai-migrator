@@ -178,7 +178,7 @@ export const useUserStore = defineStore('user', () => {
 
   it("should return empty map if directory doesn't exist", async () => {
     mockFs.readdir.mockRejectedValue(new Error("Directory not found"));
-    mockFs.readFile = jest.fn().mockRejectedValue(new Error("File not found"));
+    mockFs.readFile.mockRejectedValue(new Error("File not found"));
 
     const result = await analyzePiniaStores(mockProjectRoot);
 
@@ -206,7 +206,8 @@ export const useProductStore = defineStore('product', () => {
 
     const result = await analyzePiniaStores(mockProjectRoot);
 
-    expect(mockFs.readFile).toHaveBeenCalledTimes(2); // Only .ts and .js files
+    // readFile: 2 for user.ts + product.js, then 2 for store index.ts / index.js attempts
+    expect(mockFs.readFile).toHaveBeenCalledTimes(4);
     expect(result.size).toBeGreaterThan(0);
   });
 

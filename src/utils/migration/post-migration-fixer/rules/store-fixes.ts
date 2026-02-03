@@ -64,10 +64,35 @@ export const asyncFunctionRule: FixRule = {
       replacements.push({ start: match.index, end: braceEnd + 1, funcName: match[1], replacement });
     }
 
-    for (const { start, end, replacement } of replacements.sort((a, b) => b.start - a.start)) {
-      fixed = fixed.slice(0, start) + replacement + fixed.slice(end);
-      result.fixed = true;
-      result.fixes.push("Made function async (uses await)");
+    // Pattern: object method name() { or name(x) { (no nested parens in params - avoid matching defineStore('user', {)
+    const objectMethodBlocklist = new Set(["function", "defineStore", "state", "actions", "getters", "mutations", "if", "for", "while", "switch", "catch"]);
+    const methodShorthandRe = /(\w+)\s*\([^()]*\)\s*\{/g;
+    while ((match = methodShorthandRe.exec(content)) !== null) {
+      const methodName = match[1];
+      if (objectMethodBlocklist.has(methodName) || match[0].startsWith("async ")) continue;
+      if (content.substring(Math.max(0, match.index - 9), match.index) === "function ") continue;
+      const braceStart = content.indexOf("{", match.index);
+      const braceEnd = findMatchingBrace(content, braceStart);
+      if (braceEnd === -1) continue;
+      const body = content.slice(braceStart + 1, braceEnd);
+      if (!body.includes("await")) continue;
+      const full = content.slice(match.index, braceEnd + 1);
+      const replacement = "async " + full;
+      replacements.push({ start: match.index, end: braceEnd + 1, funcName: methodName, replacement });
+    }
+
+    if (replacements.length > 0) {
+      const sorted = replacements.sort((a, b) => a.start - b.start);
+      let built = "";
+      let lastEnd = 0;
+      for (const { start, end, replacement, funcName } of sorted) {
+        built += fixed.slice(lastEnd, start) + replacement;
+        lastEnd = end;
+        result.fixed = true;
+        result.fixes.push(funcName ? `Made function ${funcName} async (uses await)` : "Made function async (uses await)");
+      }
+      built += fixed.slice(lastEnd);
+      fixed = built;
     }
 
     // Pattern: const name = () => { ... await ... } - non-greedy match
@@ -85,7 +110,25 @@ export const asyncFunctionRule: FixRule = {
       result.fixes.push("Made arrow function async (uses await)");
     }
 
-    fixed = fixed.replace(/async\s+async\s+/g, "async ");
+    // Pattern: methodName: () => { ... await ... } (object property arrow)
+    const propArrowRe = /(\w+)\s*:\s*\([^)]*\)\s*=>\s*\{/g;
+    while ((match = propArrowRe.exec(fixed)) !== null) {
+      if (fixed.slice(match.index, match.index + 15).includes("async")) continue;
+      const braceStart = fixed.indexOf("{", match.index);
+      const braceEnd = findMatchingBrace(fixed, braceStart);
+      if (braceEnd === -1) continue;
+      const body = fixed.slice(braceStart + 1, braceEnd);
+      if (!body.includes("await")) continue;
+      const full = fixed.slice(match.index, braceEnd + 1);
+      const asyncVersion = full.replace(/^(\w+)\s*:\s*\(/, "$1: async (");
+      fixed = fixed.slice(0, match.index) + asyncVersion + fixed.slice(braceEnd + 1);
+      result.fixed = true;
+      result.fixes.push("Made arrow function async (uses await)");
+    }
+
+    while (fixed.includes("async async")) {
+      fixed = fixed.replace(/async\s+async\s+/g, "async ");
+    }
     result.content = fixed;
     return result;
   }

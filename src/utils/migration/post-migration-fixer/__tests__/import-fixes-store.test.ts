@@ -5,6 +5,7 @@
 
 import { correctWrongStoreImportsRule, addMissingStoreImportsRule } from "../rules/import-fixes";
 import * as storeAnalyzer from "../utils/store-analyzer";
+import { clearStoreAnalysisCache } from "../utils/store-analysis-cache";
 import * as path from "path";
 import * as fs from "fs/promises";
 
@@ -16,6 +17,7 @@ describe("correctWrongStoreImportsRule", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    clearStoreAnalysisCache();
   });
 
   it("should detect and correct wrong store import", async () => {
@@ -152,6 +154,7 @@ describe("addMissingStoreImportsRule", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    clearStoreAnalysisCache();
   });
 
   it("should add missing store import when store is used", async () => {

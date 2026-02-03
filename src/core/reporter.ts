@@ -31,6 +31,10 @@ export interface MigrationReport {
     filesSkipped: number;
     totalTime: number; // milliseconds
     estimatedTimeRemaining?: string;
+    /** Number of files classified as Simple or Medium (migrable without AI) */
+    freeModeCoverage?: number;
+    /** Percentage of files in free-mode range (0–100) */
+    freeModeCoveragePercent?: number;
   };
   classification: {
     simple: number;
@@ -60,6 +64,13 @@ export class MigrationReporter {
     fileReports: FileReport[],
     outputPath: string,
   ): Promise<string> {
+    const simple = fileReports.filter((f) => f.classification.level === "simple").length;
+    const medium = fileReports.filter((f) => f.classification.level === "medium").length;
+    const complex = fileReports.filter((f) => f.classification.level === "complex").length;
+    const total = fileReports.length;
+    const freeModeCoverage = simple + medium;
+    const freeModeCoveragePercent = total > 0 ? Math.round((freeModeCoverage / total) * 100) : 0;
+
     const report: MigrationReport = {
       summary: {
         totalFiles: result.filesAnalyzed,
@@ -67,14 +78,13 @@ export class MigrationReporter {
         filesMigrated: result.filesModified,
         filesSkipped: result.filesAnalyzed - result.filesModified,
         totalTime: 0, // Time tracking can be added in future versions
+        freeModeCoverage,
+        freeModeCoveragePercent,
       },
       classification: {
-        simple: fileReports.filter((f) => f.classification.level === "simple")
-          .length,
-        medium: fileReports.filter((f) => f.classification.level === "medium")
-          .length,
-        complex: fileReports.filter((f) => f.classification.level === "complex")
-          .length,
+        simple,
+        medium,
+        complex,
       },
       files: fileReports,
       errors: result.errors,

@@ -125,14 +125,14 @@ export const nullChecksLengthRule: FixRule = {
 
     let fixed = content;
 
-    // Fix: store.property.length → (store.property || []).length
+    // Fix: store.property.length → (store.property ?? []).length
     // But only if not already wrapped
     fixed = fixed.replace(
       /(\w+Store\.\w+)\s*\.length(?!\s*\))/g,
       (match, propertyPath) => {
         // Check if already wrapped
-        if (!match.includes("||") && !match.includes("?")) {
-          return `(${propertyPath} || []).length`;
+        if (!match.includes("||") && !match.includes("??")) {
+          return `(${propertyPath} ?? []).length`;
         }
         return match;
       }
@@ -140,7 +140,7 @@ export const nullChecksLengthRule: FixRule = {
 
     // Fix: computedName.length → computedName.value.length (if computed)
     if (context.scriptContent) {
-      const computedPattern = /const\s+(\w+)\s*=\s*computed\s*\(/g;
+      const computedPattern = /const\s+(\w+)\s*=\s*computed\s*(?:<[^>]*>)?\s*\(/g;
       const computedNames = new Set<string>();
       let match;
       while ((match = computedPattern.exec(context.scriptContent)) !== null) {
@@ -159,6 +159,21 @@ export const nullChecksLengthRule: FixRule = {
               /<script[^>]*>([\s\S]*?)<\/script>/,
               `<script${scriptMatch[0].match(/<script\s+([^>]+)>/)?.[1] || ""}>${scriptContent}</script>`
             );
+          }
+        }
+        // Fix: computedName.length in template → (computedName ?? []).length (null-safe)
+        if (context.templateContent && new RegExp(`\\b${computedName}\\.length\\b`).test(context.templateContent)) {
+          const templateMatch = fixed.match(/<template[^>]*>([\s\S]*?)<\/template>/);
+          if (templateMatch) {
+            const templatePattern = new RegExp(`\\b${computedName}\\.length\\b`, "g");
+            const newTemplate = templateMatch[1].replace(templatePattern, `(${computedName} ?? []).length`);
+            if (newTemplate !== templateMatch[1]) {
+              fixed = fixed.replace(
+                /<template[^>]*>([\s\S]*?)<\/template>/,
+                `<template${templateMatch[0].match(/<template\s+([^>]+)>/)?.[1] || ""}>${newTemplate}</template>`
+              );
+              result.fixed = true;
+            }
           }
         }
       });

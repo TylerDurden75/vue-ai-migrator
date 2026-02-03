@@ -21,14 +21,14 @@ import {
   duplicateKeysRule,
   piniaStoreCrossStoreDepsRule
 } from "./rules/store-fixes";
-import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, routerGuardPiniaRule, catchAllRouteRule } from "./rules/router-fixes";
-import { splitImportsOnSameLineRule, removeVuexImportsRule, removeVueCompilerMacrosRule, mergeDuplicateImportsRule, duplicateSameIdentifierImportsRule, correctWrongStoreImportsRule, addMissingStoreImportsRule } from "./rules/import-fixes";
+import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, routerGuardPiniaRule, catchAllRouteRule, routerPushNameParamsToPathRule } from "./rules/router-fixes";
+import { missingVueImportsRule, splitImportsOnSameLineRule, removeVuexImportsRule, removeVueCompilerMacrosRule, mergeDuplicateImportsRule, duplicateSameIdentifierImportsRule, correctWrongStoreImportsRule, addMissingStoreImportsRule } from "./rules/import-fixes";
 import { computedValueRule, vueComputedExtraParenRule, malformedComputedRule, computedSyntaxRule } from "./rules/computed-fixes";
 import { templateInterpolationParensRule, templateCurrencyNonNumericRule, missingComponentImportsRule, templateFilterFunctionImportsRule, missingFilterImportsRule, vModelBindingsRule } from "./rules/template-fixes";
 import { wrongStorePropertyRule, nullChecksLengthRule, detailViewStoreRule } from "./rules/final-fixes";
 import { destructuringKeyValueParamRule, incorrectEventTypeRule, filtersKeyAccessRule, stripTypeScriptAnnotationsRule, typescriptTypeImprovementsRule } from "./rules/type-fixes";
 import { vueStoreVuexToPiniaRule } from "./rules/vue-store-vuex";
-import { storeScriptSetupRule, replaceThisRouterRouteRule, missingUseRouteImportRule, watchPropsRefRule, storeThemeBindingRule, secureRouterPushRule, routerPushTypeCheckRule, fixStoreMemberMismatchRule } from "./rules/store-script-setup-fixes";
+import { storeScriptSetupRule, replaceThisRouterRouteRule, missingUseRouteImportRule, missingUseRouterImportRule, watchPropsRefRule, storeThemeBindingRule, secureRouterPushRule, routerPushTypeCheckRule, fixStoreMemberMismatchRule } from "./rules/store-script-setup-fixes";
 import { formatWithPrettier } from "../prettier-formatter";
 import { astCache } from "./utils/ast-cache";
 
@@ -45,7 +45,9 @@ ruleEngine.registerRules([
   createWebHistoryRule,           // Priority 94
   routerGuardPiniaRule,           // Priority 93 (router.app.$store → Pinia in guard)
   catchAllRouteRule,              // Priority 93
-  splitImportsOnSameLineRule,     // Priority 92 (split ';import on same line)
+  routerPushNameParamsToPathRule, // Priority 91 (router.push name+params → path)
+  missingVueImportsRule,          // Priority 91 (add ref/computed/watch when used but not imported)
+  splitImportsOnSameLineRule,      // Priority 92 (split ';import on same line)
   asyncFunctionRule,              // Priority 90
   storeIndexNamedExportRule,      // Priority 78 (store/index: add useIndexStore export)
   storeIndexRemoveObsoleteImportsRule, // Priority 79 (remove default module imports + Vue)
@@ -81,7 +83,8 @@ ruleEngine.registerRules([
   // Store script setup fixes
   storeScriptSetupRule,           // Priority 70
   replaceThisRouterRouteRule,     // Priority 68 (this.$router/this.$route → useRouter/useRoute)
-  missingUseRouteImportRule,      // Priority 69 (useRoute() used but not imported → add to vue-router)
+  missingUseRouteImportRule,       // Priority 69 (useRoute() used but not imported → add to vue-router)
+  missingUseRouterImportRule,      // Priority 69 (useRouter() used but not imported → add to vue-router)
   watchPropsRefRule,              // Priority 67 (watch(() => prop.value) → watch(() => props.prop))
   storeThemeBindingRule,         // Priority 66 (currentTheme from appStore when v-model currentTheme)
   secureRouterPushRule,           // Priority 65

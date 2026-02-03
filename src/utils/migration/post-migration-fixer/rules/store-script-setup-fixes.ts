@@ -157,7 +157,6 @@ export const replaceThisRouterRouteRule: FixRule = {
 /**
  * Fix: useRoute() used in script but not imported from vue-router.
  * Pattern: script contains useRoute() or const route = useRoute() but import from 'vue-router' lacks useRoute.
- * Generic: add useRoute to existing vue-router import when missing.
  */
 export const missingUseRouteImportRule: FixRule = {
   id: "missing-use-route-import",
@@ -193,6 +192,47 @@ export const missingUseRouteImportRule: FixRule = {
     result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
     result.fixed = true;
     result.fixes.push("Added useRoute to vue-router import");
+    return result;
+  }
+};
+
+/**
+ * Fix: useRouter() used in script but not imported from vue-router.
+ */
+export const missingUseRouterImportRule: FixRule = {
+  id: "missing-use-router-import",
+  description: "Add useRouter to vue-router import when used but not imported",
+  priority: 69,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    const usesUseRouter = /\buseRouter\s*\(\)/.test(script) || /=\s*useRouter\s*\(\)/.test(script);
+    const hasUseRouterInImport = /import\s*\{[^}]*\buseRouter\b[^}]*\}\s*from\s*['"]vue-router['"]/.test(script);
+    return usesUseRouter && !hasUseRouterInImport;
+  },
+  apply: async (filePath, content, context) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+    const importRegex = /import\s*\{([^}]+)\}\s*from\s*['"]vue-router['"]\s*;?/;
+    const m = scriptContent.match(importRegex);
+    if (m) {
+      const imports = m[1].trim();
+      if (/\buseRouter\b/.test(imports)) return result;
+      const newImports = imports + (imports ? ", " : "") + "useRouter";
+      scriptContent = scriptContent.replace(importRegex, `import { ${newImports} } from 'vue-router';`);
+    } else {
+      const firstImportMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+      const afterImports = firstImportMatch ? firstImportMatch[0].length : 0;
+      scriptContent =
+        scriptContent.slice(0, afterImports) +
+        "import { useRouter } from 'vue-router';\n" +
+        scriptContent.slice(afterImports);
+    }
+    result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+    result.fixed = true;
+    result.fixes.push("Added useRouter to vue-router import");
     return result;
   }
 };
@@ -297,6 +337,7 @@ export const storeThemeBindingRule: FixRule = {
 /**
  * Fix: Secure router.push with params
  * Pattern: router.push({ name: 'route', params: { id } }) → ensure params are defined
+ * Handles shorthand { id }, { id, type }, and explicit { id: id }, multiple params.
  */
 export const secureRouterPushRule: FixRule = {
   id: "secure-router-push",
@@ -316,33 +357,50 @@ export const secureRouterPushRule: FixRule = {
 
     let fixed = content;
 
-    // Fix: router.push({ name: 'route', params: { id } }) where id might be undefined
-    // Pattern: router.push({ name: 'route', params: { id: someVar } })
+    // Match router.push({ ... params: { ... } ... }) with any param names
     const routerPushPattern = getCachedRegex(
-      "router\\.push\\s*\\(\\s*\\{[^}]*params:\\s*\\{[^}]*id[^}]*\\}[^}]*\\}\\s*\\)",
+      "router\\.push\\s*\\(\\s*\\{[^}]*params:\\s*\\{([^}]+)\\}[^}]*\\}\\s*\\)",
       "g"
     );
-    
+
     let match;
     const fixes: string[] = [];
-    
+
     while ((match = routerPushPattern.exec(content)) !== null) {
       const fullMatch = match[0];
-      
-      // Add null check if not present
-      if (!fullMatch.includes("||") && !fullMatch.includes("?")) {
-        // Extract the id variable name
-        const idMatch = fullMatch.match(/id:\s*([^,}]+)/);
-        if (idMatch) {
-          const idVar = idMatch[1].trim();
-          // Add fallback: id: idVar || ''
-          const fixedMatch = fullMatch.replace(
-            `id: ${idVar}`,
-            `id: ${idVar} || ''`
-          );
-          fixed = fixed.replace(fullMatch, fixedMatch);
-          fixes.push(`Secured router.push with params fallback for ${idVar}`);
+      const paramsBody = match[1];
+
+      if (fullMatch.includes("||") || fullMatch.includes("??")) {
+        continue;
+      }
+
+      // Parse params: "id", "id: id", "id: id, type: type", "slug", etc. Build fixed params per part.
+      const parts = paramsBody.split(",").map(p => p.trim());
+
+      // Build fixed params by replacing each part (avoid double-replacement of shorthand)
+      const fixedParts = parts.map((part) => {
+        const colonIdx = part.indexOf(":");
+        let key: string;
+        let value: string;
+        let needsFallback: boolean;
+        if (colonIdx === -1) {
+          key = part.trim();
+          value = key;
+          needsFallback = /^\w+$/.test(key) && !fullMatch.includes(`${key} || ''`) && !fullMatch.includes(`${key} ?? ''`);
+        } else {
+          key = part.slice(0, colonIdx).trim();
+          value = part.slice(colonIdx + 1).trim();
+          needsFallback = !/ \|\| | \?\? /.test(value) && !value.includes("?.");
         }
+        if (!needsFallback) return part;
+        return `${key}: ${value} || ''`;
+      });
+      const fixedParamsBody = fixedParts.join(", ");
+      const didFix = fixedParamsBody !== paramsBody;
+      if (didFix) {
+        const fixedMatch = fullMatch.replace(paramsBody, fixedParamsBody);
+        fixed = fixed.replace(fullMatch, fixedMatch);
+        fixes.push(`Secured router.push with params fallback`);
       }
     }
 
@@ -400,13 +458,14 @@ export const routerPushTypeCheckRule: FixRule = {
     while ((match = routerPushTypePattern.exec(content)) !== null) {
       const routeName = match[1];
       const fullMatch = match[0];
-      
+      const nameLiteral = fullMatch.match(/name:\s*(["'])([^"']+)\1/);
+      const quote = nameLiteral ? nameLiteral[1] : "'";
+
       // Add type assertion if not present
       if (!fullMatch.includes("as string")) {
-        const fixedMatch = fullMatch.replace(
-          `name: '${routeName}'`,
-          `name: '${routeName}' as string`
-        );
+        const search = `name: ${quote}${routeName}${quote}`;
+        const replacement = `name: ${quote}${routeName}${quote} as string`;
+        const fixedMatch = fullMatch.replace(search, replacement);
         fixed = fixed.replace(fullMatch, fixedMatch);
         fixes.push(`Added type checking for router.push route name: ${routeName}`);
       }

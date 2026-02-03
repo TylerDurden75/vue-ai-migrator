@@ -20,7 +20,6 @@
     "build": "echo 'TypeScript compilation...' && npx tsc && echo 'Adding shebang to dist/cli.js...' && node scripts/add-shebang.js && echo 'Build complete.'",
     "dev": "tsc --watch",
     "test:coverage": "jest --coverage --coverageReporters=text --coverageReporters=lcov --coverageReporters=html",
-    "test:e2e": "node test-e2e/test-all-features.js",
     "lint": "eslint src --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "check": "npm run lint && npm test && npm run build",

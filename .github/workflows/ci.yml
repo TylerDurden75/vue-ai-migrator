@@ -60,3 +60,13 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Smoke test (dry-run on test-project if present)
+        run: |
+          if [ -d ./test-project ]; then
+            node dist/cli.js migrate ./test-project --dry-run --no-rollback -o smoke-report.json
+            test -f smoke-report.json
+            node -e "const r = require('./smoke-report.json'); process.exit(r.summary && typeof r.summary.filesAnalyzed === 'number' && (r.summary.freeModeCoveragePercent !== undefined) ? 0 : 1)"
+          else
+            echo "test-project not found, skipping smoke test"
+          fi

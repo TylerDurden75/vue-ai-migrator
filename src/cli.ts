@@ -12,6 +12,17 @@ import { detectVueVersion, analyzeProject } from "./utils/analysis";
 import { installDependencies } from "./utils/migration/dependency-checker";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { readFileSync } from "fs";
+
+function getCliVersion(): string {
+  try {
+    const packagePath = path.join(__dirname, "..", "package.json");
+    const pkg = JSON.parse(readFileSync(packagePath, "utf-8"));
+    return (pkg && pkg.version) || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
 
 const program = new Command();
 
@@ -20,7 +31,7 @@ program
   .description(
     "Automatic Vue 2 → Vue 3 migration - Free mode by default (AST only), optional AI assistance",
   )
-  .version("0.6.0");
+  .version(getCliVersion());
 
 program
   .command("migrate")
@@ -133,17 +144,15 @@ program
       // AI is enabled only if explicitly requested with --ai/--use-ai flag
       const shouldUseAI = (options.ai || options.useAi) && !options.noAi;
       
-      // Warn if AI is requested but no key provided
+      // Fail fast with clear message if AI requested but no key
       if (shouldUseAI && !apiKey) {
-        spinner.warn(
-          "AI assistance requested but no API key found. AI features will be disabled.",
+        spinner.fail(
+          "AI assistance (--ai) was enabled but no API key was found.",
         );
         spinner.info(
-          `To enable AI, set API key: ${provider === "openai" ? "OPENAI_API_KEY" : provider === "mistral" ? "MISTRAL_API_KEY" : "ANTHROPIC_API_KEY"}`,
+          `Provide a key via: -k <key> or env ${provider === "openai" ? "OPENAI_API_KEY" : provider === "mistral" ? "MISTRAL_API_KEY" : "ANTHROPIC_API_KEY"}. Or remove --ai to run in free mode (AST only).`,
         );
-        spinner.info(
-          "Continuing with AST-only migration (free mode)...",
-        );
+        process.exit(1);
       }
 
       // Show mode information

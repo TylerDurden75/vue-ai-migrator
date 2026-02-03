@@ -58,31 +58,35 @@ export const incorrectEventTypeRule: FixRule = {
 
     let fixed = content;
 
-    // Fix: function SET_XXX(event: Event) → function SET_XXX(value: any) or appropriate type
-    // Pattern: function SET_XXX(event: Event) or function SET_XXX(event: Event, ...)
+    // Fix: function SET_XXX(event: Event) → function SET_XXX(value: any)
     const eventTypePattern = getCachedRegex(
       "function\\s+(SET_\\w+|\\w+)\\s*\\([^)]*event\\s*:\\s*Event[^)]*\\)",
       "g"
     );
-    
     let match;
     const fixes: string[] = [];
-    
+
     while ((match = eventTypePattern.exec(content)) !== null) {
       const funcName = match[1];
       const fullMatch = match[0];
-      
-      // Determine appropriate type based on function name
       let replacementType = "any";
-      if (funcName.startsWith("SET_")) {
-        // SET_XXX functions usually take a value, not an event
-        replacementType = "any";
-      } else if (funcName.includes("Filter") || funcName.includes("filter")) {
-        // Filter functions might take an object
-        replacementType = "{ key: string; value: any }";
-      }
-      
-      // Replace Event with appropriate type
+      if (funcName.startsWith("SET_")) replacementType = "any";
+      else if (funcName.includes("Filter") || funcName.includes("filter")) replacementType = "{ key: string; value: any }";
+      const fixedMatch = fullMatch.replace(/event\s*:\s*Event/g, `value: ${replacementType}`);
+      fixed = fixed.replace(fullMatch, fixedMatch);
+      fixes.push(`Fixed incorrect Event type in function ${funcName} parameters`);
+    }
+
+    // Fix: object method SET_XXX(event: Event) { → SET_XXX(value: any) {
+    const methodEventPattern = getCachedRegex(
+      "(SET_\\w+|\\w+)\\s*\\(\\s*event\\s*:\\s*Event\\s*\\)\\s*\\{",
+      "g"
+    );
+    let methodMatch;
+    while ((methodMatch = methodEventPattern.exec(fixed)) !== null) {
+      const funcName = methodMatch[1];
+      const fullMatch = methodMatch[0];
+      const replacementType = funcName.startsWith("SET_") ? "any" : (funcName.includes("Filter") || funcName.includes("filter") ? "{ key: string; value: any }" : "any");
       const fixedMatch = fullMatch.replace(/event\s*:\s*Event/g, `value: ${replacementType}`);
       fixed = fixed.replace(fullMatch, fixedMatch);
       fixes.push(`Fixed incorrect Event type in function ${funcName} parameters`);
