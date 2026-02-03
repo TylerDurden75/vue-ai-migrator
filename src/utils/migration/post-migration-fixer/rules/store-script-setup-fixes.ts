@@ -637,9 +637,10 @@ export const fixStoreMemberMismatchRule: FixRule = {
     for (const { useStore, storeVar, importPath } of storesToAdd.values()) {
       if (scriptContent.includes(useStore)) continue;
       const importLine = `import { ${useStore} } from '${importPath}';\n`;
-      const firstImport = scriptContent.match(/^import\s+/m);
-      if (firstImport) {
-        scriptContent = scriptContent.replace(/^import\s+/, importLine + "import ");
+      const firstImportMatch = scriptContent.match(/\n?(import\s+)/m);
+      if (firstImportMatch) {
+        const insertIndex = scriptContent.indexOf(firstImportMatch[1]);
+        scriptContent = scriptContent.slice(0, insertIndex) + importLine + scriptContent.slice(insertIndex);
       } else {
         scriptContent = importLine + scriptContent;
       }
