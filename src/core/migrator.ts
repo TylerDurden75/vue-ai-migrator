@@ -18,6 +18,7 @@ import {
   migrateWebpackConfig,
   migrateVueConfig,
 } from "../utils/migration/webpack-config-migrator";
+import { migrateToViteConfig } from "../utils/migration/vite-config-migrator";
 import { validateMigration } from "../utils/migration";
 import {
   fixPostMigrationIssues,
@@ -801,7 +802,8 @@ export async function migrate(
       }
     }
 
-    // Migrate vue.config.js for Vue CLI projects
+    // Migrate vue.config.js to vite.config.js/ts (Vue 3 uses Vite, not Vue CLI)
+    let viteConfigResult: any = null;
     try {
       const vueConfigPath = path.join(projectPath, "vue.config.js");
       // Backup vue.config.js before migration if not already backed up
@@ -813,42 +815,75 @@ export async function migrate(
         }
       }
 
-      const vueConfigResult = await migrateVueConfig(
-        projectPath,
-        dryRun,
-        options.enableTypeScript || false
-      );
-      if (vueConfigResult.modified) {
-        result.warnings.push(
-          ...vueConfigResult.changes.map((c) => `Vue Config: ${c}`)
+      // Migrate to Vite (recommended for Vue 3)
+      // This will create vite.config.ts/js, update package.json, and clean up legacy files
+      try {
+        viteConfigResult = await migrateToViteConfig(
+          projectPath,
+          dryRun,
+          options.enableTypeScript || false
         );
-        result.warnings.push(...vueConfigResult.warnings);
+        if (viteConfigResult.modified || viteConfigResult.created) {
+          result.warnings.push(
+            ...viteConfigResult.changes.map((c: string) => `Vite Config: ${c}`)
+          );
+          result.warnings.push(...viteConfigResult.warnings);
+        }
+      } catch (error) {
+        // Vite migration failed, continue with legacy migration
+        viteConfigResult = null;
+      }
+
+      // Skip legacy vue.config.js migration if Vite migration was successful
+      // Vite is the recommended approach for Vue 3, and we've already cleaned up vue.config.js
+      if (!viteConfigResult || (!viteConfigResult.modified && !viteConfigResult.created)) {
+        // Only migrate vue.config.js for Vue CLI compatibility if Vite migration didn't happen
+        // This is for edge cases where Vite migration was skipped
+        const vueConfigResult = await migrateVueConfig(
+          projectPath,
+          dryRun,
+          options.enableTypeScript || false
+        );
+        if (vueConfigResult.modified) {
+          result.warnings.push(
+            ...vueConfigResult.changes.map((c) => `Vue Config (legacy): ${c}`)
+          );
+          result.warnings.push(...vueConfigResult.warnings);
+          result.warnings.push(
+            "Note: Vue 3 projects should use Vite (vite.config.js/ts) instead of Vue CLI (vue.config.js)"
+          );
+        }
       }
     } catch (error) {
       // vue.config.js doesn't exist or error, that's fine
     }
 
-    // Migrate webpack.config.js if it exists
-    try {
-      const webpackConfigPath = path.join(projectPath, "webpack.config.js");
-      // Backup webpack.config.js before migration if not already backed up
-      if (rollbackManager && !dryRun) {
-        try {
-          await rollbackManager.backupFile(webpackConfigPath);
-        } catch {
-          // Already backed up or doesn't exist
+    // Skip webpack.config.js migration if Vite migration was successful
+    // Vite replaces webpack, so we don't need to migrate webpack.config.js
+    // The vite migration already handles cleanup of webpack.config.js
+    if (!viteConfigResult || (!viteConfigResult.modified && !viteConfigResult.created)) {
+      // Only migrate webpack.config.js if Vite migration didn't happen
+      try {
+        const webpackConfigPath = path.join(projectPath, "webpack.config.js");
+        // Backup webpack.config.js before migration if not already backed up
+        if (rollbackManager && !dryRun) {
+          try {
+            await rollbackManager.backupFile(webpackConfigPath);
+          } catch {
+            // Already backed up or doesn't exist
+          }
         }
-      }
 
-      const webpackResult = await migrateWebpackConfig(projectPath, dryRun);
-      if (webpackResult.modified) {
-        result.warnings.push(
-          ...webpackResult.changes.map((c) => `Webpack: ${c}`)
-        );
-        result.warnings.push(...webpackResult.warnings);
+        const webpackResult = await migrateWebpackConfig(projectPath, dryRun);
+        if (webpackResult.modified) {
+          result.warnings.push(
+            ...webpackResult.changes.map((c) => `Webpack: ${c}`)
+          );
+          result.warnings.push(...webpackResult.warnings);
+        }
+      } catch (error) {
+        // webpack.config.js doesn't exist or error, that's fine
       }
-    } catch (error) {
-      // webpack.config.js doesn't exist or error, that's fine
     }
 
     // Validate migration if requested

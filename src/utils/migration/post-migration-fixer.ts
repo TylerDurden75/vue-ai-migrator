@@ -12272,6 +12272,57 @@ export async function fixPostMigrationIssues(
     }
   }
 
+  // Fix duplicate keys in store return objects (before Prettier formatting)
+  // This fixes cases like: { currentUser: currentUser, currentUser: currentUserComputed }
+  // We keep the computed version and remove the non-computed one
+  if (filePath.includes('/store/') && fixedContent.includes('return {')) {
+    // Pattern 1: Duplicate keys on separate lines
+    // currentUser: currentUser,\n    currentUser: currentUserComputed
+    fixedContent = fixedContent.replace(
+      /(\w+):\s*(\w+),\s*\n\s*\1:\s*(\w+Computed)/g,
+      (match, key, value1, value2) => {
+        // Keep the computed version
+        return `${key}: ${value2}`;
+      }
+    );
+
+    // Pattern 2: Duplicate keys on same line or adjacent
+    // key: value, key: value2
+    fixedContent = fixedContent.replace(
+      /(\w+):\s*(\w+),\s*\1:\s*(\w+)/g,
+      (match, key, value1, value2) => {
+        // If one is computed, keep that one; otherwise keep the second
+        if (value2.includes('Computed') || value2.includes('computed')) {
+          return `${key}: ${value2}`;
+        }
+        return `${key}: ${value2}`;
+      }
+    );
+
+    // Pattern 3: Duplicate function names in return objects
+    // functionName: functionName,\n    functionName: functionName
+    fixedContent = fixedContent.replace(
+      /(\w+):\s*(\w+),\s*\n\s*\1:\s*\2/g,
+      (match, key, value) => {
+        return `${key}: ${value}`;
+      }
+    );
+
+    // Pattern 4: Remove duplicate non-computed properties when computed exists
+    // theme: theme,\n    theme: themeComputed → theme: themeComputed
+    fixedContent = fixedContent.replace(
+      /(\w+):\s*(\w+),\s*\n\s*\1:\s*(\w+Computed)/g,
+      (match, key, value1, value2) => {
+        return `${key}: ${value2}`;
+      }
+    );
+
+    if (fixedContent !== content) {
+      result.fixed = true;
+      result.fixes.push('Removed duplicate keys in store return objects');
+    }
+  }
+
   // Final step: Format with Prettier if available (for proper indentation and formatting)
   // This ensures consistent code style for Vue 3 projects
   try {

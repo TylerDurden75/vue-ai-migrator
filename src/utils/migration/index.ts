@@ -6,6 +6,10 @@ export {
   migrateWebpackConfig,
   type WebpackConfigMigrationResult,
 } from "./webpack-config-migrator";
+export {
+  migrateToViteConfig,
+  type ViteConfigMigrationResult,
+} from "./vite-config-migrator";
 export { validateMigration } from "./post-migration-validator";
 export {
   fixPostMigrationIssues,
