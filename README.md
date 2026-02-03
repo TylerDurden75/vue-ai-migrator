@@ -61,7 +61,7 @@ Automatic Vue 2 → Vue 3 migration combining:
 - **Parallel processing**: Process multiple files simultaneously for better performance
 - **Smart caching**: Avoids reprocessing unchanged files
 - **Robust error handling**: Comprehensive error handling with retry mechanisms
-- **Well tested**: 109+ unit tests covering all modules and transformations
+- **Well tested**: 340+ unit tests covering all modules and transformations
 - **Classification system**: Automatic complexity classification (Simple/Medium/Complex)
 - **Test generation**: Automatic Vitest test generation for migrated components
 - **Enhanced reporting**: Detailed reports with classification and recommendations
@@ -441,7 +441,7 @@ vue-ai-migrator migrate <project-path> [options]
 
 - `--ai, --use-ai`: Enable AI assistance for complex migrations (requires API key) - **Free mode by default**
 - `-k, --ai-api-key <key>`: API key for AI (or use environment variable) - Required only if `--ai` is used
-- `-p, --provider <provider>`: AI provider (openai, mistral, claude, anthropic) - default: openai
+- `-p, --provider <provider>`: AI provider (openai, mistral, claude, anthropic) - default: openai (or set `VUE_AI_MIGRATOR_AI_PROVIDER`)
 - `-d, --dry-run`: Test migration without modifying files
 - `--show-diff`: Show detailed diff for each file in dry-run mode
 - `--generate-tests`: Automatically generate Vitest tests for migrated components
@@ -1028,7 +1028,7 @@ vue-ai-migrator rollback ./my-vue2-project --file src/components/MyComponent.vue
 
 ## 🧪 Testing
 
-- **109+ unit tests** covering all modules and transformations
+- **340+ unit tests** covering all modules and transformations
 - **100% pass rate** - All tests passing
 - **AST-based transformations** for robust code generation
 - Tests for error handling, transformations, and migration flow
@@ -1129,7 +1129,7 @@ Use `--ai` flag when:
 Yes! Free mode uses deterministic AST transformations that are:
 - ✅ Fast and reliable
 - ✅ Cover ~83% of migration cases
-- ✅ Tested with 109+ unit tests
+- ✅ Tested with 340+ unit tests
 - ✅ Used by default for most projects
 
 ### How much does AI mode cost?

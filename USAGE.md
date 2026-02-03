@@ -167,15 +167,18 @@ vue-ai-migrator migrate ./my-vue2-project \
   --ai-api-key sk-your-api-key \
   --provider openai
 
-# Method 4: Using different providers (when supported)
-export MISTRAL_API_KEY=your-mistral-key
-vue-ai-migrator migrate ./my-vue2-project --provider mistral
+# Method 4: Provider via environment (e.g. for CI)
+export VUE_AI_MIGRATOR_AI_PROVIDER=openai
+export OPENAI_API_KEY=sk-your-api-key
+vue-ai-migrator migrate ./my-vue2-project --ai
 
-export ANTHROPIC_API_KEY=sk-ant-your-key
-vue-ai-migrator migrate ./my-vue2-project --provider anthropic
+# Method 5: Other providers (when supported in future releases)
+# Currently only OpenAI is implemented; Mistral/Claude planned.
+# export MISTRAL_API_KEY=your-mistral-key
+# vue-ai-migrator migrate ./my-vue2-project --provider mistral
 ```
 
-**Note**: See [API_KEYS.md](./API_KEYS.md) for detailed API key configuration guide.
+**Note**: See [API_KEYS.md](./API_KEYS.md) for detailed API key configuration. Only **OpenAI** is fully supported today; other providers are planned.
 
 ### 4. Dry-run Mode (test without modification)
 

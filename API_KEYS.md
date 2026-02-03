@@ -99,11 +99,21 @@ const aiService = new UnifiedAIService({
 
 ## 📋 Environment Variables Reference
 
+### API keys (per provider)
+
 | Provider  | Environment Variable | Format       | Example             |
 | --------- | -------------------- | ------------ | ------------------- |
 | OpenAI    | `OPENAI_API_KEY`     | `sk-...`     | `sk-proj-abc123...` |
 | Mistral   | `MISTRAL_API_KEY`    | `...`        | (Coming soon)       |
 | Anthropic | `ANTHROPIC_API_KEY`  | `sk-ant-...` | (Coming soon)       |
+
+### Provider selection
+
+| Purpose | Environment Variable | Values | Example |
+| ------- | -------------------- | ------ | ------- |
+| Choose AI provider (optional) | `VUE_AI_MIGRATOR_AI_PROVIDER` | `openai`, `mistral`, `claude`, `anthropic` | `openai` (default) |
+
+When set, this overrides the default provider without passing `--provider` on the CLI (useful in CI or scripts). Only `openai` is implemented today.
 
 ## 🛠️ Getting API Keys
 

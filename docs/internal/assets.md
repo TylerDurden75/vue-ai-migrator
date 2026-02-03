@@ -27,7 +27,7 @@ assets/
 
 ## Usage
 
-These assets are referenced in the README.md and documentation.
+These assets are referenced in the README.md and documentation. For CLI options and AI provider configuration (including `VUE_AI_MIGRATOR_AI_PROVIDER`), see the root [README.md](../../README.md) and [API_KEYS.md](../../API_KEYS.md).
 
 ## License
 

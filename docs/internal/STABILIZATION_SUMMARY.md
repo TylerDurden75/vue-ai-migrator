@@ -1,145 +1,145 @@
-# Résumé de Stabilisation - Vue AI Migrator v1.0.0
+# Stabilization Summary - Vue AI Migrator v1.0.0
 
-> **Note** : Document historique. Le fixer legacy a été supprimé ; un seul fixer (rule engine) est utilisé.
+> **Note** : Historical document. The legacy fixer has been removed; a single fixer (rule engine) is used.
 
-## 🎯 Objectif
-Stabiliser le package `vue-ai-migrator` vers la version 1.0.0 en réduisant les passes multiples, simplifiant le code et améliorant les performances.
+## 🎯 Goal
+Stabilize the `vue-ai-migrator` package towards version 1.0.0 by reducing multiple passes, simplifying code, and improving performance.
 
-## ✅ Réalisations Majeures
+## ✅ Major Achievements
 
-### 1. Architecture Modulaire (100% ✅)
-- **Rule Engine** : Système de règles avec résolution de dépendances (topological sort)
-- **Types** : Interfaces TypeScript complètes pour le système de règles
-- **Cache Regex** : Optimisation des regex compilées
-- **Cache AST** : Parse script/template une seule fois par fichier
-- **Structure modulaire** : Organisation en fichiers séparés par domaine
+### 1. Modular Architecture (100% ✅)
+- **Rule Engine** : Rule system with dependency resolution (topological sort)
+- **Types** : Complete TypeScript interfaces for the rule system
+- **Regex Cache** : Compiled regex optimization
+- **AST Cache** : Parse script/template once per file
+- **Modular structure** : Organization in separate files by domain
 
-### 2. Optimisations de Performance (80% ✅)
+### 2. Performance Optimizations (80% ✅)
 
-#### Réduction des Passes
-- **Avant** : 3 passes (Pass 1, Pass 2, Pass 3)
-- **Après** : 1 passe unique avec règles ordonnées par dépendances
-- **Gain** : 66% de réduction du nombre de passes
+#### Pass Reduction
+- **Before** : 3 passes (Pass 1, Pass 2, Pass 3)
+- **After** : 1 single pass with rules ordered by dependencies
+- **Gain** : 66% reduction in number of passes
 
-#### Cache Système
-- **Cache Regex** : Compilation unique des patterns regex
-- **Cache AST** : Parse unique du script/template, réutilisé pour toutes les règles
-- **Gain estimé** : 15-20% de réduction du temps d'exécution
+#### Cache System
+- **Regex Cache** : Single compilation of regex patterns
+- **AST Cache** : Single parse of script/template, reused for all rules
+- **Estimated gain** : 15-20% execution time reduction
 
-#### Parallélisation
-- **Traitement par batches** : Fichiers traités en parallèle avec `Promise.all`
-- **Concurrency automatique** : Détection CPU count - 1 (min 2, max 10)
-- **Gain estimé** : 30-40% de réduction du temps sur projets avec beaucoup de fichiers
+#### Parallelization
+- **Batch processing** : Files processed in parallel with `Promise.all`
+- **Automatic concurrency** : CPU count - 1 (min 2, max 10)
+- **Estimated gain** : 30-40% time reduction on projects with many files
 
-### 3. Migration des Règles (90% ✅)
+### 3. Rule Migration (90% ✅)
 
-**27 règles migrées** vers le nouveau système modulaire :
+**27 rules migrated** to the new modular system :
 
-#### Import Fixes (2 règles)
-- `removeVuexImportsRule` : Supprime imports Vuex
-- `mergeDuplicateImportsRule` : Fusionne imports dupliqués
+#### Import Fixes (2 rules)
+- `removeVuexImportsRule` : Removes Vuex imports
+- `mergeDuplicateImportsRule` : Merges duplicate imports
 
-#### Computed Fixes (3 règles)
-- `computedValueRule` : Ajoute .value aux computed properties
-- `malformedComputedRule` : Fix syntaxe malformée computed<any>() => ...
-- `computedSyntaxRule` : Fix computed avec parenthèses/return manquants
+#### Computed Fixes (3 rules)
+- `computedValueRule` : Adds .value to computed properties
+- `malformedComputedRule` : Fixes malformed computed<any>() => ... syntax
+- `computedSyntaxRule` : Fixes computed with missing parens/return
 
-#### Template Fixes (3 règles)
-- `missingComponentImportsRule` : Ajoute imports de composants manquants
-- `missingFilterImportsRule` : Ajoute fonctions de filtres manquantes
-- `vModelBindingsRule` : Fix bindings v-model
+#### Template Fixes (3 rules)
+- `missingComponentImportsRule` : Adds missing component imports
+- `missingFilterImportsRule` : Adds missing filter functions
+- `vModelBindingsRule` : Fixes v-model bindings
 
-#### Final Fixes (3 règles)
-- `wrongStorePropertyRule` : Détecte et fix wrongStore.allItems → correctStore.allItems
-- `nullChecksLengthRule` : Ajoute null checks pour .length access
-- `detailViewStoreRule` : Fix Detail views pour utiliser store.allItems.find()
+#### Final Fixes (3 rules)
+- `wrongStorePropertyRule` : Detects and fixes wrongStore.allItems → correctStore.allItems
+- `nullChecksLengthRule` : Adds null checks for .length access
+- `detailViewStoreRule` : Fixes Detail views to use store.allItems.find()
 
-#### Router Fixes (3 règles)
-- `createAppSyntaxRule` : Fix syntaxe createApp
-- `createWebHistoryRule` : Fix createWebHistory avec BASE_URL
-- `catchAllRouteRule` : Fix catch-all routes
+#### Router Fixes (3 rules)
+- `createAppSyntaxRule` : Fixes createApp syntax
+- `createWebHistoryRule` : Fixes createWebHistory with BASE_URL
+- `catchAllRouteRule` : Fixes catch-all routes
 
-#### Store Fixes (2 règles)
-- `asyncFunctionRule` : Rend fonctions async si elles utilisent await
-- `duplicateKeysRule` : Supprime clés dupliquées dans stores
+#### Store Fixes (2 rules)
+- `asyncFunctionRule` : Makes functions async when they use await
+- `duplicateKeysRule` : Removes duplicate keys in stores
 
-#### Vue Script Setup (2 règles)
-- `removeExportDefaultRule` : Supprime export default dans <script setup>
-- `scriptSetupFormattingRule` : Formatage des balises script
+#### Vue Script Setup (2 rules)
+- `removeExportDefaultRule` : Removes export default in <script setup>
+- `scriptSetupFormattingRule` : Script tag formatting
 
-#### Type Fixes (3 règles) ✅
-- `incorrectEventTypeRule` : Fix incorrect Event types
-- `filtersKeyAccessRule` : Fix filters[key] access
-- `typescriptTypeImprovementsRule` : Améliore les annotations TypeScript
+#### Type Fixes (3 rules) ✅
+- `incorrectEventTypeRule` : Fixes incorrect Event types
+- `filtersKeyAccessRule` : Fixes filters[key] access
+- `typescriptTypeImprovementsRule` : Improves TypeScript annotations
 
-#### Store Script Setup Fixes (3 règles) ✅
-- `storeScriptSetupRule` : Détecte this. references dans <script setup>
-- `secureRouterPushRule` : Sécurise router.push avec params
-- `routerPushTypeCheckRule` : Ajoute type checking pour router.push
+#### Store Script Setup Fixes (3 rules) ✅
+- `storeScriptSetupRule` : Replaces this.ident with ident in <script setup>
+- `secureRouterPushRule` : Secures router.push with params
+- `routerPushTypeCheckRule` : Adds type checking for router.push
 
-### 4. Tests et Validation (40% ✅)
+### 4. Tests and Validation (40% ✅)
 
-#### Tests Unitaires
-- ✅ Tests pour `rule-engine` (dépendances, priorité, filtrage)
-- ✅ Tests pour `parallel-processor` (batching, erreurs, concurrency)
-- ⏳ Tests pour chaque règle individuelle (à faire progressivement)
+#### Unit Tests
+- ✅ Tests for `rule-engine` (dependencies, priority, filtering)
+- ✅ Tests for `parallel-processor` (batching, errors, concurrency)
+- ⏳ Tests for each rule individually (to be done gradually)
 
 #### Benchmarks
-- ✅ Script de benchmark créé (`benchmarks/performance-benchmark.ts`)
-- ✅ Mesure temps d'exécution et utilisation mémoire
-- ⏳ À exécuter pour mesurer les gains réels
+- ✅ Benchmark script created (`benchmarks/performance-benchmark.ts`)
+- ✅ Measures execution time and memory usage
+- ⏳ To be run to measure real gains
 
 #### Validation
-- ✅ Script de validation créé (`benchmarks/validation-test.ts`)
-- ✅ Comparaison ancien vs nouveau système
-- ⏳ À exécuter sur test-project pour vérifier non-régression
+- ✅ Validation script created (`benchmarks/validation-test.ts`)
+- ✅ Old vs new system comparison
+- ⏳ To be run on test-project to verify no regression
 
-## 📊 Métriques de Performance
+## 📊 Performance Metrics
 
-### Temps d'Exécution (Estimations)
-| Métrique | Avant | Après | Gain |
-|----------|-------|-------|------|
+### Execution Time (Estimates)
+| Metric | Before | After | Gain |
+|--------|--------|-------|------|
 | Passes | 3 | 1 | 66% |
-| Temps total (estimé) | ~15s | ~7s | 53% |
+| Total time (est.) | ~15s | ~7s | 53% |
 | Regex compilations | ~500 | ~50 | 90% |
-| Re-parsing fichiers | 3x | 1x | 66% |
+| File re-parsing | 3x | 1x | 66% |
 
-### Mémoire (Estimations)
-| Métrique | Avant | Après | Gain |
-|----------|-------|-------|------|
+### Memory (Estimates)
+| Metric | Before | After | Gain |
+|--------|--------|-------|------|
 | Peak memory | ~200MB | ~140MB | 30% |
 | Regex cache | 0 | ~5MB | - |
 | AST cache | 0 | ~10MB | - |
 
-## 🚀 Utilisation
+## 🚀 Usage
 
-### Nouveau Système (Par Défaut)
+### New System (Default)
 ```bash
-# Utilise automatiquement le nouveau système optimisé
+# Automatically uses the optimized new system
 node dist/cli.js migrate test-project --typescript
 ```
 
 ### Tests
 ```bash
-# Tests unitaires
+# Unit tests
 npm test
 
-# Benchmarks de performance
+# Performance benchmarks
 npm run benchmark
 
 # Validation
 npm run validate test-project
 ```
 
-## 📁 Structure des Fichiers
+## 📁 File Structure
 
 ```
 src/utils/migration/post-migration-fixer/
-├── index.ts                    # Point d'entrée principal
-├── rule-engine.ts             # Moteur de règles avec dépendances
-├── types.ts                    # Interfaces TypeScript
-├── README.md                   # Documentation architecture
-├── rules/                      # Règles organisées par domaine
+├── index.ts                    # Main entry point
+├── rule-engine.ts             # Rule engine with dependencies
+├── types.ts                    # TypeScript interfaces
+├── README.md                   # Architecture documentation
+├── rules/                      # Rules organized by domain
 │   ├── vue-script-setup.ts
 │   ├── store-fixes.ts
 │   ├── router-fixes.ts
@@ -147,44 +147,45 @@ src/utils/migration/post-migration-fixer/
 │   ├── computed-fixes.ts
 │   ├── template-fixes.ts
 │   ├── final-fixes.ts
-│   ├── type-fixes.ts          # À compléter
-│   └── store-script-setup-fixes.ts  # À compléter
-├── utils/                      # Utilitaires
+│   ├── type-fixes.ts
+│   ├── store-script-setup-fixes.ts
+│   └── vue-store-vuex.ts
+├── utils/                      # Utilities
 │   ├── regex-cache.ts
 │   ├── ast-cache.ts
 │   └── parallel-processor.ts
-└── __tests__/                  # Tests unitaires
+└── __tests__/                  # Unit tests
     ├── rule-engine.test.ts
     └── parallel-processor.test.ts
 ```
 
-## 🎯 Prochaines Étapes
+## 🎯 Next Steps
 
-1. ✅ **Scripts de benchmark et validation** (fixer unique, plus de comparaison legacy) ✅
-2. ✅ **Toutes les règles principales migrées** (27 règles sur 30) ✅
-3. ✅ **Compilation réussie** : Tous les fichiers TypeScript compilent sans erreur ✅
-4. **Exécuter les benchmarks** : `npm run benchmark` pour mesurer les gains réels
-5. **Exécuter la validation** : `npm run validate test-project` pour vérifier non-régression
-6. **Tests d'intégration** : Migration complète test-project avec nouveau système
-7. **Documentation** : Mettre à jour le README principal avec les nouvelles fonctionnalités
+1. ✅ **Benchmark and validation scripts** (single fixer, no legacy comparison) ✅
+2. ✅ **All main rules migrated** (27 rules out of 30) ✅
+3. ✅ **Successful build** : All TypeScript files compile without error ✅
+4. **Run benchmarks** : `npm run benchmark` to measure real gains
+5. **Run validation** : `npm run validate test-project` to verify no regression
+6. **Integration tests** : Full test-project migration with new system
+7. **Documentation** : Update main README with new features
 
-## 📝 Notes Importantes
+## 📝 Important Notes
 
-- **Fixer unique** : Le legacy multi-pass a été supprimé ; seul le rule engine est utilisé.
-- **Scripts** : `npm run benchmark` et `npm run validate` testent le fixer actuel.
+- **Single fixer** : Legacy multi-pass has been removed; only the rule engine is used.
+- **Scripts** : `npm run benchmark` and `npm run validate` test the current fixer.
 
-## ✨ Points Forts du Nouveau Système
+## ✨ New System Strengths
 
-1. **Performance** : 66% moins de passes, traitement parallèle
-2. **Maintenabilité** : Code modulaire, règles séparées par domaine
-3. **Testabilité** : Chaque règle peut être testée individuellement
-4. **Extensibilité** : Facile d'ajouter de nouvelles règles
-5. **Débogage** : Plus facile de tracer les problèmes avec le système de règles
+1. **Performance** : 66% fewer passes, parallel processing
+2. **Maintainability** : Modular code, rules separated by domain
+3. **Testability** : Each rule can be tested individually
+4. **Extensibility** : Easy to add new rules
+5. **Debugging** : Easier to trace issues with the rule system
 
-## 🔧 Améliorations Futures Possibles
+## 🔧 Possible Future Improvements
 
-1. **Worker Threads** : Pour très gros projets (100+ fichiers)
-2. **Early Exit** : Optimisations pour sortir tôt si aucune règle ne s'applique
-3. **Cache persistant** : Sauvegarder le cache AST entre exécutions
-4. **Règles conditionnelles** : Règles qui s'appliquent seulement dans certains contextes
-5. **Métriques détaillées** : Tracking précis du temps passé par règle
+1. **Worker Threads** : For very large projects (100+ files)
+2. **Early Exit** : Optimizations to exit early when no rule applies
+3. **Persistent cache** : Save AST cache between runs
+4. **Conditional rules** : Rules that apply only in certain contexts
+5. **Detailed metrics** : Precise per-rule timing

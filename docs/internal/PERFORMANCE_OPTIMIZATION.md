@@ -1,118 +1,118 @@
-# Optimisations de Performance - Plan d'Action
+# Performance Optimization - Action Plan
 
-## 🎯 Objectifs de Performance
+## 🎯 Performance Goals
 
-- **Réduction des passes** : 3 → 1 (66% réduction)
-- **Temps d'exécution** : -50% minimum
-- **Mémoire** : Réduction de 30%+
+- **Pass reduction** : 3 → 1 (66% reduction)
+- **Execution time** : -50% minimum
+- **Memory** : 30%+ reduction
 
-## 📊 Analyse Actuelle
+## 📊 Current Analysis
 
-### Problèmes Identifiés
+### Identified Issues
 
-1. **Passes multiples** :
-   - Pass 1 : Fixes initiaux
-   - Pass 2 : Fixes après migration stores
-   - Pass 3 : Nettoyage final
-   - Chaque passe re-lit et re-traite les fichiers
+1. **Multiple passes** :
+   - Pass 1 : Initial fixes
+   - Pass 2 : Fixes after store migration
+   - Pass 3 : Final cleanup
+   - Each pass re-reads and re-processes files
 
-2. **Regex non optimisées** :
-   - Regex compilées à chaque appel
-   - Pas de cache
-   - Patterns complexes recompilés
+2. **Unoptimized regex** :
+   - Regex compiled on every call
+   - No cache
+   - Complex patterns recompiled
 
 3. **Re-parsing** :
-   - Script content extrait plusieurs fois
-   - Template content extrait plusieurs fois
-   - Pas de cache AST
+   - Script content extracted multiple times
+   - Template content extracted multiple times
+   - No AST cache
 
-4. **Traitement séquentiel** :
-   - Fichiers traités un par un
-   - Pas de parallélisation
+4. **Sequential processing** :
+   - Files processed one by one
+   - No parallelization
 
-## 🚀 Solutions Implémentées
+## 🚀 Implemented Solutions
 
-### ✅ 1. Système de Règles Modulaire
+### ✅ 1. Modular Rule System
 
-**Avant** : 3 passes avec toutes les règles mélangées
-**Après** : 1 passe avec règles ordonnées par dépendances
+**Before** : 3 passes with all rules mixed together  
+**After** : 1 pass with rules ordered by dependencies (see [POST_MIGRATION_FIXER.md](./POST_MIGRATION_FIXER.md) and [STABILIZATION_STATUS.md](./STABILIZATION_STATUS.md) for the current list).
 
-**Gain** : 66% réduction du nombre de passes
+**Gain** : 66% reduction in number of passes
 
-### ✅ 2. Cache Regex
+### ✅ 2. Regex Cache
 
-**Implémenté** : `regex-cache.ts`
-- Compile regex une seule fois
-- Réutilise pour tous les fichiers
-- Clear cache si nécessaire
+**Implemented** : `regex-cache.ts`
+- Compiles regex once
+- Reuses for all files
+- Clear cache when needed
 
-**Gain estimé** : 10-15% réduction temps
+**Estimated gain** : 10-15% time reduction
 
-### 🔄 3. Cache AST (À implémenter)
+### 🔄 3. AST Cache (To implement)
 
 **Plan** :
-- Parser script/template une seule fois
-- Stocker dans contexte
-- Réutiliser pour toutes les règles
+- Parse script/template once
+- Store in context
+- Reuse for all rules
 
-**Gain estimé** : 15-20% réduction temps
+**Estimated gain** : 15-20% time reduction
 
-### ✅ 4. Traitement Parallèle (Implémenté)
+### ✅ 4. Parallel Processing (Implemented)
 
-**Implémenté** :
-- `parallel-processor.ts` : Processeur parallèle avec batching
-- Détection automatique du nombre optimal de workers (CPU count - 1)
-- Limite de concurrency configurable (défaut: 5, max: 10)
-- Traitement par batches pour éviter surcharge mémoire
+**Implemented** :
+- `parallel-processor.ts` : Parallel processor with batching
+- Automatic optimal worker count (CPU count - 1)
+- Configurable concurrency limit (default: 5, max: 10)
+- Batch processing to avoid memory overload
 
-**Gain estimé** : 30-40% réduction temps (sur projets avec beaucoup de fichiers)
+**Estimated gain** : 30-40% time reduction (on projects with many files)
 
-## 📈 Métriques Cibles
+## 📈 Target Metrics
 
-### Temps d'Exécution (test-project)
+### Execution Time (test-project)
 
-| Métrique | Avant | Cible | Gain |
-|----------|-------|-------|------|
+| Metric | Before | Target | Gain |
+|--------|--------|--------|------|
 | Passes | 3 | 1 | 66% |
-| Temps total | ~15s | ~7s | 53% |
+| Total time | ~15s | ~7s | 53% |
 | Regex compilations | ~500 | ~50 | 90% |
-| Re-parsing fichiers | 3x | 1x | 66% |
+| File re-parsing | 3x | 1x | 66% |
 
-### Mémoire
+### Memory
 
-| Métrique | Avant | Cible | Gain |
-|----------|-------|-------|------|
+| Metric | Before | Target | Gain |
+|--------|--------|--------|------|
 | Peak memory | ~200MB | ~140MB | 30% |
 | Regex cache | 0 | ~5MB | - |
 | AST cache | 0 | ~10MB | - |
 
-## 🔧 Implémentation
+## 🔧 Implementation
 
-### Phase 1 : Architecture Modulaire ✅
-- [x] Créer rule-engine
-- [x] Créer types
-- [x] Migrer premières règles
-- [x] Cache regex
+### Phase 1 : Modular Architecture ✅
+- [x] Create rule engine
+- [x] Create types
+- [x] Migrate first rules
+- [x] Regex cache
 
-### Phase 2 : Optimisations Core ✅
-- [x] Cache AST ✅
-- [x] Modifier migrator.ts pour 1 passe ✅
-- [ ] Early exit optimizations (optionnel)
+### Phase 2 : Core Optimizations ✅
+- [x] AST cache ✅
+- [x] Update migrator.ts for 1 pass ✅
+- [ ] Early exit optimizations (optional)
 
-### Phase 3 : Parallélisation ✅
-- [x] Traitement parallèle fichiers ✅
-- [x] Batch processing avec limite de concurrency ✅
-- [x] Détection automatique CPU count ✅
-- [ ] Worker threads (optionnel - pour très gros projets)
+### Phase 3 : Parallelization ✅
+- [x] Parallel file processing ✅
+- [x] Batch processing with concurrency limit ✅
+- [x] Automatic CPU count detection ✅
+- [ ] Worker threads (optional - for very large projects)
 
 ### Phase 4 : Benchmarks ⏳
-- [ ] Créer suite de benchmarks
-- [ ] Mesurer avant/après
-- [ ] Documenter gains
+- [ ] Create benchmark suite
+- [ ] Measure before/after
+- [ ] Document gains
 
-## 📝 Notes Techniques
+## 📝 Technical Notes
 
-### Cache AST
+### AST Cache
 
 ```typescript
 interface ASTCache {
@@ -124,7 +124,7 @@ interface ASTCache {
 const astCache = new Map<string, ASTCache>();
 ```
 
-### Traitement Parallèle
+### Parallel Processing
 
 ```typescript
 const BATCH_SIZE = 5;
@@ -136,9 +136,9 @@ for (let i = 0; i < files.length; i += BATCH_SIZE) {
 }
 ```
 
-## 🎯 Prochaines Étapes
+## 🎯 Next Steps
 
-1. **Immédiat** : Migrer règles critiques (router, stores)
-2. **Court terme** : Implémenter cache AST
-3. **Moyen terme** : Parallélisation
-4. **Long terme** : Worker threads pour très gros projets
+1. **Immediate** : Migrate critical rules (router, stores)
+2. **Short term** : Implement AST cache
+3. **Medium term** : Parallelization
+4. **Long term** : Worker threads for very large projects

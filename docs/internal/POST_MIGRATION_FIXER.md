@@ -18,4 +18,6 @@ vue-ai-migrator migrate ./my-project
 - **Single pass** per file, with parallel batch processing
 - **Modular rules** in `post-migration-fixer/rules/` (store-fixes, router-fixes, template-fixes, etc.)
 
+Notable rules include: `storeScriptSetupRule` (replaces `this.ident` with `ident` in script setup), `routeQueryRedirectGuardRule` (guards `route.query.redirect` with `typeof === 'string'`), `fixStoreMemberMismatchRule` (correct store for methods/props), and import/Vue/router fixes.
+
 See [post-migration-fixer-architecture.md](./post-migration-fixer-architecture.md) for structure and conventions.

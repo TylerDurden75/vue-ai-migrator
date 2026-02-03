@@ -1,78 +1,80 @@
-# État d'Avancement - Stabilisation vers 1.0.0
+# Stabilization Progress - Towards 1.0.0
 
-> **Note** : Document historique. Le fixer legacy (multi-pass) a été supprimé ; seul le moteur de règles (single-pass) est utilisé.
+> **Note** : Historical document. The legacy (multi-pass) fixer has been removed; only the rule engine (single-pass) is used.
 
-## ✅ Ce qui a été fait
+## ✅ What Has Been Done
 
-### Architecture Modulaire
-- ✅ **types.ts** : Interfaces et types pour le système de règles
-- ✅ **rule-engine.ts** : Moteur de règles avec résolution de dépendances (topological sort)
-- ✅ **regex-cache.ts** : Cache pour optimiser les regex compilées
-- ✅ **Structure de dossiers** : Organisation modulaire créée
+### Modular Architecture
+- ✅ **types.ts** : Interfaces and types for the rule system
+- ✅ **rule-engine.ts** : Rule engine with dependency resolution (topological sort)
+- ✅ **regex-cache.ts** : Cache for compiled regex optimization
+- ✅ **Folder structure** : Modular organization created
 
-### Règles Migrées (Partielles)
+### Migrated Rules (Partial)
 - ✅ **vue-script-setup.ts** :
-  - `removeExportDefaultRule` : Supprime export default dans <script setup>
-  - `scriptSetupFormattingRule` : Formatage des balises script
+  - `removeExportDefaultRule` : Removes export default in <script setup>
+  - `scriptSetupFormattingRule` : Script tag formatting
   
 - ✅ **store-fixes.ts** :
-  - `asyncFunctionRule` : Rend fonctions async si elles utilisent await
-  - `duplicateKeysRule` : Supprime clés dupliquées dans stores
+  - `asyncFunctionRule` : Makes functions async when they use await
+  - `duplicateKeysRule` : Removes duplicate keys in stores
   
 - ✅ **router-fixes.ts** :
-  - `createAppSyntaxRule` : Fix syntaxe createApp
-  - `createWebHistoryRule` : Fix createWebHistory avec BASE_URL
-  - `catchAllRouteRule` : Fix catch-all routes
+  - `createAppSyntaxRule` : Fixes createApp syntax
+  - `createWebHistoryRule` : Fixes createWebHistory with BASE_URL
+  - `catchAllRouteRule` : Fixes catch-all routes
 
 ### Documentation
-- ✅ **STABILIZATION_PLAN.md** : Plan complet de stabilisation
-- ✅ **PERFORMANCE_OPTIMIZATION.md** : Plan d'optimisation performance
-- ✅ **README.md** dans post-migration-fixer/ : Documentation architecture
+- ✅ **PERFORMANCE_OPTIMIZATION.md** : Performance optimization plan
+- ✅ **POST_MIGRATION_FIXER.md**, **post-migration-fixer-architecture.md** : Fixer overview and structure
+- ✅ **README.md** in post-migration-fixer/ : Architecture documentation
 
-## ✅ Nouvelles Implémentations
+## ✅ New Implementations
 
-### Cache AST
-- ✅ **ast-cache.ts** : Cache pour parser script/template une seule fois
-- ✅ Intégré dans `index.ts` et `rule-engine.ts`
-- ✅ Réduction du re-parsing de 3x à 1x
+### AST Cache
+- ✅ **ast-cache.ts** : Cache to parse script/template once
+- ✅ Integrated in `index.ts` and `rule-engine.ts`
+- ✅ Re-parsing reduced from 3x to 1x
 
-### Intégration dans Migrator
-- ✅ **Migrator** : Utilise uniquement le moteur de règles (single pass)
-- ✅ **Legacy supprimé** : Plus de mode multi-pass ni de flag `--legacy`
+### Migrator Integration
+- ✅ **Migrator** : Uses only the rule engine (single pass)
+- ✅ **Legacy removed** : No more multi-pass mode or `--legacy` flag
 
-### Nouvelles Règles Migrées
+### New Migrated Rules
 - ✅ **import-fixes.ts** :
-  - `removeVuexImportsRule` : Supprime imports Vuex
-  - `mergeDuplicateImportsRule` : Fusionne imports dupliqués
+  - `removeVuexImportsRule` : Removes Vuex imports
+  - `mergeDuplicateImportsRule` : Merges duplicate imports
   
 - ✅ **computed-fixes.ts** :
-  - `computedValueRule` : Ajoute .value aux computed properties
-  - `malformedComputedRule` : Fix syntaxe malformée computed<any>() => ...
-  - `computedSyntaxRule` : Fix computed avec parenthèses/return manquants
+  - `computedValueRule` : Adds .value to computed properties
+  - `malformedComputedRule` : Fixes malformed computed<any>() => ... syntax
+  - `computedSyntaxRule` : Fixes computed with missing parens/return
   
 - ✅ **template-fixes.ts** :
-  - `missingComponentImportsRule` : Ajoute imports de composants manquants
-  - `missingFilterImportsRule` : Ajoute fonctions de filtres manquantes
-  - `vModelBindingsRule` : Fix bindings v-model
+  - `missingComponentImportsRule` : Adds missing component imports
+  - `missingFilterImportsRule` : Adds missing filter functions
+  - `vModelBindingsRule` : Fixes v-model bindings
   
 - ✅ **final-fixes.ts** :
-  - `wrongStorePropertyRule` : Détecte et fix wrongStore.allItems → correctStore.allItems
-  - `nullChecksLengthRule` : Ajoute null checks pour .length access
-  - `detailViewStoreRule` : Fix Detail views pour utiliser store.allItems.find()
+  - `wrongStorePropertyRule` : Detects and fixes wrongStore.allItems → correctStore.allItems
+  - `nullChecksLengthRule` : Adds null checks for .length access
+  - `detailViewStoreRule` : Fixes Detail views to use store.allItems.find()
   
 - ✅ **type-fixes.ts** :
-  - `incorrectEventTypeRule` : Fix incorrect Event types dans les paramètres de fonctions
-  - `filtersKeyAccessRule` : Fix filters[key] access avec type assertion
-  - `typescriptTypeImprovementsRule` : Améliore les annotations TypeScript
+  - `incorrectEventTypeRule` : Fixes incorrect Event types in function parameters
+  - `filtersKeyAccessRule` : Fixes filters[key] access with type assertion
+  - `typescriptTypeImprovementsRule` : Improves TypeScript annotations
   
 - ✅ **store-script-setup-fixes.ts** :
-  - `storeScriptSetupRule` : Détecte this. references dans <script setup> (fix complet nécessite store analysis)
-  - `secureRouterPushRule` : Sécurise router.push avec params
-  - `routerPushTypeCheckRule` : Ajoute type checking pour router.push
+  - `storeScriptSetupRule` : Replaces this.ident with ident in <script setup> (e.g. this.doSomething() → doSomething())
+  - `secureRouterPushRule` : Secures router.push with params
+  - `routerPushTypeCheckRule` : Adds type checking for router.push
+- **router-fixes.ts** (rule added to pipeline) :
+  - `routeQueryRedirectGuardRule` : Guards route.query.redirect with typeof === 'string'
 
-## ⏳ Ce qui reste à faire
+## ⏳ Remaining Work
 
-### Migration des Règles (Priorité Haute)
+### Rule Migration (High Priority)
 
 #### 1. Import Fixes (`import-fixes.ts`)
 - [x] Fix 4 : Remove Vuex imports ✅
@@ -111,145 +113,146 @@
 - [x] Wrong store property detection ✅
 - [x] Null checks for .length access ✅
 
-### Optimisations Performance
+### Performance Optimizations
 
-#### Cache AST
-- [x] Parser script/template une seule fois ✅
-- [x] Stocker dans contexte ✅
-- [x] Réutiliser pour toutes les règles ✅
+#### AST Cache
+- [x] Parse script/template once ✅
+- [x] Store in context ✅
+- [x] Reuse for all rules ✅
 
-#### Réduction Passes
-- [x] Modifier `migrator.ts` ligne 918-990 ✅
-- [x] Supprimer Second pass et Third pass (dans nouveau système) ✅
-- [x] Utiliser rule-engine en une seule passe ✅
-- [x] Garder ancien code en fallback (flag) ✅
+#### Pass Reduction
+- [x] Update `migrator.ts` line 918-990 ✅
+- [x] Remove Second pass and Third pass (in new system) ✅
+- [x] Use rule-engine in a single pass ✅
+- [x] Keep old code as fallback (flag) ✅
 
-#### Traitement Parallèle ✅
-- [x] Grouper fichiers indépendants ✅
-- [x] Promise.all avec limite de concurrency ✅
-- [x] Détection automatique du nombre optimal de workers (CPU count - 1) ✅
-- [x] Traitement par batches pour éviter surcharge mémoire ✅
-- [x] Intégré dans migrator.ts ✅
-- [ ] Mesurer gains de performance (benchmarks à faire)
+#### Parallel Processing ✅
+- [x] Group independent files ✅
+- [x] Promise.all with concurrency limit ✅
+- [x] Automatic optimal worker count (CPU count - 1) ✅
+- [x] Batch processing to avoid memory overload ✅
+- [x] Integrated in migrator.ts ✅
+- [ ] Measure performance gains (benchmarks to run)
 
 ### Tests
 
-#### Tests Unitaires
-- [x] Tests pour rule-engine (dépendances, priorité, filtrage) ✅
-- [x] Tests pour parallel-processor (batching, erreurs, concurrency) ✅
-- [x] Tests pour import-fixes (removeVuexImportsRule, mergeDuplicateImportsRule) ✅
-- [x] Tests pour import-fixes store (correctWrongStoreImportsRule, addMissingStoreImportsRule) ✅
-- [x] Tests pour computed-fixes (computedValueRule, malformedComputedRule, computedSyntaxRule) ✅
-- [ ] Tests pour autres règles individuelles (à faire progressivement)
+#### Unit Tests
+- [x] Tests for rule-engine (dependencies, priority, filtering) ✅
+- [x] Tests for parallel-processor (batching, errors, concurrency) ✅
+- [x] Tests for import-fixes (removeVuexImportsRule, mergeDuplicateImportsRule) ✅
+- [x] Tests for import-fixes store (correctWrongStoreImportsRule, addMissingStoreImportsRule) ✅
+- [x] Tests for computed-fixes (computedValueRule, malformedComputedRule, computedSyntaxRule) ✅
+- [ ] Tests for other individual rules (to be done gradually)
 
-#### Tests de Performance
-- [x] Benchmarks avant/après ✅
-- [x] Script de benchmark créé ✅
-- [x] Mesurer temps d'exécution ✅
-- [x] Mesurer utilisation mémoire ✅
+#### Performance Tests
+- [x] Before/after benchmarks ✅
+- [x] Benchmark script created ✅
+- [x] Measure execution time ✅
+- [x] Measure memory usage ✅
 
-#### Tests d'Intégration
-- [x] Script de validation créé ✅
-- [x] Comparer résultats ancien vs nouveau ✅
-- [ ] Migration complète test-project (à exécuter)
-- [ ] Vérifier couverture complète
+#### Integration Tests
+- [x] Validation script created ✅
+- [x] Compare old vs new results ✅
+- [ ] Full test-project migration (to run)
+- [ ] Verify full coverage
 
-## 📊 Progression
+## 📊 Progress
 
 ### Architecture : 75% ✅
-- Structure de base créée
-- Rule engine fonctionnel
-- Cache AST implémenté
-- Cache centralisé pour store analysis ✅
-- Intégration dans migrator.ts
-- Séparation des responsabilités améliorée ✅
+- Base structure created
+- Rule engine functional
+- AST cache implemented
+- Centralized cache for store analysis ✅
+- Integration in migrator.ts
+- Improved separation of concerns ✅
 
-### Migration Règles : 95% ⏳
-- 29 règles migrées sur ~30 règles estimées
-- Règles critiques majoritairement migrées ✅
-- Import fixes migrées ✅
-- Computed fixes migrées ✅
-- Template fixes migrées ✅
-- Final pass rules migrées ✅
-- Type fixes migrées ✅
-- Store script setup fixes migrées ✅
+### Rule Migration : 95% ⏳
+- 29 rules migrated out of ~30 estimated
+- Critical rules mostly migrated ✅
+- Import fixes migrated ✅
+- Computed fixes migrated ✅
+- Template fixes migrated ✅
+- Final pass rules migrated ✅
+- Type fixes migrated ✅
+- Store script setup fixes migrated ✅
 
 ### Performance : 80% ⏳
-- Cache regex implémenté ✅
-- Cache AST implémenté ✅
-- Réduction passes : 3 → 1 (dans nouveau système) ✅
-- Parallélisation implémentée ✅
-- Concurrency automatique basée sur CPU count ✅
-- Traitement par batches avec Promise.all ✅
+- Regex cache implemented ✅
+- AST cache implemented ✅
+- Pass reduction : 3 → 1 (in new system) ✅
+- Parallelization implemented ✅
+- Automatic concurrency based on CPU count ✅
+- Batch processing with Promise.all ✅
 
 ### Tests : 60% ⏳
-- Tests unitaires pour rule-engine ✅
-- Tests unitaires pour parallel-processor ✅
-- Tests unitaires pour import-fixes ✅
-- Tests unitaires pour import-fixes store (correctWrongStoreImportsRule, addMissingStoreImportsRule) ✅
-- Tests unitaires pour computed-fixes ✅ (tous les tests passent maintenant)
-- Tests unitaires pour router-fixes ✅
-- Tests unitaires pour vue-script-setup ✅
-- Scripts de benchmark créés ✅
-- Scripts de validation créés ✅
-- Tests d'intégration à exécuter
+- Unit tests for rule-engine ✅
+- Unit tests for parallel-processor ✅
+- Unit tests for import-fixes ✅
+- Unit tests for import-fixes store (correctWrongStoreImportsRule, addMissingStoreImportsRule) ✅
+- Unit tests for computed-fixes ✅ (all tests pass now)
+- Unit tests for router-fixes ✅
+- Unit tests for vue-script-setup ✅
+- Benchmark scripts created ✅
+- Validation scripts created ✅
+- Integration tests to run
 
-## 🎯 Prochaines Actions Immédiates
+## 🎯 Immediate Next Actions
 
-1. ✅ **Règles critiques migrées** (27 règles sur 30) ✅
-2. ✅ **Cache AST implémenté** pour performance ✅
-3. ✅ **migrator.ts modifié** pour utiliser nouvelle architecture (1 passe) ✅
-4. ✅ **Parallélisation implémentée** pour améliorer performances sur gros projets ✅
-5. ✅ **Tests unitaires créés** (rule-engine, parallel-processor) ✅
-6. ✅ **Scripts de benchmark et validation créés** ✅
-7. ✅ **Toutes les règles principales migrées** (type-fixes, store-script-setup-fixes) ✅
-8. ✅ **Scripts de benchmark et validation** (fixer unique) ✅
-9. ✅ **Tests unitaires ajoutés** pour import-fixes, computed-fixes, router-fixes, vue-script-setup ✅
-10. ✅ **Tests corrigés** : computedSyntaxRule test ajusté ✅
-11. **Exécuter benchmarks** : `npm run benchmark` pour mesurer gains réels
-12. **Exécuter validation** : `npm run validate test-project` pour vérifier non-régression
-13. **Comparer résultats** : Analyser les gains de performance et corriger régressions éventuelles
-14. **Tests d'intégration** : Migration complète test-project avec nouveau système
-15. **Ajouter tests pour autres règles** : template-fixes, final-fixes, store-fixes, etc.
+1. ✅ **Critical rules migrated** (27 rules out of 30) ✅
+2. ✅ **AST cache implemented** for performance ✅
+3. ✅ **migrator.ts updated** to use new architecture (1 pass) ✅
+4. ✅ **Parallelization implemented** to improve performance on large projects ✅
+5. ✅ **Unit tests created** (rule-engine, parallel-processor) ✅
+6. ✅ **Benchmark and validation scripts created** ✅
+7. ✅ **All main rules migrated** (type-fixes, store-script-setup-fixes) ✅
+8. ✅ **Benchmark and validation scripts** (single fixer) ✅
+9. ✅ **Unit tests added** for import-fixes, computed-fixes, router-fixes, vue-script-setup ✅
+10. ✅ **Tests fixed** : computedSyntaxRule test adjusted ✅
+11. **Run benchmarks** : `npm run benchmark` to measure real gains
+12. **Run validation** : `npm run validate test-project` to verify no regression
+13. **Compare results** : Analyze performance gains and fix any regressions
+14. **Integration tests** : Full test-project migration with new system
+15. **Add tests for other rules** : template-fixes, final-fixes, store-fixes, etc.
 
-## 📝 Notes Importantes
+## 📝 Important Notes
 
-- **Legacy supprimé** : Plus d'ancien fixer multi-pass ; un seul fixer (rule engine).
-- **Cache AST** : Implémenté et intégré dans le rule engine
-- **Single Pass** : 1 passe au lieu de 3 (66% réduction)
+- **Legacy removed** : No more old multi-pass fixer; single fixer (rule engine) only.
+- **AST Cache** : Implemented and integrated in the rule engine
+- **Single Pass** : 1 pass instead of 3 (66% reduction)
 
-## 🚀 Dernières Modifications
+## 🚀 Latest Changes
 
-### Cache AST (✅ Implémenté)
-- Fichier créé : `utils/ast-cache.ts`
-- Parse script/template une seule fois par fichier
-- Réutilisé pour toutes les règles
-- Intégré dans `rule-engine.ts` et `index.ts`
+### AST Cache (✅ Implemented)
+- File created : `utils/ast-cache.ts`
+- Parse script/template once per file
+- Reused for all rules
+- Integrated in `rule-engine.ts` and `index.ts`
 
-### Intégration Migrator (✅ Implémenté)
-- Un seul fixer : rule engine (single pass)
-- Réduction de 3 passes à 1 passe (66% réduction)
+### Migrator Integration (✅ Implemented)
+- Single fixer : rule engine (single pass)
+- Reduction from 3 passes to 1 pass (66% reduction)
 
-### Parallélisation (✅ Implémenté)
-- Fichier créé : `utils/parallel-processor.ts`
-- Traitement par batches avec `Promise.all`
-- Détection automatique du nombre optimal de workers (CPU count - 1)
-- Limite de concurrency configurable (défaut: 5, max: 10)
-- Intégré dans `migrator.ts` pour le nouveau système
-- Gain estimé : 30-40% réduction temps sur projets avec beaucoup de fichiers
+### Parallelization (✅ Implemented)
+- File created : `utils/parallel-processor.ts`
+- Batch processing with `Promise.all`
+- Automatic optimal worker count (CPU count - 1)
+- Configurable concurrency limit (default: 5, max: 10)
+- Integrated in `migrator.ts` for the new system
+- Estimated gain : 30-40% time reduction on projects with many files
 
-### Nouvelles Règles (✅ Implémenté)
+### New Rules (✅ Implemented)
 - **Import fixes** : `removeVuexImportsRule`, `mergeDuplicateImportsRule`
 - **Computed fixes** : `computedValueRule`, `malformedComputedRule`, `computedSyntaxRule`
 - **Template fixes** : `missingComponentImportsRule`, `missingFilterImportsRule`, `vModelBindingsRule`
 - **Final fixes** : `wrongStorePropertyRule`, `nullChecksLengthRule`, `detailViewStoreRule`
 - **Type fixes** : `incorrectEventTypeRule`, `filtersKeyAccessRule`, `typescriptTypeImprovementsRule`
 - **Store script setup fixes** : `storeScriptSetupRule`, `secureRouterPushRule`, `routerPushTypeCheckRule`
-- **Total : 27 règles migrées** (sur ~30 règles estimées)
+- **Router fixes** : `routeQueryRedirectGuardRule` (query.redirect)
+- **Total : 28+ rules migrated** (out of ~30 estimated)
 
-### Tests et Benchmarks (✅ Implémenté)
-- **Tests unitaires** : rule-engine.test.ts, parallel-processor.test.ts
-- **Benchmarks** : performance-benchmark.ts pour mesurer gains de performance
-- **Validation** : validation-test.ts pour comparer ancien vs nouveau système
-- **Jest config** : Configuration pour exécuter les tests
-- **Scripts npm** : `npm test`, `npm run benchmark`, `npm run validate`
+### Tests and Benchmarks (✅ Implemented)
+- **Unit tests** : rule-engine.test.ts, parallel-processor.test.ts
+- **Benchmarks** : performance-benchmark.ts to measure performance gains
+- **Validation** : validation-test.ts to compare old vs new system
+- **Jest config** : Configuration to run tests
+- **npm scripts** : `npm test`, `npm run benchmark`, `npm run validate`

@@ -4,7 +4,9 @@
 
 Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable and secure**, not a magic one-click migration.
 
-## ✅ v0.5.0 - Complete MVP (Current)
+## ✅ v0.5.0 - Complete MVP
+
+## ✅ v0.6.x - Current (Core improvements, free mode by default)
 
 ### Implemented Features
 
@@ -29,6 +31,12 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 
 ## 🚀 v0.6.0 - Core Improvements (Q1 2025)
 
+### AI / Configuration
+
+- [x] Free mode by default (AI opt-in with `--ai`)
+- [x] Provider configurable via env `VUE_AI_MIGRATOR_AI_PROVIDER` (CLI > env > default openai)
+- [x] Documentation: README, USAGE, API_KEYS updated (provider env, OpenAI-only note)
+
 ### Composition API Transformation Improvements
 
 - [ ] Complete `data()` → `ref()`/`reactive()` transformation
@@ -36,7 +44,7 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 - [ ] Complete `methods` → functions transformation
 - [ ] Complete `watch` → `watch()` transformation
 - [ ] Complete lifecycle hooks transformation
-- [ ] Handle `this.$xxx` → direct access
+- [x] Handle `this.ident` in script setup → plain `ident` (storeScriptSetupRule)
 
 ### Template Improvements
 
@@ -47,13 +55,16 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 ### Post-Migration Fixer
 
 - [x] Rule engine as single fixer (legacy multi-pass removed)
-- [ ] Fix remaining edge cases (store imports, fixStoreMemberMismatch, etc.) as reported by tests
+- [x] storeScriptSetupRule: replace `this.method()` / `this.property` with plain identifier in script setup
+- [x] routeQueryRedirectGuardRule registered (guard `route.query.redirect` with `typeof === 'string'`)
+- [x] fixStoreMemberMismatchRule: fix missing store import insertion (script not starting with `import`)
+- [ ] Fix remaining edge cases as reported by tests (computed filtered, store imports when no blog store in project)
 
 ### Performance
 
-- [ ] Cache optimization (improved incremental mode)
-- [ ] Optimized parallel processing
-- [ ] Memory consumption reduction
+- [x] Regex cache and AST cache (single parse per file)
+- [x] Parallel processing with batching (parallel-processor)
+- [ ] Further cache optimization (improved incremental mode) if needed
 
 ## 🎨 v0.7.0 - Multi-Providers & LangChain (Q2 2025)
 

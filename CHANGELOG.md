@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Free Mode**: Run migrations without API keys using AST transformations only
 - **`--ai` / `--use-ai` flag**: Explicitly enable AI assistance (requires API key)
+- **`VUE_AI_MIGRATOR_AI_PROVIDER`**: Environment variable to set AI provider (CLI > env > default `openai`) without `--provider`
+- **Post-migration fixer**: `storeScriptSetupRule` now **replaces** `this.method()` / `this.property` with plain identifiers in `<script setup>` (no longer detection-only)
+- **Post-migration fixer**: `routeQueryRedirectGuardRule` registered in pipeline (guards `route.query.redirect` with `typeof === 'string'`)
 - **Improved user messages**: Clear indication of which mode is being used
 - **Better error handling**: Graceful fallback when AI is requested but no key is provided
 

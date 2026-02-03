@@ -1,55 +1,60 @@
-# Post-Migration Fixer - Architecture Modulaire
+# Post-Migration Fixer - Modular Architecture
 
-## Statut actuel
+## Current status
 
-- **Fixer unique** : `post-migration-fixer/index.ts` (moteur de règles, une passe, traitement parallèle). Plus de mode legacy.
+- **Single fixer** : `post-migration-fixer/index.ts` (rule engine, one pass, parallel processing). No legacy mode.
 
-## Objectif
-Réduire les passes multiples et simplifier `post-migration-fixer.ts` (12k+ lignes) en modules séparés.
+## Goal (achieved)
+Reduce multiple passes and split the fixer into separate modules. The former monolithic fixer is now a single-pass rule engine with modular rules in `rules/`.
 
-## Structure proposée
+## Current structure
 
 ```
 post-migration-fixer/
-├── index.ts                    # Point d'entrée principal
-├── types.ts                    # Types et interfaces
-├── rule-engine.ts              # Moteur de règles optimisé
+├── index.ts                    # Main entry point
+├── types.ts                    # Types and interfaces
+├── rule-engine.ts              # Optimized rule engine
 ├── rules/
-│   ├── vue-script-setup.ts     # Fixes pour <script setup>
-│   ├── store-fixes.ts          # Fixes pour stores Pinia
-│   ├── router-fixes.ts         # Fixes pour Vue Router
-│   ├── template-fixes.ts       # Fixes pour templates
-│   ├── import-fixes.ts         # Fixes pour imports
-│   ├── type-fixes.ts           # Fixes TypeScript
-│   └── formatting-fixes.ts     # Formatage et nettoyage
+│   ├── vue-script-setup.ts     # Script tag formatting, remove export default
+│   ├── store-fixes.ts          # Pinia store fixes (async, duplicate keys, etc.)
+│   ├── router-fixes.ts         # Vue Router fixes (createWebHistory, redirect guard, etc.)
+│   ├── template-fixes.ts       # Template fixes (components, filters, v-model)
+│   ├── import-fixes.ts         # Import fixes (Vuex removal, merge, store imports)
+│   ├── computed-fixes.ts       # Computed syntax fixes
+│   ├── type-fixes.ts          # TypeScript fixes
+│   ├── final-fixes.ts         # Wrong store property, null checks, detail view
+│   ├── store-script-setup-fixes.ts  # this. replacement, router/route, secure push, etc.
+│   └── vue-store-vuex.ts       # this.$store → Pinia in components
 └── utils/
-    ├── store-analyzer.ts       # Analyse des stores
-    ├── property-analyzer.ts    # Analyse des propriétés
-    └── regex-cache.ts          # Cache pour regex
+    ├── store-analyzer.ts       # Store analysis
+    ├── store-analysis-cache.ts
+    ├── ast-cache.ts
+    ├── parallel-processor.ts
+    └── regex-cache.ts          # Regex cache
 ```
 
-## Principe : Une seule passe optimisée
+## Principle: Single optimized pass
 
-Au lieu de 3 passes séparées, utiliser un système de règles avec dépendances :
-- Règle A → Règle B → Règle C (dans l'ordre)
-- Chaque règle vérifie si elle doit s'appliquer
-- Pas de re-parsing du fichier entre règles
+Instead of 3 separate passes, use a rule system with dependencies:
+- Rule A → Rule B → Rule C (in order)
+- Each rule checks whether it should apply
+- No re-parsing of the file between rules
 
 ## Performance
 
-- Cache des regex compilées
-- Analyse AST une seule fois
-- Traitement parallèle des fichiers indépendants
-- Early exit si aucune règle ne s'applique
+- Caching of compiled regex
+- AST analysis once
+- Parallel processing of independent files
+- Early exit when no rule applies
 
-## Généricité et conventions
+## Genericity and conventions
 
-Les règles sont conçues pour **fonctionner sur n'importe quel projet Vue 2 migré vers Vue 3**, sans configuration :
+Rules are designed to **work on any Vue 2 project migrated to Vue 3**, without configuration:
 
-- **scriptSetupTagSpaceRule**, **storeDefineStoreClosingRule**, **destructuringKeyValueParamRule**, **splitImportsOnSameLineRule**, **replaceThisRouterRouteRule**, **vueStoreVuexToPiniaRule** : 100 % génériques (syntaxe, pas de chemin ni de nom de store imposé).
-- **storeIndexNamedExportRule** : s'applique uniquement aux fichiers `store/index.ts` ou `store/index.js` qui utilisent `defineStore("index", ...)`. Aucun effet si le projet n'a pas de store index.
-- **templateFilterFunctionImportsRule** : le chemin d'import des filtres est **détecté** à partir du projet (`src/filters`, `src/utils/filters`, etc.) via `projectRoot`. Si aucun dossier de filtres n'existe, fallback `@/filters`.
-- **routerGuardPiniaRule** : suppose que l'état d'auth (ex. `isAuthenticated`) est exposé par le **store racine** (`@/store/index`, `useIndexStore`). C'est le cas le plus courant (Vue 2 avec un seul store ou store racine). Si le projet utilise un store dédié (ex. `useAuthStore` dans `@/store/modules/auth`), un remplacement manuel après passage du fixer suffit.
-- **app.mixin** (dans vue2GlobalApiRule) : suppression ou commentaire de `app.mixin(xxx)` lorsque le mixin n'est pas importé (détection par analyse des lignes non commentées).
+- **scriptSetupTagSpaceRule**, **storeDefineStoreClosingRule**, **destructuringKeyValueParamRule**, **splitImportsOnSameLineRule**, **replaceThisRouterRouteRule**, **vueStoreVuexToPiniaRule** : 100% generic (syntax only, no path or store name required).
+- **storeIndexNamedExportRule** : applies only to `store/index.ts` or `store/index.js` files that use `defineStore("index", ...)`. No effect if the project has no index store.
+- **templateFilterFunctionImportsRule** : filter import path is **detected** from the project (`src/filters`, `src/utils/filters`, etc.) via `projectRoot`. If no filter folder exists, fallback to `@/filters`.
+- **routerGuardPiniaRule** : assumes auth state (e.g. `isAuthenticated`) is exposed by the **root store** (`@/store/index`, `useIndexStore`). This is the most common case (Vue 2 with a single store or root store). If the project uses a dedicated auth store (e.g. `useAuthStore` in `@/store/modules/auth`), a manual replacement after running the fixer is enough.
+- **app.mixin** (in vue2GlobalApiRule) : removal or commenting of `app.mixin(xxx)` when the mixin is not imported (detection via analysis of non-commented lines).
 
-En résumé : **ça fonctionne tel quel sur tout projet Vue** qui suit les structures habituelles (store index, filtres dans `src/filters` ou `src/utils/filters`, auth dans le store racine). Les cas atypiques restent corrigeables en un remplacement manuel ciblé.
+In summary: **it works out of the box on any Vue project** that follows usual structures (index store, filters in `src/filters` or `src/utils/filters`, auth in root store). Atypical cases can still be fixed with a targeted manual replacement.

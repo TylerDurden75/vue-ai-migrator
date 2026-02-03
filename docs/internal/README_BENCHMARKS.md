@@ -1,74 +1,74 @@
-# Benchmarks et Tests de Validation
+# Benchmarks and Validation Tests
 
-Ce document décrit comment exécuter les benchmarks de performance et les tests de validation du post-migration fixer (moteur de règles, single-pass).
+This document describes how to run performance benchmarks and validation tests for the post-migration fixer (rule engine, single-pass). For the list of rules and their status, see [STABILIZATION_STATUS.md](./STABILIZATION_STATUS.md) and [POST_MIGRATION_FIXER.md](./POST_MIGRATION_FIXER.md).
 
-## Tests Unitaires
+## Unit Tests
 
-### Exécuter les tests
+### Run tests
 
 ```bash
 npm test
 ```
 
-### Tests en mode watch
+### Watch mode
 
 ```bash
 npm run test:watch
 ```
 
-### Tests disponibles
+### Available tests
 
-- **rule-engine.test.ts** : Tests pour le moteur de règles
-  - Enregistrement de règles
-  - Résolution de dépendances
-  - Ordre d'exécution par priorité
-  - Filtrage par `shouldApply`
+- **rule-engine.test.ts** : Rule engine tests
+  - Rule registration
+  - Dependency resolution
+  - Execution order by priority
+  - Filtering by `shouldApply`
 
-- **parallel-processor.test.ts** : Tests pour le processeur parallèle
-  - Traitement par batches
-  - Gestion des erreurs
-  - Respect de la limite de concurrency
+- **parallel-processor.test.ts** : Parallel processor tests
+  - Batch processing
+  - Error handling
+  - Concurrency limit
 
-## Benchmarks de Performance
+## Performance Benchmarks
 
-### Exécuter les benchmarks
+### Run benchmarks
 
 ```bash
 npm run benchmark
 ```
 
-### Ce qui est mesuré
+### What is measured
 
-Les benchmarks comparent :
-- **Temps d'exécution** : Temps total et moyen par fichier
-- **Utilisation mémoire** : Heap utilisé, RSS, etc.
-- **Nombre de fixes appliqués** : Pour vérifier que les deux systèmes produisent les mêmes résultats
+Benchmarks compare:
+- **Execution time** : Total and average time per file
+- **Memory usage** : Heap used, RSS, etc.
+- **Number of fixes applied** : To verify both systems produce the same results
 
-### Résultats attendus
+### Expected results
 
-Avec le nouveau système optimisé, vous devriez voir :
-- **Réduction du temps** : 30-50% de réduction
-- **Réduction de la mémoire** : 20-30% de réduction
-- **Même nombre de fixes** : Les deux systèmes doivent appliquer les mêmes corrections
+With the optimized system, you should see:
+- **Time reduction** : 30-50% reduction
+- **Memory reduction** : 20-30% reduction
+- **Same number of fixes** : Both systems should apply the same corrections
 
-## Tests de Validation
+## Validation Tests
 
-### Exécuter les tests de validation
+### Run validation tests
 
 ```bash
 npm run validate [path-to-test-project]
 ```
 
-Par défaut, utilise `test-project` à la racine.
+By default, uses `test-project` at the repo root.
 
-### Ce qui est validé
+### What is validated
 
-Les tests de validation vérifient que :
-1. Le nouveau système produit un code valide (pas d'erreurs de syntaxe)
-2. Tous les fixes sont appliqués correctement
-3. Aucune régression n'est introduite
+Validation tests verify that:
+1. The new system produces valid code (no syntax errors)
+2. All fixes are applied correctly
+3. No regressions are introduced
 
-### Exemple de sortie
+### Sample output
 
 ```
 🔍 Running Validation Tests...
@@ -88,22 +88,22 @@ Failed: 0 (0.0%)
 ✅ All validation tests passed!
 ```
 
-## Interprétation des Résultats
+## Interpreting Results
 
 ### Benchmarks
 
-- **Time reduction > 30%** : Excellent, le nouveau système est significativement plus rapide
-- **Time reduction 10-30%** : Bon, amélioration notable
-- **Time reduction < 10%** : À investiguer, peut-être que le projet est trop petit pour voir les gains
+- **Time reduction > 30%** : Excellent, the new system is significantly faster
+- **Time reduction 10-30%** : Good, notable improvement
+- **Time reduction < 10%** : Worth investigating; the project may be too small to see gains
 
 ### Validation
 
-- **100% passed** : Le nouveau système est prêt pour la production
-- **< 100% passed** : Investiguer les différences et corriger les règles concernées
+- **100% passed** : The new system is production-ready
+- **< 100% passed** : Investigate differences and fix the affected rules
 
-## Prochaines Étapes
+## Next Steps
 
-1. Exécuter les benchmarks sur différents projets de tailles variées
-2. Comparer les résultats avec l'ancien système
-3. Documenter les gains de performance
-4. Corriger les éventuelles régressions détectées par les tests de validation
+1. Run benchmarks on projects of various sizes
+2. Compare results with the old system
+3. Document performance gains
+4. Fix any regressions detected by validation tests
