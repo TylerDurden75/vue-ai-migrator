@@ -220,28 +220,29 @@ export async function migrateToViteConfig(
     // 3. Migrate index.html from public/ to root (Vite convention)
     const publicIndexHtmlPath = path.join(projectPath, "public", "index.html");
     const rootIndexHtmlPath = path.join(projectPath, "index.html");
+    const mainEntry = enableTypeScript ? "/src/main.ts" : "/src/main.js";
 
     if (fsSync.existsSync(publicIndexHtmlPath)) {
       try {
         let indexHtmlContent = await fs.readFile(publicIndexHtmlPath, "utf-8");
         
-        // Ensure the script tag references the entry point
+        // Ensure the script tag references the entry point (main.js or main.ts per --typescript)
         if (!indexHtmlContent.includes('<script') || !indexHtmlContent.includes('src=')) {
           // Find the closing </body> tag and add script before it
           if (indexHtmlContent.includes('</body>')) {
             indexHtmlContent = indexHtmlContent.replace(
               '</body>',
-              '  <script type="module" src="/src/main.ts"></script>\n</body>'
+              `  <script type="module" src="${mainEntry}"></script>\n</body>`
             );
           } else {
             // No </body> tag, add script at the end
-            indexHtmlContent += '\n  <script type="module" src="/src/main.ts"></script>\n';
+            indexHtmlContent += `\n  <script type="module" src="${mainEntry}"></script>\n`;
           }
         } else {
-          // Script exists but might need to be updated to use /src/main.ts
+          // Script exists but might need to be updated to use main.js or main.ts
           indexHtmlContent = indexHtmlContent.replace(
             /<script[^>]*src=["'][^"']*main\.(js|ts)["'][^>]*>/i,
-            '<script type="module" src="/src/main.ts">'
+            `<script type="module" src="${mainEntry}">`
           );
         }
         
@@ -265,7 +266,7 @@ export async function migrateToViteConfig(
           if (indexHtmlContent.includes('</body>')) {
             indexHtmlContent = indexHtmlContent.replace(
               '</body>',
-              '  <script type="module" src="/src/main.ts"></script>\n</body>'
+              `  <script type="module" src="${mainEntry}"></script>\n</body>`
             );
             await fs.writeFile(rootIndexHtmlPath, indexHtmlContent, "utf-8");
             result.changes.push("Added script tag to root index.html");

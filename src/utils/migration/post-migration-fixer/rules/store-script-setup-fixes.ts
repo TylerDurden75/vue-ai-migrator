@@ -272,7 +272,8 @@ export const storeThemeBindingRule: FixRule = {
     const storeVarMatch = scriptContent.match(/(\w+)\s*=\s*useAppStore\s*\(\s*\)/);
     const storeVar = storeVarMatch ? storeVarMatch[1] : "appStore";
     const computedImport = scriptContent.includes("computed") && /import\s*\{[^}]*\bcomputed\b/.test(scriptContent);
-    const insertBlock = `const currentTheme = computed({\n  get: () => ${storeVar}.theme,\n  set: (v: string) => ${storeVar}.setTheme(v),\n});\n\n`;
+    const setterParam = context.enableTypeScript ? "(v: string)" : "(v)";
+    const insertBlock = `const currentTheme = computed({\n  get: () => ${storeVar}.theme,\n  set: ${setterParam} => ${storeVar}.setTheme(v),\n});\n\n`;
     let insertPos = scriptContent.indexOf("const changeTheme");
     if (insertPos === -1) insertPos = scriptContent.indexOf("const " + storeVar);
     if (insertPos === -1) insertPos = scriptContent.search(/\n(?!\s*\/\/)/);

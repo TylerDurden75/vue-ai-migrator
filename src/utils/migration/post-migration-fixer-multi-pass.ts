@@ -10001,7 +10001,9 @@ export async function fixPostMigrationIssues(
             
             // GENERIC: Add variable and function (works for any SET_XXX pattern)
             const varType = varName.includes('loading') || varName.includes('is') ? 'boolean' : 'any';
-            const stateCode = `\n  const ${varName} = ref<${varType}>(false);\n  \n  function ${fullFuncName}(value: ${varType}): void {\n    ${varName}.value = value;\n  }\n`;
+            const stateCode = enableTypeScript
+              ? `\n  const ${varName} = ref<${varType}>(false);\n  \n  function ${fullFuncName}(value: ${varType}): void {\n    ${varName}.value = value;\n  }\n`
+              : `\n  const ${varName} = ref(false);\n  \n  function ${fullFuncName}(value) {\n    ${varName}.value = value;\n  }\n`;
             fixedContent = beforeContent + afterContent.substring(0, insertPos) + stateCode + afterContent.substring(insertPos);
             
             // Add to return statement (generic)

@@ -8,6 +8,7 @@ import type { FixResult, FixContext } from "./types";
 import { scriptSetupTagSpaceRule, removeExportDefaultRule, scriptSetupThisEmitRule, scriptSetupFormattingRule } from "./rules/vue-script-setup";
 import {
   asyncFunctionRule,
+  storeIndexRemoveObsoleteImportsRule,
   storeIndexNamedExportRule,
   storeDefineStoreClosingRule,
   storeVuexGettersDispatchRule,
@@ -25,7 +26,7 @@ import { splitImportsOnSameLineRule, removeVuexImportsRule, removeVueCompilerMac
 import { computedValueRule, vueComputedExtraParenRule, malformedComputedRule, computedSyntaxRule } from "./rules/computed-fixes";
 import { templateInterpolationParensRule, templateCurrencyNonNumericRule, missingComponentImportsRule, templateFilterFunctionImportsRule, missingFilterImportsRule, vModelBindingsRule } from "./rules/template-fixes";
 import { wrongStorePropertyRule, nullChecksLengthRule, detailViewStoreRule } from "./rules/final-fixes";
-import { destructuringKeyValueParamRule, incorrectEventTypeRule, filtersKeyAccessRule, typescriptTypeImprovementsRule } from "./rules/type-fixes";
+import { destructuringKeyValueParamRule, incorrectEventTypeRule, filtersKeyAccessRule, stripTypeScriptAnnotationsRule, typescriptTypeImprovementsRule } from "./rules/type-fixes";
 import { vueStoreVuexToPiniaRule } from "./rules/vue-store-vuex";
 import { storeScriptSetupRule, replaceThisRouterRouteRule, missingUseRouteImportRule, watchPropsRefRule, storeThemeBindingRule, secureRouterPushRule, routerPushTypeCheckRule, fixStoreMemberMismatchRule } from "./rules/store-script-setup-fixes";
 import { formatWithPrettier } from "../prettier-formatter";
@@ -47,6 +48,7 @@ ruleEngine.registerRules([
   splitImportsOnSameLineRule,     // Priority 92 (split ';import on same line)
   asyncFunctionRule,              // Priority 90
   storeIndexNamedExportRule,      // Priority 78 (store/index: add useIndexStore export)
+  storeIndexRemoveObsoleteImportsRule, // Priority 79 (remove default module imports + Vue)
   storeDefineStoreClosingRule,    // Priority 79 (}; }; }); → } });)
   storeVuexGettersDispatchRule,   // Priority 89 (getters/dispatch → storeVar in stores)
   piniaStoreCrossStoreDepsRule,   // Priority 88 (store using another store)
@@ -96,7 +98,8 @@ ruleEngine.registerRules([
   // Medium priority: Dependent fixes
   duplicateKeysRule,              // Priority 20
   mergeDuplicateImportsRule,      // Priority 15
-  typescriptTypeImprovementsRule, // Priority 12
+  typescriptTypeImprovementsRule, // Priority 12 (only when --typescript)
+  stripTypeScriptAnnotationsRule, // Priority 11: strip TS annotations when not --typescript
   
   // Low priority: Final fixes (runs near end)
   wrongStorePropertyRule,         // Priority 5

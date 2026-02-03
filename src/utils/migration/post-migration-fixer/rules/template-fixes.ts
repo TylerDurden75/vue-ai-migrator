@@ -275,16 +275,22 @@ export const missingFilterImportsRule: FixRule = {
         
         // Add filter functions (would need to import from filters file or define inline)
         // For now, add as simple functions
+        const ts = context.enableTypeScript;
         const filterDefs: string[] = [];
         filterFunctions.forEach(filterName => {
           // Common filter implementations
           if (filterName === "capitalize") {
-            filterDefs.push(`const ${filterName} = (str: string) => str ? str.charAt(0).toUpperCase() + str.slice(1) : '';`);
+            filterDefs.push(ts
+              ? `const ${filterName} = (str: string) => str ? str.charAt(0).toUpperCase() + str.slice(1) : '';`
+              : `const ${filterName} = (str) => str ? str.charAt(0).toUpperCase() + str.slice(1) : '';`);
           } else if (filterName === "currency") {
-            filterDefs.push(`const ${filterName} = (val: number) => val ? \`$\${val.toFixed(2)}\` : '$0.00';`);
+            filterDefs.push(ts
+              ? `const ${filterName} = (val: number) => val ? \`$\${val.toFixed(2)}\` : '$0.00';`
+              : `const ${filterName} = (val) => val ? \`$\${val.toFixed(2)}\` : '$0.00';`);
           } else {
-            // Generic filter function
-            filterDefs.push(`const ${filterName} = (val: any) => val; // TODO: Implement ${filterName} filter`);
+            filterDefs.push(ts
+              ? `const ${filterName} = (val: any) => val; // TODO: Implement ${filterName} filter`
+              : `const ${filterName} = (val) => val; // TODO: Implement ${filterName} filter`);
           }
         });
 

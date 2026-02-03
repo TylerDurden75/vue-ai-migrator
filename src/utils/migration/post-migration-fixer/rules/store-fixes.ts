@@ -575,15 +575,18 @@ export const storeAddLoadingRule: FixRule = {
     const typeDefault = (m: string, v: string) =>
       v === "loading" ? "boolean" : "any";
     const defaultVal = (v: string) => (v === "loading" ? "false" : "undefined");
+    const ts = context.enableTypeScript;
 
     const blocks: string[] = [];
     const returnAdds: string[] = [];
     for (const [mutation, varName] of toAdd) {
       const type = typeDefault(mutation, varName);
       const def = defaultVal(varName);
-      blocks.push(
-        `\n  const ${varName} = ref<${type}>(${def});\n\n  function ${mutation}(value: ${type}): void {\n    ${varName}.value = value;\n  }\n`
-      );
+      const refDecl = ts ? `ref<${type}>(${def})` : `ref(${def})`;
+      const funcDecl = ts
+        ? `function ${mutation}(value: ${type}): void {\n    ${varName}.value = value;\n  }`
+        : `function ${mutation}(value) {\n    ${varName}.value = value;\n  }`;
+      blocks.push(`\n  const ${varName} = ${refDecl};\n\n  ${funcDecl}\n`);
       returnAdds.push(`${varName}: ${varName},\n    ${mutation}: ${mutation}`);
     }
     const block = blocks.join("\n ") + "\n\n ";
@@ -697,6 +700,55 @@ export const storeReturnCurrentUserRule: FixRule = {
       }
     }
     result.content = fixed;
+    return result;
+  }
+};
+
+/**
+ * Fix: In store/index.js or store/index.ts (Pinia), remove obsolete Vuex-style imports.
+ * After migration, modules export useXxxStore (named), not default, so
+ * "import userModule from './modules/user'" is invalid. Also remove unused "import Vue from 'vue'".
+ */
+export const storeIndexRemoveObsoleteImportsRule: FixRule = {
+  id: "store-index-remove-obsolete-imports",
+  description: "Remove default imports from ./modules/* and unused Vue import in store/index",
+  priority: 79,
+  shouldApply: (filePath, content) => {
+    if (!(filePath.endsWith("store/index.js") || filePath.endsWith("store/index.ts"))) return false;
+    if (!content.includes("defineStore")) return false;
+    const hasDefaultModuleImport = /import\s+\w+\s+from\s+['"]\.\/modules\/\w+['"]/.test(content);
+    const hasVueImport = /import\s+Vue\s+from\s+['"]vue['"]/.test(content);
+    return hasDefaultModuleImport || hasVueImport;
+  },
+  apply: async (filePath, content, context) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    let fixed = content;
+    const fixes: string[] = [];
+
+    // Remove import X from "./modules/YYY" (modules no longer have default export after Pinia migration)
+    const defaultModuleRe = /import\s+\w+\s+from\s+['"]\.\/modules\/\w+['"];?\s*\n?/g;
+    const beforeModules = fixed;
+    fixed = fixed.replace(defaultModuleRe, () => "");
+    if (fixed !== beforeModules) {
+      fixes.push("Removed obsolete default imports from store modules");
+    }
+
+    // Remove import Vue from "vue" if Vue is not used in the file
+    const vueImportRe = /import\s+Vue\s+from\s+['"]vue['"];?\s*\n?/g;
+    if (vueImportRe.test(fixed)) {
+      const withoutVueImport = fixed.replace(vueImportRe, "");
+      const vueUsage = /\bVue\./.test(withoutVueImport);
+      if (!vueUsage) {
+        fixed = withoutVueImport;
+        fixes.push("Removed unused Vue import from store/index");
+      }
+    }
+
+    if (fixes.length > 0) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push(...fixes);
+    }
     return result;
   }
 };

@@ -137,10 +137,14 @@ export const filtersKeyAccessRule: FixRule = {
       issues: []
     };
 
+    // Type assertion (filters as any)[key] is only valid in TypeScript; in JS leave filters[key]
+    if (!context.enableTypeScript) {
+      return result;
+    }
+
     let fixed = content;
 
-    // Fix: filters[key] → filters[key as keyof typeof filters] or (filters as any)[key]
-    // Pattern: filters[key] where key is a variable
+    // Fix: filters[key] → (filters as any)[key] for TypeScript
     const filtersKeyPattern = getCachedRegex(
       "filters\\s*\\[\\s*(\\w+)\\s*\\]",
       "g"
@@ -153,7 +157,6 @@ export const filtersKeyAccessRule: FixRule = {
       const keyVar = match[1];
       const fullMatch = match[0];
       
-      // Use type assertion for TypeScript compatibility
       const fixedMatch = `(filters as any)[${keyVar}]`;
       fixed = fixed.replace(fullMatch, fixedMatch);
       fixes.push(`Fixed filters[${keyVar}] access with type assertion for TypeScript compatibility`);
@@ -163,6 +166,92 @@ export const filtersKeyAccessRule: FixRule = {
       result.content = fixed;
       result.fixed = true;
       result.fixes.push(...fixes);
+    }
+
+    return result;
+  }
+};
+
+/**
+ * Strip TypeScript annotations from JS/plain script when migration was run without --typescript.
+ * Runs only when enableTypeScript is false; removes param types, return types, ref<T>, computed<T>, etc.
+ */
+export const stripTypeScriptAnnotationsRule: FixRule = {
+  id: "strip-typescript-annotations",
+  description: "Remove TypeScript syntax from JS/plain script when not using --typescript",
+  priority: 11,
+  shouldApply: (filePath, content) => {
+    const hasTsSyntax =
+      /ref\s*<[^>]+>\s*\(/.test(content) ||
+      /computed\s*<[^>]+>\s*\(/.test(content) ||
+      /\w+\s*:\s*(?:string|number|boolean|void|any|unknown|object)\s*[\),]/.test(content) ||
+      /\)\s*:\s*(?:void|string|number|boolean|any|Promise\s*<)/.test(content) ||
+      /\)\s*:\s*void\s*=>/.test(content) ||
+      /\s+as\s+any\b/.test(content);
+    if (!hasTsSyntax) return false;
+    if (filePath.endsWith(".ts")) return false;
+    if (filePath.endsWith(".js")) return true;
+    if (filePath.endsWith(".vue")) {
+      const hasPlainScript = /<script(\s[^>]*)?>/.test(content) && !/<script[^>]*\blang\s*=\s*["']ts["'][^>]*>/.test(content);
+      return hasPlainScript;
+    }
+    return false;
+  },
+  apply: async (filePath, content, context) => {
+    if (context.enableTypeScript) {
+      return { content, fixed: false, fixes: [], issues: [] };
+    }
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+
+    const stripParamTypes = (params: string): string =>
+      params.replace(/(\w+)\s*:\s*(?:string|number|boolean|void|any|unknown|object)\b[^,\)]*/g, "$1");
+
+    const stripFromScript = (script: string): string => {
+      let out = script;
+      // ref<Type>(...) → ref(...)
+      out = out.replace(/ref\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>\s*\(/g, "ref(");
+      // computed<Type>(...) → computed(...)
+      out = out.replace(/computed\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>\s*\(/g, "computed(");
+      // function name(param: Type, ...): ReturnType { → function name(param, ...) {
+      out = out.replace(/function\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>\[\]\s|&,]+)?\s*\{/g, (_m, name, params) => {
+        return `function ${name}(${stripParamTypes(params)}) {`;
+      });
+      // ): ReturnType => { → ) => {
+      out = out.replace(/(\))\s*:\s*(?:void|[\w<>\[\]\s|&,]+)\s*=>\s*\{/g, "$1) => {");
+      // Arrow params: (a: string, b: number) => → (a, b) =>
+      out = out.replace(/\b(?:const|let|var)\s+\w+\s*=\s*\(([^)]*)\)\s*=>/g, (m, params) => {
+        return m.replace(params, stripParamTypes(params));
+      });
+      // set: (v: string) => → set: (v) =>
+      out = out.replace(/(\w+)\s*:\s*\((\w+)\s*:\s*[^)]+\)\s*=>/g, "$1: ($2) =>");
+      // (v: string) => or (value: boolean) => (standalone arrow)
+      out = out.replace(/(\()(\w+)\s*:\s*[^\)]+(\))\s*=>/g, "$1$2$3) =>");
+      // (filters as any)[key] or (expr as any) → filters[key] / expr (invalid in JS)
+      out = out.replace(/\((\w+)\s+as\s+any\)/g, "$1");
+      return out;
+    };
+
+    if (filePath.endsWith(".js")) {
+      const fixed = stripFromScript(content);
+      if (fixed !== content) {
+        result.content = fixed;
+        result.fixed = true;
+        result.fixes.push("Stripped TypeScript annotations (JS project)");
+      }
+      return result;
+    }
+
+    if (filePath.endsWith(".vue")) {
+      const scriptMatch = content.match(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/);
+      if (!scriptMatch) return result;
+      const [, attrs, scriptContent] = scriptMatch;
+      if (/lang\s*=\s*["']ts["']/.test(attrs || "")) return result;
+      const fixedScript = stripFromScript(scriptContent);
+      if (fixedScript === scriptContent) return result;
+      result.content = content.replace(scriptMatch[0], `<script${attrs || ""}>${fixedScript}</script>`);
+      result.fixed = true;
+      result.fixes.push("Stripped TypeScript annotations from script (no --typescript)");
+      return result;
     }
 
     return result;

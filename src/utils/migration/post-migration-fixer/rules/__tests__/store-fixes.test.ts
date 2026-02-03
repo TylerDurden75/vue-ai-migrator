@@ -4,6 +4,7 @@
 
 import {
   asyncFunctionRule,
+  storeIndexRemoveObsoleteImportsRule,
   storeDefineStoreClosingRule,
   storeVuexGettersDispatchRule,
   duplicateKeysRule,
@@ -179,6 +180,56 @@ describe("storeDefineStoreClosingRule", () => {
 });
 `;
     const result = await storeDefineStoreClosingRule.apply("src/store/modules/app.ts", content, emptyContext);
+    expect(result.fixed).toBe(false);
+  });
+});
+
+describe("storeIndexRemoveObsoleteImportsRule", () => {
+  const emptyContext = { enableTypeScript: false, isVueFile: false } as FixContext;
+
+  it("should remove default imports from ./modules/* in store/index", async () => {
+    const content = `import { defineStore } from "pinia";
+import { ref, computed } from "vue";
+import userModule from "./modules/user";
+import productModule from "./modules/product";
+import appModule from "./modules/app";
+import { useUserStore } from "@/store/modules/user";
+
+export const useIndexStore = defineStore("index", () => {
+  const userStore = useUserStore();
+  return { userStore };
+});
+export default useIndexStore;
+`;
+    const result = await storeIndexRemoveObsoleteImportsRule.apply("src/store/index.js", content, emptyContext);
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain("import userModule from");
+    expect(result.content).not.toContain("import productModule from");
+    expect(result.content).not.toContain("import appModule from");
+    expect(result.content).toContain("import { useUserStore } from");
+    expect(result.content).toContain("defineStore");
+  });
+
+  it("should remove unused Vue import from store/index", async () => {
+    const content = `import Vue from "vue";
+import { defineStore } from "pinia";
+import { useUserStore } from "@/store/modules/user";
+export const useIndexStore = defineStore("index", () => {
+  const userStore = useUserStore();
+  return { userStore };
+});
+`;
+    const result = await storeIndexRemoveObsoleteImportsRule.apply("src/store/index.js", content, emptyContext);
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain('import Vue from "vue"');
+  });
+
+  it("should not apply when store/index has no obsolete imports", async () => {
+    const content = `import { defineStore } from "pinia";
+import { useUserStore } from "@/store/modules/user";
+export const useIndexStore = defineStore("index", () => ({ userStore: useUserStore() }));
+`;
+    const result = await storeIndexRemoveObsoleteImportsRule.apply("src/store/index.js", content, emptyContext);
     expect(result.fixed).toBe(false);
   });
 });

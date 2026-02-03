@@ -2050,27 +2050,23 @@ function addTypeScriptTypesToStore(
     );
   });
 
-  // Add return types to functions (mutations and actions)
+  // Add return types to functions (mutations and actions).
+  // addTypeScriptTypesToStore is only called when enableTypeScript is true (see caller).
   context.functionNames.forEach((funcName) => {
     // Escape function name for regex
     const escapedFuncName = funcName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     // Match: function functionName(param1, param2) {
-    // Pattern needs to capture: function FUNC_NAME(params) {
-    // Fix: capture the entire function declaration including the opening brace
     const functionPattern = new RegExp(
       `(function\\s+${escapedFuncName}\\s*\\(([^)]*)\\)\\s*\\{)`,
       "g"
     );
 
-    // Find and replace function declarations
-    // Use exec to find the first match and replace it
     let match;
     while ((match = functionPattern.exec(result)) !== null) {
       const fullMatch = match[0];
       const paramList = match[2] || "";
 
-      // Add types to parameters
       let typedParams = paramList;
       if (paramList && paramList.trim()) {
         const paramNames = paramList
@@ -2084,10 +2080,8 @@ function addTypeScriptTypesToStore(
           })
           .join(", ");
       }
-      // Add return type annotation
       const replacement = `function ${funcName}(${typedParams}): void {`;
       result = result.replace(fullMatch, replacement);
-      // Only replace once per function name
       break;
     }
 

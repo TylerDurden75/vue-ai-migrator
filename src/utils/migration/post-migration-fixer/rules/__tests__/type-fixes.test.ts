@@ -5,6 +5,7 @@
 import {
   incorrectEventTypeRule,
   filtersKeyAccessRule,
+  stripTypeScriptAnnotationsRule,
   typescriptTypeImprovementsRule
 } from "../type-fixes";
 import type { FixContext } from "../../types";
@@ -292,6 +293,56 @@ describe("typescriptTypeImprovementsRule", () => {
       isVueFile: false
     });
 
+    expect(result.fixed).toBe(false);
+  });
+});
+
+describe("stripTypeScriptAnnotationsRule", () => {
+  const jsContext = { enableTypeScript: false, isVueFile: false };
+
+  it("should strip ref<boolean> and function(value: boolean): void in .js when enableTypeScript is false", async () => {
+    const content = `const loading = ref<boolean>(false);
+
+  function SET_LOADING(value: boolean): void {
+    loading.value = value;
+  }`;
+    const result = await stripTypeScriptAnnotationsRule.apply("src/store/modules/user.js", content, jsContext);
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("ref(false)");
+    expect(result.content).toContain("function SET_LOADING(value) {");
+    expect(result.content).not.toContain("ref<boolean>");
+    expect(result.content).not.toContain("value: boolean");
+    expect(result.content).not.toContain(": void");
+  });
+
+  it("should strip set: (v: string) => in .vue script when enableTypeScript is false", async () => {
+    const content = `<template><div></div></template>
+<script setup>
+const currentTheme = computed({
+  get: () => appStore.theme,
+  set: (v: string) => appStore.setTheme(v),
+});
+</script>`;
+    const result = await stripTypeScriptAnnotationsRule.apply("src/views/Dashboard.vue", content, jsContext);
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("set: (v) =>");
+    expect(result.content).not.toContain("(v: string)");
+  });
+
+  it("should not modify when enableTypeScript is true", async () => {
+    const content = `const loading = ref<boolean>(false);
+  function SET_LOADING(value: boolean): void { loading.value = value; }`;
+    const result = await stripTypeScriptAnnotationsRule.apply("src/store/user.js", content, {
+      enableTypeScript: true,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(false);
+    expect(result.content).toBe(content);
+  });
+
+  it("should not apply to .ts files", async () => {
+    const content = `function SET_LOADING(value: boolean): void {}`;
+    const result = await stripTypeScriptAnnotationsRule.apply("src/store/user.ts", content, jsContext);
     expect(result.fixed).toBe(false);
   });
 });
