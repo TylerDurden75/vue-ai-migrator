@@ -17,7 +17,7 @@
     "test:watch": "jest --watch",
     "benchmark": "ts-node benchmarks/performance-benchmark.ts",
     "validate": "ts-node benchmarks/validation-test.ts",
-    "build": "npx tsc && node -e \"const fs=require('fs');const f='dist/cli.js';const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!/usr/bin/env node'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\"",
+    "build": "echo 'TypeScript compilation...' && npx tsc && echo 'Adding shebang to dist/cli.js...' && node scripts/add-shebang.js && echo 'Build complete.'",
     "dev": "tsc --watch",
     "test:coverage": "jest --coverage --coverageReporters=text --coverageReporters=lcov --coverageReporters=html",
     "test:e2e": "node test-e2e/test-all-features.js",
