@@ -44,6 +44,12 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 - [ ] Advanced custom directives handling
 - [ ] Functional components transformation
 
+### Post-Migration Fixer
+
+- [ ] **Investiguer la version optimisée** : comprendre pourquoi elle produit des erreurs (userStore not defined, computed syntax, duplicateKeys) alors que le legacy fonctionne
+- [ ] Stabiliser le rule engine pour qu'il devienne le défaut (remplacer --legacy)
+- [ ] Aligner les règles optimisées sur le comportement du legacy
+
 ### Performance
 
 - [ ] Cache optimization (improved incremental mode)

@@ -74,7 +74,6 @@ program
   .option(
     "--typescript",
     "Enable TypeScript type annotations in migrated code",
-    false,
   )
   .option(
     "--install",
@@ -89,6 +88,11 @@ program
   .option(
     "-v, --verbose",
     "Enable verbose logging (show DEBUG messages and detailed fixes)",
+    false,
+  )
+  .option(
+    "--legacy",
+    "Use legacy post-migration fixer (multi-pass) instead of optimized rule engine",
     false,
   )
   .action(async (projectPath: string, options) => {
@@ -170,8 +174,9 @@ program
           : undefined,
         enableRollback: !options.noRollback,
         generateTests: options.generateTests || false,
-        enableTypeScript: options.typescript || false,
+        enableTypeScript: !!options.typescript,
         verbose: options.verbose || false,
+        useOptimizedFixer: !options.legacy,
       };
 
       if (shouldUseAI && apiKey) {

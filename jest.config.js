@@ -1,3 +1,7 @@
+/**
+ * Jest configuration for tests
+ */
+
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
@@ -5,17 +9,17 @@ module.exports = {
   testMatch: ["**/__tests__/**/*.test.ts"],
   collectCoverageFrom: [
     "src/**/*.ts",
-    "!src/**/*.test.ts",
-    "!src/**/__tests__/**",
     "!src/**/*.d.ts",
+    "!src/**/__tests__/**",
+    "!src/**/*.test.ts"
   ],
-  moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json"],
-  transform: {
-    "^.+\\.ts$": ["ts-jest", {
-      tsconfig: "tsconfig.test.json",
-    }],
-  },
+  coverageDirectory: "coverage",
+  coverageReporters: ["text", "lcov", "html"],
   moduleNameMapper: {
-    "^@/(.*)$": "<rootDir>/src/$1",
+    "^@/(.*)$": "<rootDir>/src/$1"
   },
+  transform: {
+    "^.+\\.ts$": "ts-jest"
+  },
+  testTimeout: 10000
 };

@@ -16,6 +16,10 @@ export {
   fixImportPaths,
   type FixResult,
 } from "./post-migration-fixer";
+// New modular version (in progress)
+export {
+  fixPostMigrationIssues as fixPostMigrationIssuesOptimized,
+} from "./post-migration-fixer/index";
 export {
   checkDependencyConflicts,
   cleanupDependencies,

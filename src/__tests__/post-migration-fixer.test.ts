@@ -186,6 +186,50 @@ describe('Post Migration Fixer', () => {
       expect(result.fixes.length).toBe(0);
     });
 
+    it('should fix defineStore malformed closing (}; }; }); → });) in store files', async () => {
+      const code = `import { defineStore } from "pinia";
+import { ref } from "vue";
+
+export const useAppStore = defineStore("app", () => {
+  const theme = ref('light');
+  return {
+    theme
+  };
+
+};
+});
+`;
+      const result = await fixPostMigrationIssues('src/store/modules/app.ts', code, false, testProjectRoot);
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain('  }\n});');
+      expect(result.content).not.toMatch(/\}\s*;\s*\n+\s*\}\s*;\s*\n/);
+      expect(result.fixes.some(f => f.includes('defineStore') || f.includes('closing'))).toBe(true);
+    });
+
+    it('should fix template interpolation extra parenthesis ({{ user.name) }} → {{ user.name }})', async () => {
+      const code = `
+<template>
+  <div>
+    <div v-for="user in filteredUsers" :key="user.id">
+      {{ user.name) }} - {{ user.email }}
+    </div>
+  </div>
+</template>
+<script setup lang="ts">
+import { ref } from 'vue';
+const filteredUsers = ref([]);
+</script>
+      `.trim();
+
+      const result = await fixPostMigrationIssues('src/views/Users.vue', code, false, testProjectRoot);
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain('{{ user.name }} - {{ user.email }}');
+      expect(result.content).not.toContain('user.name) }}');
+      expect(result.fixes.some(f => f.includes('interpolation') || f.includes('parentheses'))).toBe(true);
+    });
+
     it('should fix route.query.redirect type issues', async () => {
       const code = `
         <script setup>
@@ -389,6 +433,48 @@ describe('Post Migration Fixer', () => {
         // The property analyzer should still detect properties from map callbacks
         expect(result.content).toContain('users.value.map');
       }
+    });
+
+    it('should fix indexStore.fetchUser and indexStore.allIndexs to userStore (fixStoreMemberMismatchRule)', async () => {
+      const code = `
+<template>
+  <div class="user-detail">
+    <div v-if="isLoading">Loading user...</div>
+    <div v-else-if="user">
+      <h1>{{ user.name }}</h1>
+    </div>
+  </div>
+</template>
+<script setup lang="ts">
+import { computed, watch } from "vue";
+import { useIndexStore } from "@/store/index";
+import { useRouter, useRoute } from "vue-router";
+
+const route = useRoute();
+const indexStore = useIndexStore();
+const props = defineProps({ id: { type: [String, Number], required: true } });
+
+const isLoading = computed<any>(() => indexStore.isLoading);
+const user = computed<any>(() => {
+  const id = props.id || (route.params.id as string);
+  return indexStore.allIndexs?.find((item: any) => item.id === parseInt(id as string)) || null;
+});
+
+const fetchUser = () => {
+  indexStore.fetchUser(parseInt(props.id));
+};
+watch(() => props.id, () => fetchUser(), { immediate: true });
+</script>`;
+
+      const result = await fixPostMigrationIssues('src/views/UserDetail.vue', code, true, testProjectRoot);
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain('useUserStore');
+      expect(result.content).toContain('userStore.fetchUser');
+      expect(result.content).not.toContain('indexStore.fetchUser');
+      // allIndexs -> allUsers or currentUser (Detail view)
+      expect(result.content).not.toContain('indexStore.allIndexs');
+      expect(result.content).toMatch(/userStore\.(allUsers|currentUser)/);
     });
   });
 });

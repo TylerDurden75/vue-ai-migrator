@@ -212,5 +212,5 @@ vue-ai-migrator migrate ./my-project
 ## 📚 Related Documentation
 
 - [Usage Guide](./USAGE.md)
-- [Examples](./EXAMPLES.md)
+- [Usage & examples](./USAGE.md)
 - [README](./README.md)

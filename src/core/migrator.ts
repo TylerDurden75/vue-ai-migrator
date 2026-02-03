@@ -55,6 +55,7 @@ export interface MigrationOptions {
   classifyFiles?: boolean;
   enableTypeScript?: boolean;
   verbose?: boolean; // Enable verbose logging (DEBUG messages, detailed fixes)
+  useOptimizedFixer?: boolean; // Use new optimized rule engine (single pass) instead of legacy multi-pass system
 }
 
 export interface MigrationResult {
@@ -233,6 +234,17 @@ export async function migrate(
 
     // Cache for file content hashes to avoid reprocessing unchanged files (fallback)
     const fileCache = new Map<string, string>();
+
+    // Resolve post-migration fixer: optimized (default) or legacy when --legacy is set
+    let fixPostMigrationIssuesFn = fixPostMigrationIssues;
+    let fixImportPathsFn = fixImportPaths;
+    if (options.useOptimizedFixer === false) {
+      const legacy = await import(
+        "../utils/migration/post-migration-fixer-legacy"
+      );
+      fixPostMigrationIssuesFn = legacy.fixPostMigrationIssues;
+      fixImportPathsFn = legacy.fixImportPaths;
+    }
 
     // Determine transformations to apply
     let transformationsToApply =
@@ -497,19 +509,26 @@ export async function migrate(
               filePath.includes("/mixins/") ||
               filePath.includes("mixin.ts") ||
               filePath.includes("mixin.js");
-            
-            // Process mixin files even if not modified by codemods
-            if (migrated || isMixinFile) {
+
+            // Check if this is a Pinia store file (always run fixer to fix }; }; }); → });
+            const isStoreFile =
+              (filePath.includes("/store/") ||
+                filePath.endsWith("store.ts") ||
+                filePath.endsWith("store.js")) &&
+              finalCode.includes("defineStore");
+
+            // Process mixin/store files even if not modified by codemods
+            if (migrated || isMixinFile || isStoreFile) {
               // Debug logging (only if verbose mode)
               if (options.verbose === true) {
                 const relativePath = path.relative(projectPath, filePath);
                 result.warnings.push(
-                  `DEBUG: Processing ${relativePath} - migrated=${migrated}, codeChanged=${finalCode !== content}, dryRun=${dryRun}, isMixinFile=${isMixinFile}`
+                  `DEBUG: Processing ${relativePath} - migrated=${migrated}, codeChanged=${finalCode !== content}, dryRun=${dryRun}, isMixinFile=${isMixinFile}, isStoreFile=${isStoreFile}`
                 );
               }
 
-              // Only save if code actually changed or if it's a mixin file
-              const shouldProcess = finalCode !== content || isMixinFile;
+              // Only save if code actually changed or if it's a mixin/store file (fixer may fix e.g. defineStore closing)
+              const shouldProcess = finalCode !== content || isMixinFile || isStoreFile;
 
               // Debug: log mixin file processing (only if verbose mode)
               if (isMixinFile && options.verbose === true) {
@@ -528,7 +547,7 @@ export async function migrate(
                 if (!dryRun) {
                   // Apply post-migration fixes
                   try {
-                    fixResult = await fixPostMigrationIssues(
+                    fixResult = await fixPostMigrationIssuesFn(
                       filePath,
                       finalCode,
                       options.enableTypeScript || false,
@@ -545,7 +564,7 @@ export async function migrate(
                     }
 
                     // Fix import paths to use @ alias
-                    finalCode = fixImportPaths(
+                    finalCode = fixImportPathsFn(
                       finalCode,
                       projectPath,
                       filePath
@@ -915,76 +934,159 @@ export async function migrate(
       }
     }
 
-    // Second pass: Fix remaining issues after all stores are migrated
-    // GENERIC: This ensures store analysis works correctly after all stores are migrated
+    // Post-migration fixes: Use optimized rule engine (single pass) or legacy system (multi-pass)
     if (!dryRun && result.filesModified > 0) {
       try {
-        // Clear the store analysis cache to force re-analysis with migrated stores
-        const { clearStoreAnalysisCache } =
-          await import("../utils/migration/post-migration-fixer");
-        if (clearStoreAnalysisCache) {
-          clearStoreAnalysisCache();
-        }
+        const useOptimized = options.useOptimizedFixer !== false; // Default to true (new system)
+        
+        if (useOptimized) {
+          // NEW: Single-pass optimized rule engine with parallel processing
+          // Include .vue files and store files (.ts/.js) so defineStore closing fix runs on stores
+          const vueOnly = vueFiles.filter(
+            (file) =>
+              file.endsWith(".vue") &&
+              !file.includes("node_modules") &&
+              !file.includes("dist")
+          );
+          const storeFiles = await glob("**/store/**/*.{ts,js}", {
+            cwd: projectPath,
+            ignore: ["node_modules/**", "dist/**", "build/**"],
+            absolute: true,
+          });
+          const mainFiles = await glob("**/main.{ts,js}", {
+            cwd: projectPath,
+            ignore: ["node_modules/**", "dist/**", "build/**"],
+            absolute: true,
+          });
+          const vueFilesToFix = [...vueOnly, ...storeFiles, ...mainFiles];
 
-        // Re-process Vue files to fix remaining issues (missing store imports, etc.)
-        const vueFilesToFix = vueFiles.filter(
-          (file) =>
-            file.endsWith(".vue") &&
-            !file.includes("node_modules") &&
-            !file.includes("dist")
-        );
+          // Import optimized fixer and parallel processor
+          const { fixPostMigrationIssues: fixPostMigrationIssuesOptimized } =
+            await import("../utils/migration/post-migration-fixer");
+          const { processFilesInParallel, getOptimalConcurrency } =
+            await import("../utils/migration/post-migration-fixer/utils/parallel-processor");
 
-        for (const filePath of vueFilesToFix) {
-          try {
-            const content = await safeReadFile(filePath);
-            if (content) {
-              const fixResult = await fixPostMigrationIssues(
-                filePath,
-                content,
-                options.enableTypeScript || false,
-                projectPath
-              );
-              if (fixResult.fixed && fixResult.fixes.length > 0) {
-                await safeWriteFile(filePath, fixResult.content);
-                // Only log second pass fixes if verbose mode is enabled
-                if (options.verbose === true) {
-                  result.warnings.push(
-                    `Second pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
-                  );
-                }
-                // Otherwise, silently apply fixes
+          // Read all files first (parallel)
+          const filesToProcess = await Promise.all(
+            vueFilesToFix.map(async (filePath: string) => {
+              try {
+                const content = await safeReadFile(filePath);
+                return content ? { filePath, content } : null;
+              } catch {
+                return null;
               }
+            })
+          );
+
+          // Filter out nulls and prepare for parallel processing
+          const validFiles = filesToProcess.filter(
+            (f): f is { filePath: string; content: string } => f !== null
+          );
+
+          // Process files in parallel batches
+          const concurrency = getOptimalConcurrency();
+          const processingResults = await processFilesInParallel(
+            validFiles.map(({ filePath, content }) => ({
+              filePath,
+              content,
+              enableTypeScript: options.enableTypeScript || false,
+              projectRoot: projectPath,
+              fixFunction: fixPostMigrationIssuesOptimized
+            })),
+            concurrency
+          );
+
+          // Write results (parallel) and collect warnings
+          await Promise.all(
+            processingResults.map(async ({ filePath, result: fixResult }) => {
+              if (fixResult.fixed && fixResult.fixes.length > 0) {
+                try {
+                  await safeWriteFile(filePath, fixResult.content);
+                } catch (error) {
+                  // Skip files that can't be written
+                }
+              }
+            })
+          );
+          
+          // Collect all warnings from results (add to migrator result.warnings)
+          processingResults.forEach(({ filePath, result: fixResult }) => {
+            if (options.verbose === true && fixResult.fixes.length > 0) {
+              result.warnings.push(
+                `Post-migration fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
+              );
             }
-          } catch (error) {
-            // Skip files that can't be read or fixed
+            if (fixResult.issues && fixResult.issues.length > 0) {
+              result.warnings.push(
+                `Issues in ${path.relative(projectPath, filePath)}: ${fixResult.issues.join(", ")}`
+              );
+            }
+          });
+        } else {
+          // LEGACY: Multi-pass system (kept for compatibility)
+          // Clear the store analysis cache to force re-analysis with migrated stores
+          const { clearStoreAnalysisCache } =
+            await import("../utils/migration/post-migration-fixer-legacy");
+          if (clearStoreAnalysisCache) {
+            clearStoreAnalysisCache();
           }
-        }
 
-        // Third pass: Clean up duplicates and final fixes
-        // GENERIC: Final cleanup pass to remove any remaining duplicates or issues
-        for (const filePath of vueFilesToFix) {
-          try {
-            const content = await safeReadFile(filePath);
-            if (content) {
-              const fixResult = await fixPostMigrationIssues(
-                filePath,
-                content,
-                options.enableTypeScript || false,
-                projectPath
-              );
-              if (fixResult.fixed && fixResult.fixes.length > 0) {
-                await safeWriteFile(filePath, fixResult.content);
-                // Only log third pass fixes if verbose mode is enabled
-                if (options.verbose === true) {
-                  result.warnings.push(
-                    `Third pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
-                  );
+          // Re-process Vue files to fix remaining issues (missing store imports, etc.)
+          const vueFilesToFix = vueFiles.filter(
+            (file) =>
+              file.endsWith(".vue") &&
+              !file.includes("node_modules") &&
+              !file.includes("dist")
+          );
+
+          // Second pass
+          for (const filePath of vueFilesToFix) {
+            try {
+              const content = await safeReadFile(filePath);
+              if (content) {
+                const fixResult = await fixPostMigrationIssuesFn(
+                  filePath,
+                  content,
+                  options.enableTypeScript || false,
+                  projectPath
+                );
+                if (fixResult.fixed && fixResult.fixes.length > 0) {
+                  await safeWriteFile(filePath, fixResult.content);
+                  if (options.verbose === true) {
+                    result.warnings.push(
+                      `Second pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
+                    );
+                  }
                 }
-                // Otherwise, silently apply fixes
               }
+            } catch (error) {
+              // Skip files that can't be read or fixed
             }
-          } catch (error) {
-            // Skip files that can't be read or fixed
+          }
+
+          // Third pass: Clean up duplicates and final fixes
+          for (const filePath of vueFilesToFix) {
+            try {
+              const content = await safeReadFile(filePath);
+              if (content) {
+                const fixResult = await fixPostMigrationIssuesFn(
+                  filePath,
+                  content,
+                  options.enableTypeScript || false,
+                  projectPath
+                );
+                if (fixResult.fixed && fixResult.fixes.length > 0) {
+                  await safeWriteFile(filePath, fixResult.content);
+                  if (options.verbose === true) {
+                    result.warnings.push(
+                      `Third pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
+                    );
+                  }
+                }
+              }
+            } catch (error) {
+              // Skip files that can't be read or fixed
+            }
           }
         }
       } catch (error) {

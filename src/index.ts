@@ -1,4 +1,15 @@
 export { migrate, MigrationOptions, MigrationResult } from './core/migrator';
+export {
+  createDefaultMigrationServices,
+  type MigrationServices,
+  type PostMigrationFixFn,
+} from './core/migration-services';
+export {
+  processOneFile,
+  type ProcessOneFileParams,
+  type ProcessOneFileResult,
+  type ProcessOneFileOptions,
+} from './core/migration-pipeline';
 export { CodemodRunner } from './codemods/runner';
 export { MigrationAgent, AgentConfig, AgentResponse } from './ai/agent';
 export { UnifiedAIService, createAIService, UnifiedAIServiceConfig } from './ai/unified-service';

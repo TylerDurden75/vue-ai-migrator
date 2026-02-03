@@ -151,7 +151,12 @@ export function reconstructVueFile(parts: VueFileParts): string {
     sections.push(`<${block.type}${attrsStr}>\n${block.content}\n</${block.type}>`);
   });
 
-  return sections.join('\n\n');
+  let result = sections.join('\n\n');
+  // Safety: never emit <scriptsetup (typo) — ensure <script setup> in output
+  if (/<scriptsetup\b/i.test(result)) {
+    result = result.replace(/<scriptsetup\b/gi, '<script setup');
+  }
+  return result;
 }
 
 /**

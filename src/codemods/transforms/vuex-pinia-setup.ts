@@ -1513,6 +1513,14 @@ export const vuexPiniaSetupTransform: Transform = (
     }
   }
 
+  // Normalize defineStore closing: }; }; }); → } }); (any whitespace between, allow trailing newline)
+  if (resultCode.includes("defineStore")) {
+    resultCode = resultCode.replace(
+      /\}\s*;\s*\s+\}\s*;\s*\s+\}\s*\)\s*;\s*\s*$/m,
+      "  }\n});"
+    );
+  }
+
   return resultCode;
 };
 
