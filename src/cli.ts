@@ -86,6 +86,11 @@ program
     "Remove node_modules and package-lock.json before reinstalling dependencies",
     false,
   )
+  .option(
+    "-v, --verbose",
+    "Enable verbose logging (show DEBUG messages and detailed fixes)",
+    false,
+  )
   .action(async (projectPath: string, options) => {
     const spinner = ora("Analyzing project...").start();
 
@@ -166,6 +171,7 @@ program
         enableRollback: !options.noRollback,
         generateTests: options.generateTests || false,
         enableTypeScript: options.typescript || false,
+        verbose: options.verbose || false,
       };
 
       if (shouldUseAI && apiKey) {

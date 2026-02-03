@@ -54,6 +54,7 @@ export interface MigrationOptions {
   showDiff?: boolean;
   classifyFiles?: boolean;
   enableTypeScript?: boolean;
+  verbose?: boolean; // Enable verbose logging (DEBUG messages, detailed fixes)
 }
 
 export interface MigrationResult {
@@ -117,7 +118,9 @@ export async function migrate(
         });
 
         // Auto-cleanup if conflicts are detected
-        console.log("Cleaning up dependencies to resolve conflicts...");
+        if (options.verbose) {
+          console.log("Cleaning up dependencies to resolve conflicts...");
+        }
         const cleanupResult = await cleanupDependencies(projectPath, dryRun);
 
         if (cleanupResult.cleaned && !dryRun) {
@@ -133,10 +136,12 @@ export async function migrate(
 
         // Show recommendations
         if (preMigrationConflicts.recommendations.length > 0) {
-          console.log("Recommendations:");
-          preMigrationConflicts.recommendations.forEach((rec) => {
-            console.log(`  - ${rec}`);
-          });
+          if (options.verbose) {
+            console.log("Recommendations:");
+            preMigrationConflicts.recommendations.forEach((rec) => {
+              console.log(`  - ${rec}`);
+            });
+          }
         }
       }
 
@@ -381,7 +386,7 @@ export async function migrate(
               const codeChanged = finalCode !== content;
               if (!codeChanged) {
                 result.warnings.push(
-                  `DEBUG: ${path.relative(projectPath, filePath)} marked as migrated but codemod code === original content`
+                  options.verbose === true ? `DEBUG: ${path.relative(projectPath, filePath)} marked as migrated but codemod code === original content` : `File ${path.relative(projectPath, filePath)} marked as migrated but no changes detected`
                 );
               }
             }
@@ -495,17 +500,19 @@ export async function migrate(
             
             // Process mixin files even if not modified by codemods
             if (migrated || isMixinFile) {
-              // Debug logging
-              const relativePath = path.relative(projectPath, filePath);
-              result.warnings.push(
-                `DEBUG: Processing ${relativePath} - migrated=${migrated}, codeChanged=${finalCode !== content}, dryRun=${dryRun}, isMixinFile=${isMixinFile}`
-              );
+              // Debug logging (only if verbose mode)
+              if (options.verbose === true) {
+                const relativePath = path.relative(projectPath, filePath);
+                result.warnings.push(
+                  `DEBUG: Processing ${relativePath} - migrated=${migrated}, codeChanged=${finalCode !== content}, dryRun=${dryRun}, isMixinFile=${isMixinFile}`
+                );
+              }
 
               // Only save if code actually changed or if it's a mixin file
               const shouldProcess = finalCode !== content || isMixinFile;
 
-              // Debug: log mixin file processing
-              if (isMixinFile) {
+              // Debug: log mixin file processing (only if verbose mode)
+              if (isMixinFile && options.verbose === true) {
                 result.warnings.push(
                   `DEBUG: Processing mixin file ${path.relative(projectPath, filePath)} - shouldProcess=${shouldProcess}, codeChanged=${finalCode !== content}`
                 );
@@ -529,7 +536,8 @@ export async function migrate(
                     );
                     if (fixResult.fixed) {
                       finalCode = fixResult.content;
-                      if (fixResult.fixes.length > 0) {
+                      // Only log post-migration fixes if verbose mode is enabled
+                      if (options.verbose === true && fixResult.fixes.length > 0) {
                         result.warnings.push(
                           `Post-migration fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
                         );
@@ -764,7 +772,9 @@ export async function migrate(
 
         // After package.json migration, verify dependency consistency
         if (!dryRun && packageResult.modified) {
-          console.log("Verifying dependency consistency after migration...");
+          if (options.verbose) {
+            console.log("Verifying dependency consistency after migration...");
+          }
           const postMigrationCheck =
             await verifyDependencyConsistency(projectPath);
 
@@ -787,7 +797,9 @@ export async function migrate(
               });
             }
           } else {
-            console.log("✓ Dependency consistency verified");
+            if (options.verbose) {
+              console.log("✓ Dependency consistency verified");
+            }
           }
 
           // Add warnings
@@ -821,7 +833,8 @@ export async function migrate(
         viteConfigResult = await migrateToViteConfig(
           projectPath,
           dryRun,
-          options.enableTypeScript || false
+          options.enableTypeScript || false,
+          rollbackManager
         );
         if (viteConfigResult.modified || viteConfigResult.created) {
           result.warnings.push(
@@ -933,9 +946,13 @@ export async function migrate(
               );
               if (fixResult.fixed && fixResult.fixes.length > 0) {
                 await safeWriteFile(filePath, fixResult.content);
-                result.warnings.push(
-                  `Second pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
-                );
+                // Only log second pass fixes if verbose mode is enabled
+                if (options.verbose === true) {
+                  result.warnings.push(
+                    `Second pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
+                  );
+                }
+                // Otherwise, silently apply fixes
               }
             }
           } catch (error) {
@@ -957,9 +974,13 @@ export async function migrate(
               );
               if (fixResult.fixed && fixResult.fixes.length > 0) {
                 await safeWriteFile(filePath, fixResult.content);
-                result.warnings.push(
-                  `Third pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
-                );
+                // Only log third pass fixes if verbose mode is enabled
+                if (options.verbose === true) {
+                  result.warnings.push(
+                    `Third pass fixes for ${path.relative(projectPath, filePath)}: ${fixResult.fixes.join(", ")}`
+                  );
+                }
+                // Otherwise, silently apply fixes
               }
             }
           } catch (error) {
@@ -986,7 +1007,9 @@ export async function migrate(
 
     // Final dependency consistency check and installation recommendation
     if (!dryRun && shouldMigratePackage) {
-      console.log("Performing final dependency consistency check...");
+      if (options.verbose) {
+        console.log("Performing final dependency consistency check...");
+      }
       const finalCheck = await verifyDependencyConsistency(projectPath);
 
       if (finalCheck.hasConflicts) {
@@ -1020,7 +1043,9 @@ export async function migrate(
           "Run 'npm install' to install updated dependencies and resolve conflicts"
         );
       } else {
-        console.log("✓ All dependencies are consistent");
+        if (options.verbose) {
+          console.log("✓ All dependencies are consistent");
+        }
 
         // Check if node_modules exists, if not suggest installation
         const nodeModulesPath = path.join(projectPath, "node_modules");
@@ -1028,7 +1053,9 @@ export async function migrate(
           await fs.access(nodeModulesPath);
         } catch {
           // node_modules doesn't exist, suggest installation
-          console.log("💡 Tip: Run 'npm install' to install dependencies.");
+          if (options.verbose) {
+            console.log("💡 Tip: Run 'npm install' to install dependencies.");
+          }
           result.warnings.push("Run 'npm install' to install dependencies");
         }
       }

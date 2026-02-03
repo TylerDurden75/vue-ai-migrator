@@ -109,6 +109,96 @@ export class RollbackManager {
   }
 
   /**
+   * Clean up files created during migration (vite.config.js/ts, .backup files, etc.)
+   */
+  async cleanupMigrationArtifacts(projectRoot: string): Promise<void> {
+    try {
+      // Remove Vite config files (created during migration)
+      const viteConfigJs = path.join(projectRoot, "vite.config.js");
+      const viteConfigTs = path.join(projectRoot, "vite.config.ts");
+      
+      // Always try to remove vite.config.js (Vue 2 doesn't use it)
+      try {
+        const stats = await fs.stat(viteConfigJs);
+        if (stats.isFile()) {
+          await fs.unlink(viteConfigJs);
+        }
+      } catch {
+        // File doesn't exist, ignore
+      }
+      
+      // Always try to remove vite.config.ts (Vue 2 doesn't use it)
+      try {
+        const stats = await fs.stat(viteConfigTs);
+        if (stats.isFile()) {
+          await fs.unlink(viteConfigTs);
+        }
+      } catch {
+        // File doesn't exist, ignore
+      }
+
+      // Remove empty webpack.config.js if it exists (might have been created empty during migration)
+      const webpackConfigJs = path.join(projectRoot, "webpack.config.js");
+      try {
+        const stats = await fs.stat(webpackConfigJs);
+        if (stats.isFile()) {
+          const content = await fs.readFile(webpackConfigJs, "utf-8");
+          // If empty or just whitespace, remove it (Vue CLI projects don't need empty webpack.config.js)
+          if (content.trim().length === 0) {
+            await fs.unlink(webpackConfigJs);
+          }
+        }
+      } catch {
+        // File doesn't exist or can't be deleted, ignore
+      }
+
+      // Remove .backup files created during migration
+      try {
+        const files = await fs.readdir(projectRoot);
+        for (const file of files) {
+          if (file.endsWith(".backup")) {
+            try {
+              await fs.unlink(path.join(projectRoot, file));
+            } catch {
+              // Ignore errors
+            }
+          }
+        }
+      } catch {
+        // Ignore errors reading directory
+      }
+
+      // Restore index.html from root to public/ if it was migrated (Vue 2 convention)
+      const rootIndexHtml = path.join(projectRoot, "index.html");
+      const publicIndexHtml = path.join(projectRoot, "public", "index.html");
+      
+      try {
+        const rootExists = await fs.access(rootIndexHtml).then(() => true).catch(() => false);
+        const publicExists = await fs.access(publicIndexHtml).then(() => true).catch(() => false);
+        
+        // If root index.html exists but public/index.html doesn't, it was migrated
+        // Restore public/index.html from root (Vue 2 convention)
+        if (rootExists && !publicExists) {
+          try {
+            const rootContent = await fs.readFile(rootIndexHtml, "utf-8");
+            // Ensure public directory exists
+            await fs.mkdir(path.join(projectRoot, "public"), { recursive: true });
+            await fs.writeFile(publicIndexHtml, rootContent, "utf-8");
+            // Remove root index.html (Vue 2 uses public/index.html)
+            await fs.unlink(rootIndexHtml);
+          } catch {
+            // Ignore errors
+          }
+        }
+      } catch {
+        // Ignore errors
+      }
+    } catch {
+      // Ignore errors during cleanup
+    }
+  }
+
+  /**
    * Restore all backed up files
    * Also handles TypeScript file renames: if a .ts file exists but backup is for .js, restore .js and delete .ts
    */
@@ -116,6 +206,9 @@ export class RollbackManager {
     const failed: string[] = [];
     let restored = 0;
     const projectRoot = path.dirname(this.backupDir);
+
+    // Clean up migration artifacts first (vite.config.js/ts, .backup files, etc.)
+    await this.cleanupMigrationArtifacts(projectRoot);
 
     // First, restore all files from backups (except tsconfig.json which is handled separately)
     const tsconfigPath = path.join(projectRoot, 'tsconfig.json');
@@ -377,6 +470,10 @@ export class RollbackManager {
     } catch (error) {
       // Silently fail - TypeScript cleanup is optional
     }
+
+    // Final cleanup: remove any remaining migration artifacts
+    // This ensures files created during migration are removed even if they weren't tracked
+    await this.cleanupMigrationArtifacts(projectRoot);
 
     return { restored, failed };
   }

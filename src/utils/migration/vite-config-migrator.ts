@@ -16,7 +16,8 @@ export interface ViteConfigMigrationResult {
 export async function migrateToViteConfig(
   projectPath: string,
   dryRun: boolean = false,
-  enableTypeScript: boolean = false
+  enableTypeScript: boolean = false,
+  rollbackManager?: any
 ): Promise<ViteConfigMigrationResult> {
   const result: ViteConfigMigrationResult = {
     modified: false,
@@ -102,6 +103,10 @@ export async function migrateToViteConfig(
   if (!dryRun) {
     // Write vite.config.js/ts if it doesn't exist or is empty
     if (shouldCreateViteConfig) {
+      // Register with rollback manager so it can be cleaned up on rollback
+      if (rollbackManager) {
+        await rollbackManager.backupFile(viteConfigPath);
+      }
       await fs.writeFile(viteConfigPath, viteConfig, "utf-8");
       result.created = true;
       result.changes.push(
