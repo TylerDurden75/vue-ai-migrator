@@ -153,9 +153,9 @@ describe('Post Migration Fixer', () => {
 
       const result = await fixPostMigrationIssues('test.vue', code, false, testProjectRoot);
 
-      // storeScriptSetupRule reports this. issues; replacement may be done by another rule or left to user
-      expect(result).toBeDefined();
-      expect(result.content).toBeDefined();
+      expect(result.fixed).toBe(true);
+      expect(result.content).not.toContain('this.doSomething');
+      expect(result.content).toContain('doSomething()');
     });
 
     it('should fix store method calls dynamically', async () => {
@@ -225,7 +225,7 @@ const filteredUsers = ref([]);
       expect(result.fixes.some(f => f.includes('interpolation') || f.includes('parentheses'))).toBe(true);
     });
 
-    it('should fix route.query.redirect type issues when applicable', async () => {
+    it('should fix route.query.redirect type issues', async () => {
       const code = `
         <script setup>
         const route = useRoute();
@@ -236,11 +236,9 @@ const filteredUsers = ref([]);
 
       const result = await fixPostMigrationIssues('test.vue', code, false, testProjectRoot);
 
-      expect(result).toBeDefined();
-      if (result.fixed && result.fixes.some(f => f.includes('redirect') || f.includes('query'))) {
-        expect(result.content).toContain('typeof');
-        expect(result.content).toContain('string');
-      }
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain('typeof');
+      expect(result.content).toContain('string');
     });
 
     it('should fix incomplete computed with Array.from undefined variable', async () => {

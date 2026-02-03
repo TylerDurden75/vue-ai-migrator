@@ -115,8 +115,8 @@ program
 
       spinner.succeed(`Vue version detected: ${vueVersion.version}`);
 
-      // Get API key from various sources
-      const provider = (options.provider || "openai") as
+      // Get API key from various sources (CLI option > env VUE_AI_MIGRATOR_AI_PROVIDER > default openai)
+      const provider = (options.provider || process.env.VUE_AI_MIGRATOR_AI_PROVIDER || "openai") as
         | "openai"
         | "mistral"
         | "claude"
@@ -746,7 +746,7 @@ program
         process.exit(1);
       }
 
-      const provider = (options.provider || "openai") as
+      const provider = (options.provider || process.env.VUE_AI_MIGRATOR_AI_PROVIDER || "openai") as
         | "openai"
         | "mistral"
         | "claude"

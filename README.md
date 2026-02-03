@@ -923,7 +923,8 @@ For complex cases that codemods cannot handle automatically, vue-ai-migrator can
 
 **Features:**
 
-- **Multi-provider support**: OpenAI, Mistral, Claude (extensible)
+- **Provider choice**: Set via `--provider` or env `VUE_AI_MIGRATOR_AI_PROVIDER` (default: `openai`). **Currently only OpenAI is implemented**; Mistral/Claude planned for a future release—no vendor lock-in by design.
+- **Multi-provider support**: OpenAI (today), Mistral, Claude (extensible, coming)
 - **Advanced AI Agent**: Intelligent migration assistance with explanation and test generation
 - **Classification**: Automatic complexity analysis (Simple/Medium/Complex)
 - Automatic retry with exponential backoff (2-3 attempts)

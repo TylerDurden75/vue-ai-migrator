@@ -21,7 +21,7 @@ import {
   duplicateKeysRule,
   piniaStoreCrossStoreDepsRule
 } from "./rules/store-fixes";
-import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, routerGuardPiniaRule, catchAllRouteRule, routerPushNameParamsToPathRule } from "./rules/router-fixes";
+import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, routerGuardPiniaRule, catchAllRouteRule, routeQueryRedirectGuardRule, routerPushNameParamsToPathRule } from "./rules/router-fixes";
 import { missingVueImportsRule, splitImportsOnSameLineRule, removeVuexImportsRule, removeVueCompilerMacrosRule, mergeDuplicateImportsRule, duplicateSameIdentifierImportsRule, correctWrongStoreImportsRule, addMissingStoreImportsRule } from "./rules/import-fixes";
 import { computedValueRule, vueComputedExtraParenRule, malformedComputedRule, computedSyntaxRule } from "./rules/computed-fixes";
 import { templateInterpolationParensRule, templateCurrencyNonNumericRule, missingComponentImportsRule, templateFilterFunctionImportsRule, missingFilterImportsRule, vModelBindingsRule } from "./rules/template-fixes";
@@ -45,6 +45,7 @@ ruleEngine.registerRules([
   createWebHistoryRule,           // Priority 94
   routerGuardPiniaRule,           // Priority 93 (router.app.$store → Pinia in guard)
   catchAllRouteRule,              // Priority 93
+  routeQueryRedirectGuardRule,   // Priority 92 (route.query.redirect → typeof check)
   routerPushNameParamsToPathRule, // Priority 91 (router.push name+params → path)
   missingVueImportsRule,          // Priority 91 (add ref/computed/watch when used but not imported)
   splitImportsOnSameLineRule,      // Priority 92 (split ';import on same line)

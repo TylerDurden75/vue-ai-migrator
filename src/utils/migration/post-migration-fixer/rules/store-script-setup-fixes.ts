@@ -7,12 +7,12 @@ import { getCachedRegex } from "../utils/regex-cache";
 import { getStoreMethodMap } from "../utils/store-analysis-cache";
 
 /**
- * Fix: Fix components using <script setup> that reference stores incorrectly
- * Pattern: this.methodName() → storeVar.methodName()
+ * Fix: Replace this.methodName() / this.propertyName in <script setup> with methodName / propertyName.
+ * (this.$router / this.$route are handled by replaceThisRouterRouteRule.)
  */
 export const storeScriptSetupRule: FixRule = {
   id: "store-script-setup",
-  description: "Fix components using <script setup> that reference stores incorrectly",
+  description: "Replace this. references in script setup with plain identifiers (migration from Options API)",
   priority: 70,
   shouldApply: (filePath, content) => {
     return filePath.endsWith(".vue") &&
@@ -27,34 +27,24 @@ export const storeScriptSetupRule: FixRule = {
       issues: []
     };
 
-    if (!context.scriptContent) {
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch || !context.scriptContent) {
       return result;
     }
 
-    let fixed = content;
-    let hasChanges = false;
-
-    // Pattern: this.methodName() or this.propertyName
-    // This requires store analysis which is complex, so for now we'll detect and warn
-    const thisPattern = getCachedRegex(
-      "this\\.(\\w+)",
-      "g"
-    );
-    
-    const thisReferences = new Set<string>();
-    let match;
-    
-    while ((match = thisPattern.exec(context.scriptContent)) !== null) {
-      thisReferences.add(match[1]);
+    let scriptContent = scriptMatch[2];
+    // Only replace this.ident where ident is a word (excludes this.$router / this.$route)
+    const thisPattern = getCachedRegex("this\\.(\\w+)", "g");
+    const replaced = new Set<string>();
+    let m;
+    while ((m = thisPattern.exec(scriptContent)) !== null) {
+      replaced.add(m[1]);
     }
-
-    if (thisReferences.size > 0) {
-      // Note: Actual fixing requires store analysis which should be done
-      // by the main post-migration-fixer.ts that has access to analyzePiniaStores
-      // This rule mainly detects the issue
-      result.issues.push(
-        `Found ${thisReferences.size} this. references in <script setup> that may need store migration`
-      );
+    if (replaced.size > 0) {
+      const newScript = scriptContent.replace(/this\.(\w+)/g, (_, ident) => ident);
+      result.content = content.replace(scriptMatch[0], scriptMatch[1] + newScript + scriptMatch[3]);
+      result.fixed = true;
+      result.fixes.push(`Replaced this.${[...replaced].join(", this.")} with plain identifiers in script setup`);
     }
 
     return result;

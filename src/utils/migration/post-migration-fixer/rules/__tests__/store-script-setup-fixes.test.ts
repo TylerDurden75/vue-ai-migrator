@@ -20,7 +20,7 @@ import { getStoreMethodMap } from "../../utils/store-analysis-cache";
 const mockGetStoreMethodMap = getStoreMethodMap as jest.MockedFunction<typeof getStoreMethodMap>;
 
 describe("storeScriptSetupRule", () => {
-  it("should detect this. references in script setup", async () => {
+  it("should replace this. references in script setup with plain identifiers", async () => {
     const content = `<script setup lang="ts">
 const userStore = useUserStore();
 const users = this.getUsers();
@@ -34,11 +34,13 @@ const users = this.getUsers();
       scriptContent
     });
 
-    expect(result.issues.length).toBeGreaterThan(0);
-    expect(result.issues.some(issue => issue.includes("this."))).toBe(true);
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain("this.getUsers");
+    expect(result.content).toContain("getUsers()");
+    expect(result.fixes.length).toBeGreaterThan(0);
   });
 
-  it("should detect multiple this. references", async () => {
+  it("should replace multiple this. references", async () => {
     const content = `<script setup lang="ts">
 const userStore = useUserStore();
 const users = this.getUsers();
@@ -53,8 +55,11 @@ const currentUser = this.getCurrentUser();
       scriptContent
     });
 
-    expect(result.issues.length).toBeGreaterThan(0);
-    expect(result.issues.some(issue => issue.includes("this."))).toBe(true);
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain("this.getUsers");
+    expect(result.content).not.toContain("this.getCurrentUser");
+    expect(result.content).toContain("getUsers()");
+    expect(result.content).toContain("getCurrentUser()");
   });
 
   it("should not apply when no this. references are present", async () => {
@@ -71,7 +76,7 @@ const users = userStore.getUsers();
       scriptContent
     });
 
-    expect(result.issues.length).toBe(0);
+    expect(result.fixed).toBe(false);
   });
 
   it("should not apply when script content is missing", async () => {
