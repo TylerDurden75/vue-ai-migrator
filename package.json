@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "vue-ai-migrator": "./dist/cli.js"
+    "vue-ai-migrator": "./dist/cli.js",
+    "vam": "./dist/cli.js"
   },
   "files": [
     "dist",

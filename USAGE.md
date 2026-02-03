@@ -8,6 +8,8 @@
 npm install -g vue-ai-migrator
 ```
 
+You can use the short alias **`vam`** (e.g. `vam migrate ./my-project`) instead of `vue-ai-migrator`.
+
 ### Local Installation (for programmatic usage)
 
 ```bash

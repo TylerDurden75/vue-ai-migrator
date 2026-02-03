@@ -211,6 +211,8 @@ graph LR
 npm install -g vue-ai-migrator
 ```
 
+You can use the short alias **`vam`** (e.g. `vam migrate ./my-project`) instead of `vue-ai-migrator`.
+
 **Local installation** (for programmatic usage):
 
 ```bash
