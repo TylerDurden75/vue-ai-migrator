@@ -2,6 +2,7 @@
  * Tests for parallel processor
  */
 
+import os from "os";
 import { processFilesInParallel, getOptimalConcurrency } from "../utils/parallel-processor";
 import type { FixResult } from "../types";
 
@@ -120,7 +121,6 @@ describe("Parallel Processor", () => {
     });
 
     it("should return 5 when os.cpus throws", () => {
-      const os = require("os");
       jest.spyOn(os, "cpus").mockImplementation(() => {
         throw new Error("cpus failed");
       });
