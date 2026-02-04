@@ -45,6 +45,14 @@ describe("Parallel Processor", () => {
           }
         },
         {
+          filePath: "file0.vue",
+          content: "content0",
+          enableTypeScript: false,
+          fixFunction: async (): Promise<FixResult> => {
+            throw "string error";
+          }
+        },
+        {
           filePath: "file2.vue",
           content: "content2",
           enableTypeScript: false,
@@ -57,12 +65,14 @@ describe("Parallel Processor", () => {
         }
       ];
 
-      const results = await processFilesInParallel(files, 2);
+      const results = await processFilesInParallel(files, 3);
       
-      expect(results).toHaveLength(2);
+      expect(results).toHaveLength(3);
       expect(results[0].result.fixed).toBe(false);
       expect(results[0].result.issues.length).toBeGreaterThan(0);
-      expect(results[1].result.fixed).toBe(true);
+      expect(results[1].result.fixed).toBe(false);
+      expect(results[1].result.issues[0]).toContain("string error");
+      expect(results[2].result.fixed).toBe(true);
     });
 
     it("should respect concurrency limit", async () => {
@@ -107,6 +117,18 @@ describe("Parallel Processor", () => {
       const concurrency = getOptimalConcurrency();
       expect(typeof concurrency).toBe("number");
       expect(concurrency).toBeGreaterThan(0);
+    });
+
+    it("should return 5 when os.cpus throws", () => {
+      const os = require("os");
+      jest.spyOn(os, "cpus").mockImplementation(() => {
+        throw new Error("cpus failed");
+      });
+      try {
+        expect(getOptimalConcurrency()).toBe(5);
+      } finally {
+        jest.restoreAllMocks();
+      }
     });
   });
 });
