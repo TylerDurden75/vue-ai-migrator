@@ -14,7 +14,7 @@ export const scriptSetupTagSpaceRule: FixRule = {
   shouldApply: (filePath, content) => {
     return filePath.endsWith(".vue") && /<scriptsetup\b/.test(content);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -43,7 +43,7 @@ export const removeExportDefaultRule: FixRule = {
            content.includes("<script setup") &&
            content.includes("export default");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -106,7 +106,7 @@ export const scriptSetupThisEmitRule: FixRule = {
       content.includes("this.$emit")
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -176,7 +176,7 @@ export const scriptSetupFormattingRule: FixRule = {
   shouldApply: (filePath, content) => {
     return filePath.endsWith(".vue") && content.includes("<script setup");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,

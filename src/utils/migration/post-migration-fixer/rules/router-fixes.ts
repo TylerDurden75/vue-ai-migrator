@@ -18,7 +18,7 @@ export const createAppSyntaxRule: FixRule = {
     return (filePath.includes("main.js") || filePath.includes("main.ts")) &&
            content.includes("createApp");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -120,7 +120,7 @@ export const vue2GlobalApiRule: FixRule = {
             content.includes("Vue.component") || content.includes("Vue.mixin") ||
             content.includes("app.mixin("));
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -136,7 +136,7 @@ export const vue2GlobalApiRule: FixRule = {
     }
 
     let fixed = content;
-    const projectRoot = context.projectRoot;
+    const projectRoot = _context.projectRoot;
 
     // Vue.filter → comment out (filters removed in Vue 3 - use functions/computed instead)
     const filterPattern = /Vue\.filter\s*\([^)]+\)\s*;?/g;
@@ -335,7 +335,7 @@ export const createWebHistoryRule: FixRule = {
            content.includes("createWebHistory") &&
            content.includes("process.env.BASE_URL");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -379,7 +379,7 @@ export const routerGuardPiniaRule: FixRule = {
     return (filePath.includes("router") || filePath.endsWith("router/index.ts") || filePath.endsWith("router/index.js")) &&
            (content.includes("router.app.$store") || content.includes("router.app?.$store"));
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -388,21 +388,21 @@ export const routerGuardPiniaRule: FixRule = {
     };
     let fixed = content;
     if (!fixed.includes("getActivePinia")) {
-      const insertAfterRouter = fixed.match(/(import\s+[^;]+from\s+['\"]vue-router['\"]\s*;?\s*\n)/);
+      const insertAfterRouter = fixed.match(/(import\s+[^;]+from\s+['"]vue-router['"]\s*;?\s*\n)/);
       const insertIdx = insertAfterRouter ? (insertAfterRouter.index! + insertAfterRouter[0].length) : 0;
       fixed = fixed.slice(0, insertIdx) +
-        "import { getActivePinia } from \"pinia\";\nimport { useIndexStore } from \"@/store/index\";\n" +
+        'import { getActivePinia } from "pinia";\nimport { useIndexStore } from "@/store/index";\n' +
         fixed.slice(insertIdx);
       result.fixed = true;
     }
     const getterMatch = fixed.match(/router\.app\.\??\$store\.getters\.(\w+)/);
     const getterName = getterMatch ? getterMatch[1] : "isAuthenticated";
     fixed = fixed.replace(
-      /if\s*\(\s*!?\s*router\.app\.\??\$store\.getters\.\w+\s*\)\s*\{[\s\S]*?next\s*\(\s*\{\s*name:\s*['\"]([^'\"]+)['\"]\s*\}\s*\)[\s\S]*?\}\s*else\s*\{[\s\S]*?next\s*\(\s*\)[\s\S]*?\}/,
+      /if\s*\(\s*!?\s*router\.app\.\??\$store\.getters\.\w+\s*\)\s*\{[\s\S]*?next\s*\(\s*\{\s*name:\s*['"]([^'"]+)['"]\s*\}\s*\)[\s\S]*?\}\s*else\s*\{[\s\S]*?next\s*\(\s*\)[\s\S]*?\}/,
       (match) => {
-        const redirectNameMatch = match.match(/name:\s*['\"]([^'\"]+)['\"]/);
+        const redirectNameMatch = match.match(/name:\s*['"]([^'"]+)['"]/);
         const redirectName = redirectNameMatch ? redirectNameMatch[1] : "Home";
-        return `const pinia = getActivePinia();\n    const indexStore = pinia ? useIndexStore(pinia) : null;\n    if (!indexStore?.${getterName}) {\n      next({ name: "${redirectName}" });\n    } else {\n      next();\n    }`;
+        return `const pinia = getActivePinia();\n    const indexStore = pinia ? useIndexStore(pinia) : null;\n    if (!indexStore?.${getterName}) {\n      next({ name: '${redirectName}' });\n    } else {\n      next();\n    }`;
       }
     );
     if (fixed !== content) {
@@ -426,7 +426,7 @@ export const catchAllRouteRule: FixRule = {
     return (filePath.includes("router") || filePath.includes("main")) &&
            content.includes("path: '*'");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -458,9 +458,9 @@ export const routeQueryRedirectGuardRule: FixRule = {
   priority: 92,
   dependencies: ["create-web-history"],
   shouldApply: (filePath, content) => content.includes("query.redirect"),
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
-    let scriptContent = context.scriptContent ?? content;
+    let scriptContent = _context.scriptContent ?? content;
     if (filePath.endsWith(".vue")) {
       const m = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
       scriptContent = m ? m[1] : content;
@@ -516,9 +516,9 @@ export const routerPushNameParamsToPathRule: FixRule = {
   dependencies: ["route-query-redirect-guard"],
   shouldApply: (filePath, content) =>
     content.includes("router.push") && content.includes("params") && content.includes("name"),
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
-    let scriptContent = context.scriptContent ?? content;
+    let scriptContent = _context.scriptContent ?? content;
     if (filePath.endsWith(".vue")) {
       const m = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
       scriptContent = m ? m[1] : content;

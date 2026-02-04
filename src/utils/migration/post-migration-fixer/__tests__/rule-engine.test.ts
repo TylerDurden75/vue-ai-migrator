@@ -3,7 +3,7 @@
  */
 
 import { RuleEngine } from "../rule-engine";
-import type { FixRule, FixContext } from "../types";
+import type { FixRule } from "../types";
 
 describe("RuleEngine", () => {
   let engine: RuleEngine;

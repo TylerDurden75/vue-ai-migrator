@@ -8,7 +8,6 @@ import {
   malformedComputedRule,
   computedSyntaxRule
 } from "../computed-fixes";
-import type { FixContext } from "../../types";
 
 describe("computedValueRule", () => {
   it("should add .value to computed properties when accessing length", async () => {

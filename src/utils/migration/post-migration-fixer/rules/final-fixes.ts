@@ -18,7 +18,7 @@ export const wrongStorePropertyRule: FixRule = {
            content.includes("<script setup") &&
            content.includes("Store");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -26,7 +26,7 @@ export const wrongStorePropertyRule: FixRule = {
       issues: []
     };
 
-    if (!context.scriptContent) {
+    if (!_context.scriptContent) {
       return result;
     }
 
@@ -42,7 +42,7 @@ export const wrongStorePropertyRule: FixRule = {
     const wrongStoreFixes = new Map<string, { wrongStore: string; property: string; correctStore: string }>();
     let match;
     
-    while ((match = storePropertyPattern.exec(context.scriptContent)) !== null) {
+    while ((match = storePropertyPattern.exec(_context.scriptContent)) !== null) {
       const wrongStoreVar = match[1];
       const propertyName = match[2];
       
@@ -54,7 +54,7 @@ export const wrongStorePropertyRule: FixRule = {
       const correctStoreVar = `${normalized}Store`;
       
       // Check if correct store is initialized
-      const storesInScript = context.scriptContent.match(/const\s+(\w+Store)\s*=\s*use\w+Store\s*\(\)/g);
+      const storesInScript = _context.scriptContent.match(/const\s+(\w+Store)\s*=\s*use\w+Store\s*\(\)/g);
       const initializedStores = storesInScript ? storesInScript.map(s => s.match(/const\s+(\w+Store)/)?.[1]).filter(Boolean) : [];
       
       if (normalized && correctStoreVar !== wrongStoreVar && initializedStores.includes(correctStoreVar)) {
@@ -115,7 +115,7 @@ export const nullChecksLengthRule: FixRule = {
       content.includes("Store")
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -139,18 +139,18 @@ export const nullChecksLengthRule: FixRule = {
     );
 
     // Fix: computedName.length → computedName.value.length (if computed)
-    if (context.scriptContent) {
+    if (_context.scriptContent) {
       const computedPattern = /const\s+(\w+)\s*=\s*computed\s*(?:<[^>]*>)?\s*\(/g;
       const computedNames = new Set<string>();
       let match;
-      while ((match = computedPattern.exec(context.scriptContent)) !== null) {
+      while ((match = computedPattern.exec(_context.scriptContent)) !== null) {
         computedNames.add(match[1]);
       }
 
       computedNames.forEach(computedName => {
         // Fix: computedName.length → computedName.value.length (in script)
         const pattern = new RegExp(`\\b${computedName}\\.length\\b`, "g");
-        if (pattern.test(context.scriptContent!)) {
+        if (pattern.test(_context.scriptContent!)) {
           const scriptMatch = fixed.match(/<script[^>]*>([\s\S]*?)<\/script>/);
           if (scriptMatch) {
             let scriptContent = scriptMatch[1];
@@ -162,7 +162,7 @@ export const nullChecksLengthRule: FixRule = {
           }
         }
         // Fix: computedName.length in template → (computedName ?? []).length (null-safe)
-        if (context.templateContent && new RegExp(`\\b${computedName}\\.length\\b`).test(context.templateContent)) {
+        if (_context.templateContent && new RegExp(`\\b${computedName}\\.length\\b`).test(_context.templateContent)) {
           const templateMatch = fixed.match(/<template[^>]*>([\s\S]*?)<\/template>/);
           if (templateMatch) {
             const templatePattern = new RegExp(`\\b${computedName}\\.length\\b`, "g");
@@ -202,7 +202,7 @@ export const detailViewStoreRule: FixRule = {
            content.includes("current") &&
            content.includes("Store");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -210,7 +210,7 @@ export const detailViewStoreRule: FixRule = {
       issues: []
     };
 
-    if (!context.scriptContent) {
+    if (!_context.scriptContent) {
       return result;
     }
 
@@ -223,12 +223,12 @@ export const detailViewStoreRule: FixRule = {
     );
     
     let match;
-    while ((match = currentItemPattern.exec(context.scriptContent)) !== null) {
+    while ((match = currentItemPattern.exec(_context.scriptContent)) !== null) {
       const itemVarName = match[1];
       const storeVar = match[2];
       
       // Find store name
-      const storeNameMatch = context.scriptContent.match(
+      const storeNameMatch = _context.scriptContent.match(
         new RegExp(`const\\s+${storeVar}\\s*=\\s*use(\\w+)Store`)
       );
       
@@ -237,14 +237,14 @@ export const detailViewStoreRule: FixRule = {
         
         // Find actual allItems property
         const allItemsPattern = new RegExp(`${storeVar}\\.(all\\w+)`, "g");
-        const allItemsMatches = [...context.scriptContent.matchAll(allItemsPattern)];
+        const allItemsMatches = [..._context.scriptContent.matchAll(allItemsPattern)];
         const actualAllItems = allItemsMatches.length > 0 
           ? allItemsMatches[0][1] 
           : `all${storeName.charAt(0).toUpperCase() + storeName.slice(1)}s`;
         
         // Get id source
         const userIdPattern = /const\s+(\w+Id)\s*=\s*computed\s*\([^)]*\)\s*=>\s*(?:return\s+)?([^;]+?)(?:;|$)/;
-        const userIdMatch = context.scriptContent.match(userIdPattern);
+        const userIdMatch = _context.scriptContent.match(userIdPattern);
         let idSource = userIdMatch ? userIdMatch[2].trim() : 'props.id || (route.params.id as string)';
         idSource = idSource.replace(/^\s*return\s+/, "").trim();
         idSource = idSource.replace(/;\s*$/, "").trim();

@@ -7,7 +7,6 @@ import {
   missingFilterImportsRule,
   vModelBindingsRule
 } from "../template-fixes";
-import type { FixContext } from "../../types";
 
 describe("missingComponentImportsRule", () => {
   it("should add missing component imports", async () => {

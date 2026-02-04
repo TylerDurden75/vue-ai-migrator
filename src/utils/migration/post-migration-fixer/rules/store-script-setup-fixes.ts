@@ -19,7 +19,7 @@ export const storeScriptSetupRule: FixRule = {
            content.includes("<script setup") &&
            content.includes("this.");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -28,11 +28,11 @@ export const storeScriptSetupRule: FixRule = {
     };
 
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
-    if (!scriptMatch || !context.scriptContent) {
+    if (!scriptMatch || !_context.scriptContent) {
       return result;
     }
 
-    let scriptContent = scriptMatch[2];
+    const scriptContent = scriptMatch[2];
     // Only replace this.ident where ident is a word (excludes this.$router / this.$route)
     const thisPattern = getCachedRegex("this\\.(\\w+)", "g");
     const replaced = new Set<string>();
@@ -66,7 +66,7 @@ export const replaceThisRouterRouteRule: FixRule = {
       (content.includes("this.$router") || content.includes("this.$route"))
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -80,8 +80,8 @@ export const replaceThisRouterRouteRule: FixRule = {
     let scriptContent = scriptMatch[2];
     const hasThisRouter = /this\.\$router/.test(scriptContent);
     const hasThisRoute = /this\.\$route/.test(scriptContent);
-    const hasUseRouter = scriptContent.includes("useRouter");
-    const hasUseRoute = scriptContent.includes("useRoute");
+    const _hasUseRouter = scriptContent.includes("useRouter");
+    const _hasUseRoute = scriptContent.includes("useRoute");
 
     if (!hasThisRouter && !hasThisRoute) return result;
 
@@ -159,7 +159,7 @@ export const missingUseRouteImportRule: FixRule = {
     const hasUseRouteInImport = /import\s*\{[^}]*\buseRoute\b[^}]*\}\s*from\s*['"]vue-router['"]/.test(script);
     return usesUseRoute && !hasUseRouteInImport;
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
     if (!scriptMatch) return result;
@@ -200,7 +200,7 @@ export const missingUseRouterImportRule: FixRule = {
     const hasUseRouterInImport = /import\s*\{[^}]*\buseRouter\b[^}]*\}\s*from\s*['"]vue-router['"]/.test(script);
     return usesUseRouter && !hasUseRouterInImport;
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
     if (!scriptMatch) return result;
@@ -242,11 +242,11 @@ export const watchPropsRefRule: FixRule = {
     const watchDotValue = /watch\s*\(\s*\(\s*\)\s*=>\s*(\w+)\.value\s*/.test(script);
     return hasDefineProps && watchDotValue;
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
     if (!scriptMatch) return result;
-    let scriptContent = scriptMatch[2];
+    const scriptContent = scriptMatch[2];
     const propsMatch = scriptContent.match(/defineProps\s*\(\s*\{([^}]+)\}/);
     const propNames = new Set<string>();
     if (propsMatch) {
@@ -294,7 +294,7 @@ export const storeThemeBindingRule: FixRule = {
     const noCurrentTheme = !/const\s+currentTheme\s*=/.test(script) && !/currentTheme\s*=\s*computed/.test(script);
     return templateUsesTheme && hasStore && hasAppStoreSetTheme && noCurrentTheme;
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
     if (!scriptMatch) return result;
@@ -302,7 +302,7 @@ export const storeThemeBindingRule: FixRule = {
     const storeVarMatch = scriptContent.match(/(\w+)\s*=\s*useAppStore\s*\(\s*\)/);
     const storeVar = storeVarMatch ? storeVarMatch[1] : "appStore";
     const computedImport = scriptContent.includes("computed") && /import\s*\{[^}]*\bcomputed\b/.test(scriptContent);
-    const setterParam = context.enableTypeScript ? "(v: string)" : "(v)";
+    const setterParam = _context.enableTypeScript ? "(v: string)" : "(v)";
     const insertBlock = `const currentTheme = computed({\n  get: () => ${storeVar}.theme,\n  set: ${setterParam} => ${storeVar}.setTheme(v),\n});\n\n`;
     let insertPos = scriptContent.indexOf("const changeTheme");
     if (insertPos === -1) insertPos = scriptContent.indexOf("const " + storeVar);
@@ -337,7 +337,7 @@ export const secureRouterPushRule: FixRule = {
   shouldApply: (filePath, content) => {
     return content.includes("router.push") && content.includes("params");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -415,9 +415,9 @@ export const routerPushTypeCheckRule: FixRule = {
   shouldApply: (filePath, content) => {
     return content.includes("router.push");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     // Only apply if TypeScript is enabled
-    if (!context.enableTypeScript) {
+    if (!_context.enableTypeScript) {
       return {
         content,
         fixed: false,
@@ -486,11 +486,11 @@ export const fixStoreMemberMismatchRule: FixRule = {
            content.includes("<script setup") &&
            /\w+Store\.\w+/.test(content);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
-    if (!context.scriptContent || !context.projectRoot) return result;
+    if (!_context.scriptContent || !_context.projectRoot) return result;
 
-    const storeMethodMap = await getStoreMethodMap(context.projectRoot);
+    const storeMethodMap = await getStoreMethodMap(_context.projectRoot);
     if (Object.keys(storeMethodMap).length === 0) return result;
 
     const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);

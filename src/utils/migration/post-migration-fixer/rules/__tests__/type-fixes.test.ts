@@ -8,7 +8,6 @@ import {
   stripTypeScriptAnnotationsRule,
   typescriptTypeImprovementsRule
 } from "../type-fixes";
-import type { FixContext } from "../../types";
 
 describe("incorrectEventTypeRule", () => {
   it("should fix incorrect Event type in function parameters", async () => {

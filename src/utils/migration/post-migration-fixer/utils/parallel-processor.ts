@@ -67,10 +67,11 @@ export async function processFilesInParallel(
  * Get optimal concurrency based on system resources
  * Uses CPU count if available, otherwise defaults to 5
  */
+import os from "os";
+
 export function getOptimalConcurrency(): number {
   try {
     // Try to get CPU count from Node.js
-    const os = require("os");
     const cpuCount = os.cpus().length;
     // Use CPU count - 1 to leave one core free, minimum 2, maximum 10
     return Math.max(2, Math.min(cpuCount - 1, 10));

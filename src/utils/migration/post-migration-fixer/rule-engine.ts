@@ -3,7 +3,7 @@
  * Executes rules in a single pass with dependency resolution
  */
 
-import type { FixRule, FixContext, FixRuleResult, RuleExecutionPlan, FixResult } from "./types";
+import type { FixRule, FixContext, RuleExecutionPlan, FixResult } from "./types";
 
 export class RuleEngine {
   private rules: Map<string, FixRule> = new Map();

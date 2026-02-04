@@ -7,7 +7,6 @@ import {
   nullChecksLengthRule,
   detailViewStoreRule
 } from "../final-fixes";
-import type { FixContext } from "../../types";
 
 describe("wrongStorePropertyRule", () => {
   it("should fix wrong store property access", async () => {

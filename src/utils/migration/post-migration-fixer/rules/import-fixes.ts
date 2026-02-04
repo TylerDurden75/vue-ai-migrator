@@ -26,7 +26,7 @@ export const missingVueImportsRule: FixRule = {
     const hasWatch = vueImport ? /\bwatch\b/.test(vueImport[1]) : false;
     return (usesRef && !hasRef) || (usesComputed && !hasComputed) || (usesWatch && !hasWatch);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
     if (!scriptMatch) return result;
@@ -70,7 +70,7 @@ export const splitImportsOnSameLineRule: FixRule = {
   shouldApply: (_filePath, content) => {
     return /['"]\s*;\s*import\s+/.test(content);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -98,7 +98,7 @@ export const removeVuexImportsRule: FixRule = {
   shouldApply: (filePath, content) => {
     return content.includes("vuex") || content.includes("Vuex");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -147,9 +147,9 @@ export const removeVueCompilerMacrosRule: FixRule = {
   priority: 86,
   shouldApply: (filePath, content) => {
     return (filePath.endsWith(".vue") || filePath.endsWith(".ts")) &&
-           /import\s*\{[^}]*\b(defineProps|defineEmits)\b[^}]*\}\s*from\s*['\"]vue['\"]/.test(content);
+           /import\s*\{[^}]*\b(defineProps|defineEmits)\b[^}]*\}\s*from\s*['"]vue['"]/.test(content);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -195,7 +195,7 @@ export const mergeDuplicateImportsRule: FixRule = {
   shouldApply: (filePath, content) => {
     return filePath.endsWith(".vue") && content.includes("<script setup");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -203,7 +203,7 @@ export const mergeDuplicateImportsRule: FixRule = {
       issues: []
     };
 
-    if (!context.scriptContent) {
+    if (!_context.scriptContent) {
       return result;
     }
 
@@ -217,7 +217,7 @@ export const mergeDuplicateImportsRule: FixRule = {
     let match;
     const importMatches: Array<{ fullMatch: string; exports: string[]; module: string }> = [];
 
-    while ((match = importPattern.exec(context.scriptContent)) !== null) {
+    while ((match = importPattern.exec(_context.scriptContent)) !== null) {
       const exports = match[1].split(",").map(e => e.trim()).filter(Boolean);
       const module = match[2];
       
@@ -318,7 +318,7 @@ export const duplicateSameIdentifierImportsRule: FixRule = {
     const duplicateConst = /const\s+(\w+)\s*=\s*[^;]+;\s*\n\s*const\s+\1\s*=\s*[^;]+;/;
     return hasDuplicateImports || duplicateConst.test(script);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
     const scriptContent = scriptMatch ? scriptMatch[2] : (filePath.endsWith(".vue") ? "" : content);
@@ -358,7 +358,7 @@ export const duplicateSameIdentifierImportsRule: FixRule = {
     // Remove duplicate const declarations (keep first occurrence, remove subsequent)
     const constLinePattern = /^(\s*const\s+(\w+)\s*=\s*[^;]+;\s*)$/gm;
     const seenConst = new Set<string>();
-    let constFixed = fixed;
+    const constFixed = fixed;
     fixed = fixed.replace(constLinePattern, (line, fullMatch, varName) => {
       if (seenConst.has(varName)) {
         return ""; // remove duplicate line (leave nothing)
@@ -396,7 +396,7 @@ export const correctWrongStoreImportsRule: FixRule = {
            content.includes("<script setup") &&
            /import\s+\{\s*use\w+Store\s*\}\s+from\s+['"]@\/store\/modules\/\w+['"]/.test(content);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -404,12 +404,12 @@ export const correctWrongStoreImportsRule: FixRule = {
       issues: []
     };
 
-    if (!context.scriptContent || !context.projectRoot) {
+    if (!_context.scriptContent || !_context.projectRoot) {
       return result;
     }
 
     // Get store analysis using centralized cache
-    const storeMethodMap = await getStoreMethodMap(context.projectRoot);
+    const storeMethodMap = await getStoreMethodMap(_context.projectRoot);
     
     if (Object.keys(storeMethodMap).length === 0) {
       return result; // No store information available
@@ -543,7 +543,7 @@ export const correctWrongStoreImportsRule: FixRule = {
 
     // Fix wrong imports
     if (wrongImports.length > 0) {
-      wrongImports.forEach(({ importLine, wrongStore, wrongModule, correctModule, actualVarNames }) => {
+      wrongImports.forEach(({ importLine, wrongStore, wrongModule: _wrongModule, correctModule, actualVarNames }) => {
         const correctStore = `use${correctModule.charAt(0).toUpperCase() + correctModule.slice(1)}Store`;
         const correctImport = `import { ${correctStore} } from '@/store/modules/${correctModule}'`;
         const correctStoreVar = `${correctModule}Store`;
@@ -602,7 +602,7 @@ export const addMissingStoreImportsRule: FixRule = {
            content.includes("<script setup") &&
            (/\w+Store\.\w+/.test(content) || /use\w+Store/.test(content));
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -610,12 +610,12 @@ export const addMissingStoreImportsRule: FixRule = {
       issues: []
     };
 
-    if (!context.scriptContent || !context.projectRoot) {
+    if (!_context.scriptContent || !_context.projectRoot) {
       return result;
     }
 
     // Get store analysis using centralized cache
-    const storeMethodMap = await getStoreMethodMap(context.projectRoot);
+    const storeMethodMap = await getStoreMethodMap(_context.projectRoot);
     
     if (Object.keys(storeMethodMap).length === 0) {
       return result; // No store information available
@@ -651,8 +651,8 @@ export const addMissingStoreImportsRule: FixRule = {
     // Pattern 2: Detect direct method calls that are store methods
     Object.keys(storeMethodMap).forEach((method) => {
       const methodCallPattern = new RegExp(`\\b${method}\\s*\\(`, "g");
-      let methodMatch;
-      while ((methodMatch = methodCallPattern.exec(scriptContent)) !== null) {
+      let _methodMatch;
+      while ((_methodMatch = methodCallPattern.exec(scriptContent)) !== null) {
         // Check if method is not defined locally
         const isDefinedLocally = scriptContent.match(
           new RegExp(`(const|let|var|function|import)\\s+${method}\\b`)

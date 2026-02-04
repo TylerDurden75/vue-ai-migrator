@@ -44,7 +44,7 @@ export const vueStoreVuexToPiniaRule: FixRule = {
       (content.includes("this.$store.getters") || content.includes("this.$store.dispatch"))
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -109,8 +109,8 @@ export const vueStoreVuexToPiniaRule: FixRule = {
 
     // 3) this.$store.getters.property and this.$store.dispatch('action') without module
     let storeMethodMap: Record<string, string> = {};
-    if (context.projectRoot) {
-      storeMethodMap = await getStoreMethodMap(context.projectRoot);
+    if (_context.projectRoot) {
+      storeMethodMap = await getStoreMethodMap(_context.projectRoot);
     }
 
     // this.$store.getters.property → storeVar.property (use storeMethodMap or fallback to index)

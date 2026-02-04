@@ -6,8 +6,6 @@
 import { correctWrongStoreImportsRule, addMissingStoreImportsRule } from "../rules/import-fixes";
 import * as storeAnalyzer from "../utils/store-analyzer";
 import { clearStoreAnalysisCache } from "../utils/store-analysis-cache";
-import * as path from "path";
-import * as fs from "fs/promises";
 
 // Mock the store analyzer
 jest.mock("../utils/store-analyzer");

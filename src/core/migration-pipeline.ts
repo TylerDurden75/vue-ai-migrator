@@ -72,7 +72,7 @@ export async function processOneFile(
   const warnings: string[] = [];
   let filesModifiedDelta = 0;
   let transformationsAppliedDelta = 0;
-  let testFilesGeneratedDelta = 0;
+  const testFilesGeneratedDelta = 0;
   let classificationLevel: "simple" | "medium" | "complex" | undefined;
   let diff: DiffResult | undefined;
   let explanation: string | undefined;

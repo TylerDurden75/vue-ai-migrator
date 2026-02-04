@@ -30,7 +30,7 @@ export const asyncFunctionRule: FixRule = {
            content.includes("await") &&
            !content.includes("async async");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -41,7 +41,7 @@ export const asyncFunctionRule: FixRule = {
     let fixed = content;
 
     // Pattern: function name(...): returnType { ... } - find body by matching braces
-    const functionStartRe = /function\s+(\w+)\s*\([^)]*\)\s*(?::\s*[\w<>,\s\[\]|]+\s*)?\{/g;
+    const functionStartRe = /function\s+(\w+)\s*\([^)]*\)\s*(?::\s*[\w<>,\s[\]]|]+\s*)?\{/g;
     let match;
     const replacements: Array<{ start: number; end: number; funcName: string; replacement: string }> = [];
 
@@ -145,7 +145,7 @@ export const duplicateKeysRule: FixRule = {
   shouldApply: (filePath, content) => {
     return filePath.includes("/store/") && content.includes("return {");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -155,7 +155,7 @@ export const duplicateKeysRule: FixRule = {
 
     // For .ts/.js files (Pinia stores), use content directly
     // For .vue files, use scriptContent
-    const sourceContent = filePath.endsWith('.vue') ? context.scriptContent : content;
+    const sourceContent = filePath.endsWith('.vue') ? _context.scriptContent : content;
     
     if (!sourceContent) {
       return result;
@@ -302,7 +302,7 @@ export const storeVuexGettersDispatchRule: FixRule = {
            content.includes("defineStore") &&
            (content.includes("getters[") || content.includes("dispatch('") || content.includes('dispatch("'));
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -389,7 +389,7 @@ export const storeCommitToDirectRule: FixRule = {
       (content.includes("commit('") || content.includes('commit("'))
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -427,7 +427,7 @@ export const storeGettersToRefRule: FixRule = {
       content.includes("getters.")
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -461,7 +461,7 @@ export const storeComputedResultRule: FixRule = {
       /=>\s*result\s*\)/.test(content)
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -579,7 +579,7 @@ export const storeAddLoadingRule: FixRule = {
       /SET_\w+\s*\(/.test(content)
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -618,7 +618,7 @@ export const storeAddLoadingRule: FixRule = {
     const typeDefault = (m: string, v: string) =>
       v === "loading" ? "boolean" : "any";
     const defaultVal = (v: string) => (v === "loading" ? "false" : "undefined");
-    const ts = context.enableTypeScript;
+    const ts = _context.enableTypeScript;
 
     const blocks: string[] = [];
     const returnAdds: string[] = [];
@@ -672,7 +672,7 @@ export const storeEventTypeRule: FixRule = {
       /\bEvent\b/.test(content)
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -711,7 +711,7 @@ export const storeReturnCurrentUserRule: FixRule = {
       content.includes("return {")
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -763,7 +763,7 @@ export const storeIndexRemoveObsoleteImportsRule: FixRule = {
     const hasVueImport = /import\s+Vue\s+from\s+['"]vue['"]/.test(content);
     return hasDefaultModuleImport || hasVueImport;
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     let fixed = content;
     const fixes: string[] = [];
@@ -809,7 +809,7 @@ export const storeIndexNamedExportRule: FixRule = {
            /export\s+default\s+defineStore\s*\(\s*["']index["']/.test(content) &&
            !content.includes("export const useIndexStore");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -849,7 +849,7 @@ export const storeDefineStoreClosingRule: FixRule = {
       STORE_CLOSING_MALFORMED.test(content)
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -880,7 +880,7 @@ export const piniaStoreCrossStoreDepsRule: FixRule = {
     return (filePath.includes("/store/") && content.includes("defineStore") &&
             /\b\w+Store\.\w+/.test(content));
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -934,7 +934,7 @@ export const piniaStoreCrossStoreDepsRule: FixRule = {
       moduleName === "index" ? "@/store/index" : `@/store/modules/${moduleName}`;
     const newImportLines = importsToAdd
       .filter(
-        ({ useName, moduleName }) =>
+        ({ useName: _useName, moduleName }) =>
           !content.includes(`from "${importPath(moduleName)}"`) &&
           !content.includes(`from '${importPath(moduleName)}'`)
       )

@@ -17,7 +17,7 @@ export const destructuringKeyValueParamRule: FixRule = {
     return (filePath.includes("/store/") || filePath.endsWith(".ts") || filePath.endsWith(".vue")) &&
            /\{\s*key\s*:\s*any\s*,\s*value\s*\}/.test(content);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const fixed = content.replace(
       /\{\s*key\s*:\s*any\s*,\s*value\s*\}\s*:\s*any/g,
@@ -48,7 +48,7 @@ export const incorrectEventTypeRule: FixRule = {
            content.includes("Event") &&
            content.includes("function");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -133,7 +133,7 @@ export const filtersKeyAccessRule: FixRule = {
   shouldApply: (filePath, content) => {
     return content.includes("filters[") && content.includes("key");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -142,7 +142,7 @@ export const filtersKeyAccessRule: FixRule = {
     };
 
     // Type assertion (filters as any)[key] is only valid in TypeScript; in JS leave filters[key]
-    if (!context.enableTypeScript) {
+    if (!_context.enableTypeScript) {
       return result;
     }
 
@@ -188,7 +188,7 @@ export const stripTypeScriptAnnotationsRule: FixRule = {
     const hasTsSyntax =
       /ref\s*<[^>]+>\s*\(/.test(content) ||
       /computed\s*<[^>]+>\s*\(/.test(content) ||
-      /\w+\s*:\s*(?:string|number|boolean|void|any|unknown|object)\s*[\),]/.test(content) ||
+      /\w+\s*:\s*(?:string|number|boolean|void|any|unknown|object)\s*[),]/.test(content) ||
       /\)\s*:\s*(?:void|string|number|boolean|any|Promise\s*<)/.test(content) ||
       /\)\s*:\s*void\s*=>/.test(content) ||
       /\s+as\s+any\b/.test(content);
@@ -201,14 +201,14 @@ export const stripTypeScriptAnnotationsRule: FixRule = {
     }
     return false;
   },
-  apply: async (filePath, content, context) => {
-    if (context.enableTypeScript) {
+  apply: async (filePath, content, _context: FixContext) => {
+    if (_context.enableTypeScript) {
       return { content, fixed: false, fixes: [], issues: [] };
     }
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
 
     const stripParamTypes = (params: string): string =>
-      params.replace(/(\w+)\s*:\s*(?:string|number|boolean|void|any|unknown|object)\b[^,\)]*/g, "$1");
+      params.replace(/(\w+)\s*:\s*(?:string|number|boolean|void|any|unknown|object)\b[^),]*/g, "$1");
 
     const stripFromScript = (script: string): string => {
       let out = script;
@@ -217,11 +217,11 @@ export const stripTypeScriptAnnotationsRule: FixRule = {
       // computed<Type>(...) → computed(...)
       out = out.replace(/computed\s*<[^<>]*(?:<[^<>]*>[^<>]*)*>\s*\(/g, "computed(");
       // function name(param: Type, ...): ReturnType { → function name(param, ...) {
-      out = out.replace(/function\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>\[\]\s|&,]+)?\s*\{/g, (_m, name, params) => {
+      out = out.replace(/function\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>[\]\s|&,]+)?\s*\{/g, (_m, name, params) => {
         return `function ${name}(${stripParamTypes(params)}) {`;
       });
       // ): ReturnType => { → ) => {
-      out = out.replace(/(\))\s*:\s*(?:void|[\w<>\[\]\s|&,]+)\s*=>\s*\{/g, "$1) => {");
+      out = out.replace(/(\))\s*:\s*(?:void|[\w<>[\]\s|&,]+)\s*=>\s*\{/g, "$1) => {");
       // Arrow params: (a: string, b: number) => → (a, b) =>
       out = out.replace(/\b(?:const|let|var)\s+\w+\s*=\s*\(([^)]*)\)\s*=>/g, (m, params) => {
         return m.replace(params, stripParamTypes(params));
@@ -229,7 +229,7 @@ export const stripTypeScriptAnnotationsRule: FixRule = {
       // set: (v: string) => → set: (v) =>
       out = out.replace(/(\w+)\s*:\s*\((\w+)\s*:\s*[^)]+\)\s*=>/g, "$1: ($2) =>");
       // (v: string) => or (value: boolean) => (standalone arrow)
-      out = out.replace(/(\()(\w+)\s*:\s*[^\)]+(\))\s*=>/g, "$1$2$3) =>");
+      out = out.replace(/(\()(\w+)\s*:\s*[^)]+(\))\s*=>/g, "$1$2$3) =>");
       // (filters as any)[key] or (expr as any) → filters[key] / expr (invalid in JS)
       out = out.replace(/\((\w+)\s+as\s+any\)/g, "$1");
       return out;
@@ -273,9 +273,9 @@ export const typescriptTypeImprovementsRule: FixRule = {
   shouldApply: (filePath, content) => {
     return content.includes(": any") || content.includes("as any");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     // Only apply if TypeScript is enabled
-    if (!context.enableTypeScript) {
+    if (!_context.enableTypeScript) {
       return {
         content,
         fixed: false,

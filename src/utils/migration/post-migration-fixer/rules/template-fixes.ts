@@ -21,7 +21,7 @@ export const templateInterpolationParensRule: FixRule = {
     const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
     return /\{\{[^}]*\)\s*\}\}|\{\{[^}]*(?:\w+\s*\([^)]*)\s*\}\}/.test(template);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
     if (!templateMatch) return result;
@@ -88,7 +88,7 @@ export const missingComponentImportsRule: FixRule = {
            content.includes("<script setup") &&
            content.includes("<template>");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -96,7 +96,7 @@ export const missingComponentImportsRule: FixRule = {
       issues: []
     };
 
-    if (!context.templateContent || !context.scriptContent) {
+    if (!_context.templateContent || !_context.scriptContent) {
       return result;
     }
 
@@ -108,7 +108,7 @@ export const missingComponentImportsRule: FixRule = {
     
     const usedComponents = new Set<string>();
     let match;
-    while ((match = componentPattern.exec(context.templateContent)) !== null) {
+    while ((match = componentPattern.exec(_context.templateContent)) !== null) {
       const componentName = match[1];
       // Skip built-in HTML tags and Vue components
       if (!["RouterView", "RouterLink", "Transition", "KeepAlive", "Teleport", "Suspense"].includes(componentName)) {
@@ -121,7 +121,7 @@ export const missingComponentImportsRule: FixRule = {
     usedComponents.forEach(componentName => {
       // Check if component is imported
       const importPattern = new RegExp(`import\\s+.*?${componentName}.*?from`, "g");
-      if (!importPattern.test(context.scriptContent!)) {
+      if (!importPattern.test(_context.scriptContent!)) {
         missingComponents.push(componentName);
       }
     });
@@ -190,7 +190,7 @@ export const templateFilterFunctionImportsRule: FixRule = {
     const templateSection = content.match(/<template>([\s\S]*?)<\/template>/)?.[1] ?? "";
     return /\{\{\s*(capitalize|currency)\s*\(/.test(templateSection);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const templateSection = content.match(/<template>([\s\S]*?)<\/template>/)?.[1] ?? "";
     const scriptMatch = content.match(/<script([^>]*)>([\s\S]*?)<\/script>/);
@@ -203,7 +203,7 @@ export const templateFilterFunctionImportsRule: FixRule = {
     let scriptContent = scriptMatch[2];
     const toAdd = Array.from(usedFilters).filter((f) => !new RegExp(`import\\s+.*\\b${f}\\b.*from`).test(scriptContent));
     if (toAdd.length === 0) return result;
-    const filterPath = resolveFilterPath(context.projectRoot);
+    const filterPath = resolveFilterPath(_context.projectRoot);
     const importLine = `import { ${toAdd.join(", ")} } from "${filterPath}";\n`;
     const firstImport = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
     const insertIdx = firstImport ? firstImport[0].length : 0;
@@ -228,7 +228,7 @@ export const missingFilterImportsRule: FixRule = {
            content.includes("<script setup") &&
            content.includes("|");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -236,7 +236,7 @@ export const missingFilterImportsRule: FixRule = {
       issues: []
     };
 
-    if (!context.templateContent || !context.scriptContent) {
+    if (!_context.templateContent || !_context.scriptContent) {
       return result;
     }
 
@@ -248,7 +248,7 @@ export const missingFilterImportsRule: FixRule = {
     
     const usedFilters = new Set<string>();
     let match;
-    while ((match = filterPattern.exec(context.templateContent)) !== null) {
+    while ((match = filterPattern.exec(_context.templateContent)) !== null) {
       const filterName = match[1];
       usedFilters.add(filterName);
     }
@@ -260,8 +260,8 @@ export const missingFilterImportsRule: FixRule = {
       const importPattern = new RegExp(`import\\s+.*?${filterName}.*?from`, "g");
       const functionPattern = new RegExp(`(const|function)\\s+${filterName}\\s*=`, "g");
       
-      if (!importPattern.test(context.scriptContent!) && 
-          !functionPattern.test(context.scriptContent!)) {
+      if (!importPattern.test(_context.scriptContent!) && 
+          !functionPattern.test(_context.scriptContent!)) {
         filterFunctions.add(filterName);
       }
     });
@@ -275,7 +275,7 @@ export const missingFilterImportsRule: FixRule = {
         
         // Add filter functions (would need to import from filters file or define inline)
         // For now, add as simple functions
-        const ts = context.enableTypeScript;
+        const ts = _context.enableTypeScript;
         const filterDefs: string[] = [];
         filterFunctions.forEach(filterName => {
           // Common filter implementations
@@ -330,7 +330,7 @@ export const templateCurrencyNonNumericRule: FixRule = {
     const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
     return new RegExp(`currency\\s*\\([^)]+\\.(?:${NON_NUMERIC_PROPS})\\s*\\)`, "g").test(template);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
     if (!templateMatch) return result;
@@ -364,7 +364,7 @@ export const vModelBindingsRule: FixRule = {
     return filePath.endsWith(".vue") &&
            content.includes("v-model");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -372,11 +372,9 @@ export const vModelBindingsRule: FixRule = {
       issues: []
     };
 
-    if (!context.templateContent || !context.scriptContent) {
+    if (!_context.templateContent || !_context.scriptContent) {
       return result;
     }
-
-    let fixed = content;
 
     // Fix: v-model="value" where value is not defined as ref
     // This is a basic check - more complex logic would need AST parsing
@@ -387,7 +385,7 @@ export const vModelBindingsRule: FixRule = {
     
     const vModelBindings = new Set<string>();
     let match;
-    while ((match = vModelPattern.exec(context.templateContent)) !== null) {
+    while ((match = vModelPattern.exec(_context.templateContent ?? "")) !== null) {
       vModelBindings.add(match[1]);
     }
 
@@ -398,8 +396,8 @@ export const vModelBindingsRule: FixRule = {
       // Check if it's a computed (shouldn't be used with v-model)
       const computedPattern = new RegExp(`const\\s+${binding}\\s*=\\s*computed\\(`, "g");
       
-      if (!refPattern.test(context.scriptContent!) && 
-          computedPattern.test(context.scriptContent!)) {
+      if (!refPattern.test(_context.scriptContent!) && 
+          computedPattern.test(_context.scriptContent!)) {
         // This is a computed property used with v-model - should be a ref
         result.issues.push(`v-model="${binding}" uses computed property, should use ref`);
       }

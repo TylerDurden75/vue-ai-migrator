@@ -9,7 +9,6 @@ import {
   replaceThisRouterRouteRule,
   fixStoreMemberMismatchRule
 } from "../store-script-setup-fixes";
-import type { FixContext } from "../../types";
 import * as path from "path";
 
 jest.mock("../../utils/store-analysis-cache", () => ({

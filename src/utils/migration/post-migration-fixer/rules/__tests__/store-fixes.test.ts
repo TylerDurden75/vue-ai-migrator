@@ -11,7 +11,6 @@ import {
   piniaStoreCrossStoreDepsRule
 } from "../store-fixes";
 import type { FixContext } from "../../types";
-import { getStoreMethodMap } from "../../utils/store-analysis-cache";
 
 jest.mock("../../utils/store-analysis-cache");
 

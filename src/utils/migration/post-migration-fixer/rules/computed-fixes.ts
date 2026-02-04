@@ -17,7 +17,7 @@ export const computedValueRule: FixRule = {
            content.includes("<script setup") &&
            content.includes("computed");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -25,7 +25,7 @@ export const computedValueRule: FixRule = {
       issues: []
     };
 
-    if (!context.scriptContent) {
+    if (!_context.scriptContent) {
       return result;
     }
 
@@ -40,7 +40,7 @@ export const computedValueRule: FixRule = {
     
     const computedNames = new Set<string>();
     let match;
-    while ((match = computedPattern.exec(context.scriptContent)) !== null) {
+    while ((match = computedPattern.exec(_context.scriptContent)) !== null) {
       computedNames.add(match[1]);
     }
 
@@ -50,7 +50,7 @@ export const computedValueRule: FixRule = {
       const pattern = new RegExp(`\\b${computedName}\\.(length|map|filter|find|forEach|reduce|some|every|includes)\\b`, "g");
       const replacement = `${computedName}.value.$1`;
       
-      if (pattern.test(context.scriptContent!)) {
+      if (pattern.test(_context.scriptContent!)) {
         const scriptMatch = fixed.match(/<script[^>]*>([\s\S]*?)<\/script>/);
         if (scriptMatch) {
           let scriptContent = scriptMatch[1];
@@ -85,7 +85,7 @@ export const malformedComputedRule: FixRule = {
   shouldApply: (filePath, content) => {
     return content.includes("computed<any>()") || content.includes("computed() =>");
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -134,7 +134,7 @@ export const vueComputedExtraParenRule: FixRule = {
   shouldApply: (filePath, content) => {
     return filePath.endsWith(".vue") && content.includes("computed") && /\}\)\)\s*;/.test(content);
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -165,7 +165,7 @@ export const computedSyntaxRule: FixRule = {
       content.includes("computed<any>(() =>")
     );
   },
-  apply: async (filePath, content, context) => {
+  apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -177,11 +177,11 @@ export const computedSyntaxRule: FixRule = {
 
     // Fix: computed(() => expression.length); → computed(() => expression.value.length);
     // But only if expression is a computed property
-    if (context.scriptContent) {
+    if (_context.scriptContent) {
       const computedPattern = /const\s+(\w+)\s*=\s*computed\s*\(/g;
       const computedNames = new Set<string>();
       let match;
-      while ((match = computedPattern.exec(context.scriptContent)) !== null) {
+      while ((match = computedPattern.exec(_context.scriptContent)) !== null) {
         computedNames.add(match[1]);
       }
 

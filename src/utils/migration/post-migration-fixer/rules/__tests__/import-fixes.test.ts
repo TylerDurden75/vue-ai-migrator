@@ -11,9 +11,6 @@ import {
   correctWrongStoreImportsRule,
   addMissingStoreImportsRule
 } from "../import-fixes";
-import type { FixContext } from "../../types";
-import * as fs from "fs/promises";
-import * as path from "path";
 
 // Mock store-analysis-cache
 jest.mock("../../utils/store-analysis-cache", () => ({
