@@ -2,19 +2,30 @@ import * as path from "path";
 import * as fsSync from "fs";
 import { execSync } from "child_process";
 
-// Try to import Prettier programmatically if available
+// Lazy-load Prettier on first use (avoids ESM/dynamic-import issues in Jest)
 let prettierModule: any = null;
-try {
-  // Try to load from project's node_modules first
-  const projectPrettierPath = path.join(process.cwd(), "node_modules", "prettier");
-  if (fsSync.existsSync(projectPrettierPath)) {
-    prettierModule = require(projectPrettierPath);
-  } else {
-    // Try to load from vue-ai-migrator's node_modules
-    prettierModule = require("prettier");
+let prettierLoadAttempted = false;
+
+function loadPrettier(): any {
+  if (prettierLoadAttempted) return prettierModule;
+  prettierLoadAttempted = true;
+  try {
+    // Prefer vue-ai-migrator's node_modules (stable in tests)
+    const selfPrettierPath = path.join(__dirname, "..", "..", "node_modules", "prettier");
+    if (fsSync.existsSync(selfPrettierPath)) {
+      prettierModule = require(selfPrettierPath);
+    } else {
+      const projectPrettierPath = path.join(process.cwd(), "node_modules", "prettier");
+      if (fsSync.existsSync(projectPrettierPath)) {
+        prettierModule = require(projectPrettierPath);
+      } else {
+        prettierModule = require("prettier");
+      }
+    }
+  } catch {
+    // Prettier not available, will use fallback formatting
   }
-} catch {
-  // Prettier not available, will use fallback formatting
+  return prettierModule;
 }
 
 /**
@@ -27,7 +38,8 @@ export async function formatWithPrettier(
   projectRoot?: string
 ): Promise<string> {
   // Try to use Prettier programmatically if available
-  if (prettierModule) {
+  const prettier = loadPrettier();
+  if (prettier) {
     try {
       const prettierOptions: any = {
         semi: true,
@@ -59,7 +71,7 @@ export async function formatWithPrettier(
       }
 
       // Format the content
-      const formatted = await prettierModule.format(content, {
+      const formatted = await prettier.format(content, {
         ...prettierOptions,
         filepath: filePath,
         parser: filePath.endsWith(".vue") ? "vue" : filePath.endsWith(".ts") ? "typescript" : "babel",

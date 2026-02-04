@@ -409,6 +409,32 @@ export async function installDependencies(
 }
 
 /**
+ * Run build in the project to validate migration
+ */
+export async function runBuild(
+  projectPath: string,
+): Promise<{ success: boolean; output: string; error?: string }> {
+  try {
+    const { stdout, stderr } = await execAsync("npm run build", {
+      cwd: projectPath,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return {
+      success: true,
+      output: stdout,
+      error: stderr || undefined,
+    };
+  } catch (error: unknown) {
+    const err = error as { stdout?: string; stderr?: string; message?: string };
+    return {
+      success: false,
+      output: err.stdout || "",
+      error: err.stderr || err.message || "Unknown error",
+    };
+  }
+}
+
+/**
  * Helper function to check if a file exists
  */
 async function fileExists(filePath: string): Promise<boolean> {

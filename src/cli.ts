@@ -10,7 +10,8 @@ import { getDiffSummary } from "./utils/codegen";
 import chalk from "chalk";
 import ora from "ora";
 import { detectVueVersion, analyzeProject } from "./utils/analysis";
-import { installDependencies } from "./utils/migration/dependency-checker";
+import { installDependencies, runBuild } from "./utils/migration/dependency-checker";
+import { loadConfig } from "./utils/config";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { readFileSync } from "fs";
@@ -102,6 +103,11 @@ program
     "Enable verbose logging (show DEBUG messages and detailed fixes)",
     false,
   )
+  .option(
+    "--validate",
+    "Run npm run build after migration to verify the project compiles (exits with error code if build fails)",
+    false,
+  )
   .action(async (projectPath: string, options) => {
     const spinner = ora("Analyzing project...").start();
 
@@ -167,6 +173,17 @@ program
         );
       }
 
+      let configIgnore: string[] | undefined;
+      try {
+        const config = await loadConfig(projectPath);
+        configIgnore = config.ignore;
+        if (config.transformations && !options.transformations) {
+          // Config transformations can override when CLI doesn't specify
+        }
+      } catch {
+        // No config or invalid, use defaults
+      }
+
       const migrationOptions: MigrationOptions = {
         projectPath: projectPath,
         aiApiKey: apiKey,
@@ -181,6 +198,7 @@ program
         generateTests: options.generateTests || false,
         enableTypeScript: !!options.typescript,
         verbose: options.verbose || false,
+        ignore: configIgnore,
       };
 
       if (shouldUseAI && apiKey) {
@@ -333,14 +351,33 @@ program
       if (result.filesModified > 0) {
         console.log(chalk.blue("\n📝 Next steps:"));
         console.log(chalk.gray("  1. Review the migrated code"));
-        console.log(chalk.gray("  2. Run your tests: npm test"));
         if (!options.install && !options.cleanInstall) {
-          console.log(chalk.gray("  3. Install dependencies: npm install"));
+          console.log(chalk.gray("  2. Install dependencies: npm install"));
+          console.log(chalk.gray("  3. Verify build: npm run build"));
+          console.log(chalk.gray("  4. Run tests: npm test"));
         } else {
-          console.log(chalk.green("  3. ✓ Dependencies already installed"));
+          console.log(chalk.green("  2. ✓ Dependencies already installed"));
+          console.log(chalk.gray("  3. Verify build: npm run build"));
+          console.log(chalk.gray("  4. Run tests: npm test"));
         }
         if (result.classification && result.classification.complex > 0 && (!shouldUseAI || !apiKey)) {
-          console.log(chalk.yellow("  4. Consider using --ai for complex files if needed"));
+          console.log(chalk.yellow("  5. Consider using --ai for complex files if needed"));
+        }
+      }
+
+      // Validate: run npm run build to verify compilation
+      if (!options.dryRun && options.validate) {
+        spinner.start("Validating build...");
+        const buildResult = await runBuild(projectPath);
+        if (buildResult.success) {
+          spinner.succeed("Build validation passed!");
+        } else {
+          spinner.fail("Build validation failed");
+          console.log(chalk.red(`\n✗ npm run build failed:`));
+          if (buildResult.error) {
+            console.log(chalk.gray(buildResult.error));
+          }
+          process.exit(1);
         }
       }
     } catch (error) {
@@ -368,24 +405,39 @@ program
     "Show detailed fix information",
     false,
   )
+  .option(
+    "--validate",
+    "Run npm run build after fixes to verify the project compiles (exits with error code if build fails)",
+    false,
+  )
   .action(async (projectPath: string, options) => {
     const spinner = ora("Running post-migration fixes...").start();
 
     try {
       const { glob } = await import("glob");
+      const defaultIgnore = ["node_modules/**", "dist/**", "build/**"];
+      let ignorePatterns = defaultIgnore;
+      try {
+        const config = await loadConfig(projectPath);
+        if (config.ignore && config.ignore.length > 0) {
+          ignorePatterns = config.ignore;
+        }
+      } catch {
+        // No config, use defaults
+      }
       const vueFiles = await glob("**/*.{vue,ts,js}", {
         cwd: projectPath,
-        ignore: ["node_modules/**", "dist/**", "build/**"],
+        ignore: ignorePatterns,
         absolute: true,
       });
       const storeFiles = await glob("**/store/**/*.{ts,js}", {
         cwd: projectPath,
-        ignore: ["node_modules/**", "dist/**"],
+        ignore: ignorePatterns,
         absolute: true,
       });
       const mainFiles = await glob("**/main.{ts,js}", {
         cwd: projectPath,
-        ignore: ["node_modules/**", "dist/**"],
+        ignore: ignorePatterns,
         absolute: true,
       });
       const filesToFix = [
@@ -431,10 +483,32 @@ program
       console.log(
         chalk.green(`\n✓ ${fixedCount} file(s) fixed out of ${filesToFix.length} processed`),
       );
-      if (fixedCount > 0 && !options.verbose) {
-        console.log(
-          chalk.blue("  Run with -v to see which fixes were applied"),
-        );
+      if (fixedCount > 0) {
+        if (!options.verbose) {
+          console.log(
+            chalk.blue("  Run with -v to see which fixes were applied"),
+          );
+        }
+        console.log(chalk.blue("\n📝 Next steps:"));
+        console.log(chalk.gray("  1. Review the changes"));
+        console.log(chalk.gray("  2. Verify build: npm run build"));
+        console.log(chalk.gray("  3. Run tests: npm test"));
+      }
+
+      // Validate: run npm run build to verify compilation
+      if (options.validate) {
+        spinner.start("Validating build...");
+        const buildResult = await runBuild(projectPath);
+        if (buildResult.success) {
+          spinner.succeed("Build validation passed!");
+        } else {
+          spinner.fail("Build validation failed");
+          console.log(chalk.red(`\n✗ npm run build failed:`));
+          if (buildResult.error) {
+            console.log(chalk.gray(buildResult.error));
+          }
+          process.exit(1);
+        }
       }
     } catch (error) {
       spinner.fail("Error during fix");

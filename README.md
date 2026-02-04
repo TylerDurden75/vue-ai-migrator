@@ -454,6 +454,7 @@ vue-ai-migrator migrate <project-path> [options]
 - `--typescript`: Enable TypeScript type annotations in migrated code (see [TypeScript Support](#typescript-support))
 - `--install`: Automatically reinstall dependencies after migration
 - `--clean-install`: Remove `node_modules` and `package-lock.json` before reinstalling dependencies (recommended after migration)
+- `--validate`: Run `npm run build` after migration to verify the project compiles (exits with error code if build fails)
 **Examples:**
 
 ```bash
@@ -506,12 +507,14 @@ vue-ai-migrator fix <project-path> [options]
 
 - `--typescript`: Enable TypeScript mode for fixes
 - `-v, --verbose`: Show detailed fix information
+- `--validate`: Run `npm run build` after fixes to verify the project compiles (exits with error code if build fails)
 
 **Examples:**
 
 ```bash
 vue-ai-migrator fix ./my-project
 vue-ai-migrator fix ./my-project --typescript -v
+vue-ai-migrator fix ./my-project --validate
 ```
 
 **Output:**
@@ -659,8 +662,17 @@ Create a `vue-migrator.config.js` file at the root of your project:
 
 ```javascript
 module.exports = {
-  // Paths to ignore
-  ignore: ["node_modules", "dist"],
+  // Glob patterns to ignore during migration
+  ignore: ["node_modules/**", "dist/**", "build/**", "**/*.spec.js"],
+
+  // Custom store paths (for store analyzer)
+  storePaths: ["src/store", "src/stores", "store"],
+
+  // Fixer rules to disable (by rule id)
+  fixerRulesDisable: ["detail-view-store-rule"],
+
+  // Fixer rules to enable only (if set, only these run)
+  // fixerRulesEnable: ["missing-vue-imports", "fix-store-member-mismatch"],
 
   // Use AI for complex cases
   useAI: true,
@@ -1215,7 +1227,17 @@ If you want AI assistance:
 
 #### Errors after migration (userStore not defined, computed syntax, etc.)
 
-**Solution**: Re-run the migration from a clean state (or rollback then migrate again). If issues persist, check the report and fix manually; open an issue if you think it's a bug.
+**Solution**: Run `vue-ai-migrator fix ./your-project` to re-apply post-migration fixes. If issues persist, re-run the migration from a clean state (or rollback then migrate again). Check the report and fix manually; open an issue if you think it's a bug.
+
+### Known Limitations
+
+#### Vuex split structure (actions.js, mutations.js)
+
+If your store uses separate files for `actions`, `mutations`, or `getters` imported by `store/index.js`, the automatic Vuex→Pinia transform may not resolve them. **Workaround**: Manually merge these into the main store file before migration, or adapt the generated Pinia store after migration.
+
+#### Functional components
+
+SFCs using `functional` or `{ functional: true }` are not automatically converted to standard SFCs. Manual conversion is required.
 
 #### "Cannot find module '../parser/tsx'" or dependency conflicts
 

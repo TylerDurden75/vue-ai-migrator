@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2025-02-XX
+
+### Fixed
+
+- **Post-migration fixer**: Resolved conflicting rules for detail views (e.g. `UserDetail.vue`)
+  - `correctWrongStoreImportsRule` no longer replaces `useUserStore` with `useIndexStore` when the component uses methods exclusive to the module (e.g. `fetchUser`)
+  - `fixStoreMemberMismatchRule` no longer replaces `userStore.loading`/`currentUser` with `indexStore` when the component uses `userStore.fetchUser` (or similar fetch-by-id methods)
+- **Import paths**: Corrected index store import path from `@/store/modules/index` to `@/store/index` in both fixer rules
+- **Lint**: Fixed unused variable in `final-fixes.test.ts`
+
+### Added
+
+- **Documentation**: `fix` command documented in [USAGE.md](./USAGE.md) (re-run post-migration fixes without full migration)
+- **Known limitations**: Documented Vuex split structure and functional components in Troubleshooting
+- **missingVueImportsRule**: Now adds lifecycle hooks (onMounted, onUnmounted, onBeforeMount, etc.) and reactive when used but not imported from vue
+- **`--validate` option**: Run `npm run build` after `migrate` or `fix` to verify the project compiles (exits with error code if build fails)
+- **Configuration (vue-migrator.config.js)**: Enriched with `storePaths`, `fixerRulesEnable`, `fixerRulesDisable`; `ignore` patterns now applied to migrate and fix commands
+
 ## [0.6.0] - 2025-01-XX
 
 ### 🎉 Major Changes

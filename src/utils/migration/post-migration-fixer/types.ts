@@ -44,6 +44,10 @@ export interface FixContext {
     scriptContent?: string;
     templateContent?: string;
   };
+  /** Rule IDs to disable (from vue-migrator.config.js fixerRulesDisable) */
+  fixerRulesDisable?: string[];
+  /** If set, only run these rule IDs (from vue-migrator.config.js fixerRulesEnable) */
+  fixerRulesEnable?: string[];
 }
 
 export interface FixRuleResult {

@@ -119,6 +119,17 @@ export class RuleEngine {
       const rule = this.rules.get(ruleId);
       if (!rule) continue;
 
+      // Config: skip disabled rules
+      if (context.fixerRulesDisable?.includes(ruleId)) continue;
+      // Config: if fixerRulesEnable is set, only run rules in that list
+      if (
+        context.fixerRulesEnable &&
+        context.fixerRulesEnable.length > 0 &&
+        !context.fixerRulesEnable.includes(ruleId)
+      ) {
+        continue;
+      }
+
       // Check if rule should apply
       if (!rule.shouldApply(filePath, currentContent)) {
         continue;

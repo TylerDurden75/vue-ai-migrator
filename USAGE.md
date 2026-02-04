@@ -479,6 +479,11 @@ If migration fails, the report contains the details. You can:
 2. Rerun the migration
 3. Use `--transformations` to migrate step by step
 
+### Known Limitations
+
+- **Vuex split structure**: If your store uses separate `actions.js`, `mutations.js`, or `getters.js` files imported by `store/index.js`, manual merge may be required before migration.
+- **Functional components**: SFCs with `functional` or `{ functional: true }` are not auto-converted; manual conversion is needed.
+
 ## 📚 Resources
 
 - [Vue 3 Migration Guide Documentation](https://v3-migration.vuejs.org/)

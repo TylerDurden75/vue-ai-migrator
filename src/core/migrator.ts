@@ -54,6 +54,8 @@ export interface MigrationOptions {
   classifyFiles?: boolean;
   enableTypeScript?: boolean;
   verbose?: boolean; // Enable verbose logging (DEBUG messages, detailed fixes)
+  /** Glob ignore patterns (from vue-migrator.config.js) */
+  ignore?: string[];
 }
 
 export interface MigrationResult {
@@ -147,10 +149,13 @@ export async function migrate(
     // Analyze the project
     const analysis = await analyzeProject(projectPath);
 
+    const defaultIgnore = ["node_modules/**", "dist/**", "build/**"];
+    const ignorePatterns = options.ignore ?? defaultIgnore;
+
     // Find all Vue files
     const vueFiles = await glob("**/*.{vue,js,ts}", {
       cwd: projectPath,
-      ignore: ["node_modules/**", "dist/**", "build/**"],
+      ignore: ignorePatterns,
       absolute: true,
     });
 
@@ -932,12 +937,12 @@ export async function migrate(
         );
         const storeFiles = await glob("**/store/**/*.{ts,js}", {
           cwd: projectPath,
-          ignore: ["node_modules/**", "dist/**", "build/**"],
+          ignore: ignorePatterns,
           absolute: true,
         });
         const mainFiles = await glob("**/main.{ts,js}", {
           cwd: projectPath,
-          ignore: ["node_modules/**", "dist/**", "build/**"],
+          ignore: ignorePatterns,
           absolute: true,
         });
         const vueFilesToFix = [...vueOnly, ...storeFiles, ...mainFiles];

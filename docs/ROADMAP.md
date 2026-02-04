@@ -10,7 +10,7 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 
 ### Implemented Features
 
-- ✅ **Complete CLI** : `analyze`, `migrate`, `report`, `plan`, `rollback`
+- ✅ **Complete CLI** : `analyze`, `migrate`, `fix`, `report`, `plan`, `rollback`
 - ✅ **AST Analysis** : Complete detection of Vue 2 patterns
 - ✅ **Smart Classification** : 🟢 Simple / 🟡 Medium / 🔴 Complex
 - ✅ **Advanced MigrationAgent** : Multi-providers, test generation, explanation
@@ -58,6 +58,10 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 - [x] storeScriptSetupRule: replace `this.method()` / `this.property` with plain identifier in script setup
 - [x] routeQueryRedirectGuardRule registered (guard `route.query.redirect` with `typeof === 'string'`)
 - [x] fixStoreMemberMismatchRule: fix missing store import insertion (script not starting with `import`)
+- [x] fix command: re-run post-migration fixes without full migration (`vue-ai-migrator fix <path>`)
+- [x] correctWrongStoreImportsRule / fixStoreMemberMismatchRule: no longer revert userStore→indexStore in detail views (fetchUser, etc.)
+- [x] Import path fix: `@/store/index` (not `@/store/modules/index`) for index store
+- [x] missingVueImportsRule: add lifecycle hooks (onMounted, onUnmounted, etc.) and reactive when used but not imported
 - [ ] Fix remaining edge cases as reported by tests (computed filtered, store imports when no blog store in project)
 
 ### Performance

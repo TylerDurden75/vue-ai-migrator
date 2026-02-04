@@ -31,6 +31,7 @@ import { vueStoreVuexToPiniaRule } from "./rules/vue-store-vuex";
 import { storeScriptSetupRule, replaceThisRouterRouteRule, missingUseRouteImportRule, missingUseRouterImportRule, watchPropsRefRule, storeThemeBindingRule, secureRouterPushRule, routerPushTypeCheckRule, fixStoreMemberMismatchRule } from "./rules/store-script-setup-fixes";
 import { formatWithPrettier } from "../prettier-formatter";
 import { astCache } from "./utils/ast-cache";
+import { loadConfig } from "../../config";
 
 // Initialize rule engine with all rules
 const ruleEngine = new RuleEngine();
@@ -130,13 +131,27 @@ export async function fixPostMigrationIssues(
   // Use AST cache for performance (parse once, reuse for all rules)
   const cachedAST = astCache.get(filePath, content);
   
+  let fixerRulesDisable: string[] | undefined;
+  let fixerRulesEnable: string[] | undefined;
+  if (projectRoot) {
+    try {
+      const config = await loadConfig(projectRoot);
+      fixerRulesDisable = config.fixerRulesDisable;
+      fixerRulesEnable = config.fixerRulesEnable;
+    } catch {
+      // Config not found or invalid, use defaults
+    }
+  }
+
   const context: FixContext = {
     enableTypeScript,
     projectRoot,
     isVueFile,
     scriptContent: cachedAST.scriptContent,
     templateContent: cachedAST.templateContent,
-    astCache: cachedAST
+    astCache: cachedAST,
+    fixerRulesDisable,
+    fixerRulesEnable,
   };
 
   // Execute all rules in a single optimized pass

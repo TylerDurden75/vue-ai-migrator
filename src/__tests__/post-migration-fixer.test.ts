@@ -59,6 +59,23 @@ describe('Post Migration Fixer', () => {
       expect(!!hasRefImport || !!hasComputedImport || !!hasWatchImport).toBe(true);
     });
 
+    it('should fix missing lifecycle hook imports (onMounted, onUnmounted)', async () => {
+      const code = `
+        <script setup>
+        onMounted(() => { console.log('mounted'); });
+        onUnmounted(() => { console.log('unmounted'); });
+        </script>
+      `;
+
+      const result = await fixPostMigrationIssues('test.vue', code, false, testProjectRoot);
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain('onMounted');
+      expect(result.content).toContain('onUnmounted');
+      expect(result.content).toMatch(/import\s*\{[^}]*onMounted[^}]*\}\s*from\s*['"]vue['"]/);
+      expect(result.content).toMatch(/import\s*\{[^}]*onUnmounted[^}]*\}\s*from\s*['"]vue['"]/);
+    });
+
     it('should fix missing useRoute import', async () => {
       const code = `
         <script setup>
@@ -487,6 +504,55 @@ watch(() => props.id, () => fetchUser(), { immediate: true });
       // allIndexs -> allUsers or currentUser (Detail view)
       expect(result.content).not.toContain('indexStore.allIndexs');
       expect(result.content).toMatch(/userStore\.(allUsers|currentUser)/);
+    });
+
+    (hasTestProject ? it : it.skip)('should NOT revert userStore to indexStore when detail view correctly uses userStore (fixer idempotency)', async () => {
+      mockGetStoreMethodMap.mockResolvedValue({
+        fetchUser: "user",
+        allUsers: "user",
+        currentUser: "user",
+        loading: "user",
+        isLoading: "index",
+        fetchCurrentUser: "index"
+      });
+      const code = `
+<template>
+  <div class="user-detail">
+    <div v-if="isLoading">Loading user...</div>
+    <div v-else-if="user">
+      <h1>{{ user.name }}</h1>
+    </div>
+  </div>
+</template>
+<script setup lang="ts">
+import { computed, watch } from "vue";
+import { useUserStore } from "@/store/modules/user";
+import { useRouter, useRoute } from "vue-router";
+
+const route = useRoute();
+const userStore = useUserStore();
+const props = defineProps({ id: { type: [String, Number], required: true } });
+
+const isLoading = computed<any>(() => userStore.loading);
+const user = computed<any>(() => userStore.currentUser);
+
+const fetchUser = () => {
+  userStore.fetchUser(Number(props.id));
+};
+watch(() => props.id, () => fetchUser(), { immediate: true });
+</script>`;
+
+      const result = await fixPostMigrationIssues('src/views/UserDetail.vue', code, true, testProjectRoot);
+
+      expect(result.content).toContain('useUserStore');
+      expect(result.content).toContain('userStore.fetchUser');
+      expect(result.content).toContain('userStore.loading');
+      expect(result.content).toContain('userStore.currentUser');
+      expect(result.content).not.toContain('useIndexStore');
+      expect(result.content).not.toContain('indexStore.fetchUser');
+      expect(result.content).not.toContain('indexStore.loading');
+      expect(result.content).not.toContain('indexStore.currentUser');
+      expect(result.fixes.some((f) => f.includes('useUserStore') && f.includes('useIndexStore'))).toBe(false);
     });
   });
 });

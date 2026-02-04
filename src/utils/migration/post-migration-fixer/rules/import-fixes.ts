@@ -6,40 +6,53 @@ import type { FixRule, FixContext, FixRuleResult } from "../types";
 import { getCachedRegex } from "../utils/regex-cache";
 import { getStoreMethodMap } from "../utils/store-analysis-cache";
 
+const VUE_IMPORT_CANDIDATES: Array<{ pattern: RegExp; name: string }> = [
+  { pattern: /\bref\s*\(/, name: "ref" },
+  { pattern: /\breactive\s*\(/, name: "reactive" },
+  { pattern: /\bcomputed\s*\(/, name: "computed" },
+  { pattern: /\bwatch\s*\(/, name: "watch" },
+  { pattern: /\bonMounted\s*\(/, name: "onMounted" },
+  { pattern: /\bonUnmounted\s*\(/, name: "onUnmounted" },
+  { pattern: /\bonBeforeMount\s*\(/, name: "onBeforeMount" },
+  { pattern: /\bonBeforeUnmount\s*\(/, name: "onBeforeUnmount" },
+  { pattern: /\bonUpdated\s*\(/, name: "onUpdated" },
+  { pattern: /\bonBeforeUpdate\s*\(/, name: "onBeforeUpdate" },
+  { pattern: /\bonActivated\s*\(/, name: "onActivated" },
+  { pattern: /\bonDeactivated\s*\(/, name: "onDeactivated" },
+  { pattern: /\bonErrorCaptured\s*\(/, name: "onErrorCaptured" },
+];
+
 /**
- * Fix: Add missing Vue imports (ref, computed, watch) when used in script setup but not imported.
+ * Fix: Add missing Vue imports (ref, computed, watch, lifecycle hooks, etc.) when used in script setup but not imported.
  */
 export const missingVueImportsRule: FixRule = {
   id: "missing-vue-imports",
-  description: "Add ref, computed, watch to vue import when used in script setup but not imported",
+  description: "Add ref, computed, watch, lifecycle hooks to vue import when used in script setup but not imported",
   priority: 91,
   shouldApply: (filePath, content) => {
     if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
     const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
-    const usesRef = /\bref\s*\(/.test(script);
-    const usesComputed = /\bcomputed\s*\(/.test(script);
-    const usesWatch = /\bwatch\s*\(/.test(script);
-    if (!usesRef && !usesComputed && !usesWatch) return false;
     const vueImport = script.match(/import\s*\{([^}]*)\}\s*from\s*['"]vue['"]/);
-    const hasRef = vueImport ? /\bref\b/.test(vueImport[1]) : false;
-    const hasComputed = vueImport ? /\bcomputed\b/.test(vueImport[1]) : false;
-    const hasWatch = vueImport ? /\bwatch\b/.test(vueImport[1]) : false;
-    return (usesRef && !hasRef) || (usesComputed && !hasComputed) || (usesWatch && !hasWatch);
+    for (const { pattern, name } of VUE_IMPORT_CANDIDATES) {
+      if (pattern.test(script) && (!vueImport || !new RegExp(`\\b${name}\\b`).test(vueImport[1]))) {
+        return true;
+      }
+    }
+    return false;
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
     if (!scriptMatch) return result;
     let scriptContent = scriptMatch[2];
-    const usesRef = /\bref\s*\(/.test(scriptContent);
-    const usesComputed = /\bcomputed\s*\(/.test(scriptContent);
-    const usesWatch = /\bwatch\s*\(/.test(scriptContent);
     const vueImportRegex = /import\s*\{([^}]*)\}\s*from\s*['"]vue['"]\s*;?/;
     const m = scriptContent.match(vueImportRegex);
     const toAdd: string[] = [];
-    if (usesRef && (!m || !/\bref\b/.test(m[1]))) toAdd.push("ref");
-    if (usesComputed && (!m || !/\bcomputed\b/.test(m[1]))) toAdd.push("computed");
-    if (usesWatch && (!m || !/\bwatch\b/.test(m[1]))) toAdd.push("watch");
+    for (const { pattern, name } of VUE_IMPORT_CANDIDATES) {
+      if (pattern.test(scriptContent) && (!m || !new RegExp(`\\b${name}\\b`).test(m[1]))) {
+        toAdd.push(name);
+      }
+    }
     if (toAdd.length === 0) return result;
     if (m) {
       const existing = m[1].trim().split(/\s*,\s*/).filter(Boolean);
