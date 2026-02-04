@@ -10,7 +10,8 @@ import {
   duplicateSameIdentifierImportsRule,
   correctWrongStoreImportsRule,
   addMissingStoreImportsRule,
-  vueSetRule
+  vueSetRule,
+  dataImportConflictRule
 } from "../import-fixes";
 
 // Mock store-analysis-cache
@@ -73,6 +74,38 @@ describe("removeVueCompilerMacrosRule", () => {
       enableTypeScript: true,
       isVueFile: true
     });
+    expect(result.fixed).toBe(false);
+  });
+});
+
+describe("dataImportConflictRule", () => {
+  it("should alias import when const has same name (const imgBaseUrl = ref(imgBaseUrl))", async () => {
+    const content = `<script setup>
+import { imgBaseUrl } from 'src/config/env';
+const imgBaseUrl = ref(imgBaseUrl);
+</script>`;
+
+    const result = await dataImportConflictRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("imgBaseUrl as imgBaseUrlImported");
+    expect(result.content).toContain("const imgBaseUrl = ref(imgBaseUrlImported)");
+  });
+
+  it("should not apply when no conflict", async () => {
+    const content = `<script setup>
+import { baseUrl } from 'src/config/env';
+const imgBaseUrl = ref(baseUrl);
+</script>`;
+
+    const result = await dataImportConflictRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+
     expect(result.fixed).toBe(false);
   });
 });

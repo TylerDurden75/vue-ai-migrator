@@ -217,6 +217,28 @@ const name = ref('test');
 
     expect(result.fixed).toBe(false);
   });
+
+  it("should not add invalid filter from || 0 (logical OR, not Vue filter)", async () => {
+    const content = `<template>
+  <div>{{ String(item.amount).split(".")[1] || 0 }}</div>
+</template>
+<script setup>
+const item = ref({ amount: 12.5 });
+</script>`;
+
+    const scriptContent = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] || "";
+    const templateContent = content.match(/<template>([\s\S]*?)<\/template>/)?.[1] || "";
+
+    const result = await missingFilterImportsRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent,
+      templateContent
+    });
+
+    expect(result.fixed).toBe(false);
+    expect(result.content).not.toContain("const 0 =");
+  });
 });
 
 describe("vModelBindingsRule", () => {

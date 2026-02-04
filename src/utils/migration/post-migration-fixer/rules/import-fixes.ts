@@ -74,6 +74,93 @@ export const missingVueImportsRule: FixRule = {
 };
 
 /**
+ * Fix: Resolve data/import naming conflicts.
+ * When data property has same name as import (e.g. imgBaseUrl from config), migration produces
+ * redeclaration. Fix by aliasing the import.
+ */
+export const dataImportConflictRule: FixRule = {
+  id: "data-import-conflict",
+  description: "Fix const X = ref(X) or const X when X is imported - alias import to avoid redeclaration",
+  priority: 89,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    const importNames = new Set<string>();
+    const importRe = /import\s*\{([^}]+)\}\s*from\s*['"][^'"]+['"]/g;
+    let im;
+    while ((im = importRe.exec(script)) !== null) {
+      im[1].split(",").forEach((n: string) => {
+        const orig = n.trim().split(/\s+as\s+/)[0].trim();
+        if (orig) importNames.add(orig);
+      });
+    }
+    const constRe = /const\s+(\w+)\s*=/g;
+    let cm;
+    while ((cm = constRe.exec(script)) !== null) {
+      if (importNames.has(cm[1])) return true;
+    }
+    return false;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    const scriptContent = scriptMatch[2];
+
+    const importNames = new Map<string, string>(); // original -> path
+    const importRe = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]\s*;?\s*\n?/g;
+    let importMatch;
+    const conflicts = new Set<string>();
+    const constRe = /const\s+(\w+)\s*=/g;
+    let cm;
+    while ((cm = constRe.exec(scriptContent)) !== null) {
+      conflicts.add(cm[1]);
+    }
+    while ((importMatch = importRe.exec(scriptContent)) !== null) {
+      importMatch[1].split(",").forEach((n: string) => {
+        const orig = n.trim().split(/\s+as\s+/)[0].trim();
+        if (orig && conflicts.has(orig)) importNames.set(orig, importMatch![2]);
+      });
+    }
+    const toFix = Array.from(importNames.keys());
+    if (toFix.length === 0) return result;
+
+    const importRe2 = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]\s*;?\s*\n?/g;
+    let fixed = scriptContent;
+    let importMatch2;
+    while ((importMatch2 = importRe2.exec(scriptContent)) !== null) {
+      const namesStr = importMatch2[1];
+      const path = importMatch2[2];
+      const names = namesStr.split(",").map((n: string) => {
+        const parts = n.trim().split(/\s+as\s+/);
+        return { original: parts[0].trim(), alias: parts[1]?.trim() };
+      });
+      const newNames = names.map(({ original, alias }) => {
+        if (toFix.includes(original) && !alias) {
+          return `${original} as ${original}Imported`;
+        }
+        return alias ? `${original} as ${alias}` : original;
+      });
+      const newImport = `import { ${newNames.join(", ")} } from '${path}';\n`;
+      fixed = fixed.replace(importMatch2[0], newImport);
+    }
+
+    for (const name of toFix) {
+      const alias = `${name}Imported`;
+      fixed = fixed.replace(
+        new RegExp(`const\\s+${name}\\s*=\\s*ref\\s*\\(\\s*\\b${name}\\b\\s*\\)`, "g"),
+        `const ${name} = ref(${alias})`
+      );
+    }
+
+    result.content = content.replace(scriptMatch[0], scriptMatch[1] + fixed + scriptMatch[3]);
+    result.fixed = true;
+    result.fixes.push(`Resolved data/import conflict: ${toFix.join(", ")}`);
+    return result;
+  }
+};
+
+/**
  * Fix: Split imports on the same line (';import or ";import → newline + import).
  */
 export const splitImportsOnSameLineRule: FixRule = {

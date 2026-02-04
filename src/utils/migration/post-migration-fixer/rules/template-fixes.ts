@@ -241,8 +241,10 @@ export const missingFilterImportsRule: FixRule = {
     }
 
     // Extract filter names from template (pattern: {{ value | filterName }})
+    // Must match Vue filter syntax: expression | filterName - NOT || (logical OR)
+    // Use negative lookahead to exclude || 0, || '', etc. which are JS operators
     const filterPattern = getCachedRegex(
-      "\\|\\s*(\\w+)",
+      "\\{\\{\\s*[^|]+\\|(?!\\s*\\|)\\s*([a-zA-Z_][a-zA-Z0-9_]*)",
       "g"
     );
     
@@ -250,7 +252,10 @@ export const missingFilterImportsRule: FixRule = {
     let match;
     while ((match = filterPattern.exec(_context.templateContent)) !== null) {
       const filterName = match[1];
-      usedFilters.add(filterName);
+      // Skip invalid identifiers (e.g. pure numbers - false positive from || 0)
+      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(filterName)) {
+        usedFilters.add(filterName);
+      }
     }
 
     // Common Vue 2 filters that need to be converted to functions
@@ -278,6 +283,8 @@ export const missingFilterImportsRule: FixRule = {
         const ts = _context.enableTypeScript;
         const filterDefs: string[] = [];
         filterFunctions.forEach(filterName => {
+          // Skip invalid JS identifiers (e.g. "0" from false positive || 0)
+          if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(filterName)) return;
           // Common filter implementations
           if (filterName === "capitalize") {
             filterDefs.push(ts

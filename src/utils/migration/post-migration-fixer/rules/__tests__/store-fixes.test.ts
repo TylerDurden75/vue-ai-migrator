@@ -177,6 +177,51 @@ describe("asyncFunctionRule", () => {
     expect(result.content).toContain("async updateUser()");
     expect(result.fixes.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("should make .then((res) => { await x }) callback async", async () => {
+    const content = `fetch('/api').then((res) => {
+  const data = await res.json();
+  return data;
+});`;
+
+    const result = await asyncFunctionRule.apply("src/utils/api.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("async (res) => {");
+  });
+
+  it("should make (id) => { await fetch(id) } async when passed as arg", async () => {
+    const content = `items.map((item) => {
+  const data = await fetchItem(item.id);
+  return data;
+});`;
+
+    const result = await asyncFunctionRule.apply("src/utils/data.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("async (item) => {");
+  });
+
+  it("should make (a, b) => { await x } with multiple params async", async () => {
+    const content = `handler((x, y) => {
+  const sum = await add(x, y);
+  return sum;
+});`;
+
+    const result = await asyncFunctionRule.apply("src/utils/math.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("async (x, y) => {");
+  });
 });
 
 describe("storeDefineStoreClosingRule", () => {

@@ -172,6 +172,69 @@ export const asyncFunctionRule: FixRule = {
       result.fixes.push("Made arrow function async (uses await)");
     }
 
+    // Pattern: onMounted(() => { ... await ... }), onBeforeMount(() => { ... }), watch(() => ..., async () => {}), etc.
+    const callbackArrowRe = /(onMounted|onBeforeMount|onUpdated|onUnmounted|onBeforeUnmount|watch)\s*\(\s*\(([^)]*)\)\s*=>\s*\{/g;
+    while ((match = callbackArrowRe.exec(fixed)) !== null) {
+      if (fixed.slice(match.index, match.index + 20).includes("async")) continue;
+      const braceStart = fixed.indexOf("{", match.index);
+      const braceEnd = findMatchingBrace(fixed, braceStart);
+      if (braceEnd === -1) continue;
+      const body = fixed.slice(braceStart + 1, braceEnd);
+      if (!body.includes("await")) continue;
+      const full = fixed.slice(match.index, braceEnd + 1);
+      const asyncVersion = full.replace(/(\()\s*\(/, "$1async (");
+      fixed = fixed.slice(0, match.index) + asyncVersion + fixed.slice(braceEnd + 1);
+      result.fixed = true;
+      result.fixes.push("Made lifecycle/watch callback async (uses await)");
+    }
+
+    // Pattern: param => { ... await ... } - single param without parens (e.g. historyValue => { await x })
+    const paramArrowRe = /(\w+)\s*=>\s*\{/g;
+    const paramArrowReplacements: Array<{ start: number; end: number; replacement: string }> = [];
+    while ((match = paramArrowRe.exec(fixed)) !== null) {
+      if (fixed.slice(Math.max(0, match.index - 10), match.index + 15).includes("async")) continue;
+      const braceStart = fixed.indexOf("{", match.index);
+      const braceEnd = findMatchingBrace(fixed, braceStart);
+      if (braceEnd === -1) continue;
+      const body = fixed.slice(braceStart + 1, braceEnd);
+      if (!body.includes("await")) continue;
+      const full = fixed.slice(match.index, braceEnd + 1);
+      const asyncVersion = full.replace(/^(\w+)\s*=>\s*\{/, "async $1 => {");
+      if (asyncVersion !== full) {
+        paramArrowReplacements.push({ start: match.index, end: braceEnd + 1, replacement: asyncVersion });
+      }
+    }
+    for (let i = paramArrowReplacements.length - 1; i >= 0; i--) {
+      const { start, end, replacement } = paramArrowReplacements[i];
+      fixed = fixed.slice(0, start) + replacement + fixed.slice(end);
+      result.fixed = true;
+      result.fixes.push("Made arrow function async (uses await)");
+    }
+
+    // Pattern: (param) or (param1, param2) => { ... await ... } - arrow with params in parens (e.g. .then((res) => { await x }))
+    // Use lookbehind to match the arrow's ( not the preceding .then( - so we match (res) not ((res)
+    const parenArrowRe = /(?<=[,({\s])\(\s*[^)]*\s*\)\s*=>\s*\{/g;
+    const parenArrowReplacements: Array<{ start: number; end: number; replacement: string }> = [];
+    while ((match = parenArrowRe.exec(fixed)) !== null) {
+      if (fixed.slice(Math.max(0, match.index - 15), match.index + 20).includes("async")) continue;
+      const braceStart = fixed.indexOf("{", match.index);
+      const braceEnd = findMatchingBrace(fixed, braceStart);
+      if (braceEnd === -1) continue;
+      const body = fixed.slice(braceStart + 1, braceEnd);
+      if (!body.includes("await")) continue;
+      const full = fixed.slice(match.index, braceEnd + 1);
+      const asyncVersion = full.replace(/^\(\s*([^)]*)\s*\)\s*=>\s*\{/, "async ($1) => {");
+      if (asyncVersion !== full) {
+        parenArrowReplacements.push({ start: match.index, end: braceEnd + 1, replacement: asyncVersion });
+      }
+    }
+    for (let i = parenArrowReplacements.length - 1; i >= 0; i--) {
+      const { start, end, replacement } = parenArrowReplacements[i];
+      fixed = fixed.slice(0, start) + replacement + fixed.slice(end);
+      result.fixed = true;
+      result.fixes.push("Made arrow function async (uses await)");
+    }
+
     while (fixed.includes("async async")) {
       fixed = fixed.replace(/async\s+async\s+/g, "async ");
     }
