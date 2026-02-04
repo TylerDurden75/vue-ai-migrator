@@ -273,7 +273,7 @@ const user = computed<any>(() => userStore.currentUser);
       { name: "get with props.articleId", content: "articleStore.get(props.articleId)" },
       { name: "route.params['id']", content: "itemStore.load(route.params['id'])" },
     ];
-    for (const { name, content } of patterns) {
+    for (const { content } of patterns) {
       const fullContent = `<script setup lang="ts">
 const item = computed(() => someStore.currentItem);
 ${content}
