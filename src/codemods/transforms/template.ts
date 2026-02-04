@@ -225,6 +225,91 @@ export function transformTemplate(template: string): TemplateTransformResult {
     }
   }
 
+  // Transform v-bind.sync to v-model:prop (Vue 3)
+  // Old: <MyComponent v-bind:title.sync="myString" /> or :title.sync="myString"
+  // New: <MyComponent v-model:title="myString" />
+  const syncRegex = /(?:v-bind:|:)(\w+)\.sync\s*=\s*["']([^"']+)["']/g;
+  if (syncRegex.test(transformed)) {
+    transformed = transformed.replace(
+      /(?:v-bind:|:)(\w+)\.sync\s*=\s*["']([^"']+)["']/g,
+      'v-model:$1="$2"'
+    );
+    result.modified = true;
+    result.issues.push('v-bind.sync converted to v-model:prop');
+  }
+
+  // Transform keyboard modifiers: keycodes removed in Vue 3, use key names
+  // Old: v-on:keyup.112="handler" or @keyup.112="handler"
+  // New: v-on:keyup.f1="handler" or @keyup.f1="handler"
+  const KEYCODE_TO_KEY: Record<string, string> = {
+    '8': 'backspace',
+    '9': 'tab',
+    '13': 'enter',
+    '27': 'esc',
+    '32': 'space',
+    '37': 'left',
+    '38': 'up',
+    '39': 'right',
+    '40': 'down',
+    '46': 'delete',
+    '112': 'f1',
+    '113': 'f2',
+    '114': 'f3',
+    '115': 'f4',
+    '116': 'f5',
+    '117': 'f6',
+    '118': 'f7',
+    '119': 'f8',
+    '120': 'f9',
+    '121': 'f10',
+    '122': 'f11',
+    '123': 'f12',
+  };
+  const keycodeModifierRegex = /(v-on:|@)(key(?:up|down|press))\.(\d+)(?=\s|"|'|=|$)/gi;
+  let hadKeycode = false;
+  transformed = transformed.replace(keycodeModifierRegex, (match, prefix, event, code) => {
+    const keyName = KEYCODE_TO_KEY[code];
+    if (keyName) {
+      result.modified = true;
+      hadKeycode = true;
+      return `${prefix}${event}.${keyName}`;
+    }
+    return match;
+  });
+  if (hadKeycode) {
+    result.issues.push('Keycode modifiers converted to key names');
+  }
+
+  // Transform @hook:lifecycle to @vnode-lifecycle (Vue 3)
+  // Old: <MyComponent @hook:mounted="foo" />
+  // New: <MyComponent @vnode-mounted="foo" />
+  const hookEventRegex = /@hook:(\w+)/g;
+  if (hookEventRegex.test(transformed)) {
+    transformed = transformed.replace(/@hook:(\w+)/g, '@vnode-$1');
+    result.modified = true;
+    result.issues.push('@hook:lifecycle converted to @vnode-lifecycle');
+  }
+
+  // Remove .native modifier (removed in Vue 3 - listeners are in $attrs)
+  // Old: <MyComponent @click.native="handler" />
+  // New: <MyComponent @click="handler" /> (or use inheritAttrs: false + v-bind="$attrs")
+  if (transformed.includes('.native')) {
+    transformed = transformed.replace(/\.native(?=\s|>|"|'|=)/g, '');
+    result.modified = true;
+    result.issues.push('.native modifier removed - verify event handling');
+  }
+
+  // Detect template refs with v-for (Vue 3 breaking change - ref returns array)
+  // Old: <li v-for="item in items" ref="myNodes"> - this.$refs.myNodes was array
+  // Vue 3: ref in v-for works differently, use ref() + function ref
+  const refInVForRegex =
+    /v-for\s*=[^>]*(?:ref|:ref)\s*=|(?:ref|:ref)\s*=[^>]*v-for\s*=/i;
+  if (refInVForRegex.test(transformed)) {
+    result.issues.push(
+      'ref with v-for detected - Vue 3 behavior changed, consider ref() + function ref pattern'
+    );
+  }
+
   // Transform functional components
   // Old: <template functional>
   // New: Remove functional and convert to regular component structure

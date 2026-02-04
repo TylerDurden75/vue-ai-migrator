@@ -1,4 +1,4 @@
-import { parseVueFile, reconstructVueFile } from '../utils/codegen';
+import { parseVueFile, reconstructVueFile, transformVueFileParts, transformTransitionClasses } from '../utils/codegen';
 import { transformTemplate } from '../codemods/transforms/template';
 import { CodemodRunner } from '../codemods/runner';
 
@@ -76,6 +76,44 @@ const message = 'Hello'
       expect(reconstructed).toContain('<script>');
       expect(reconstructed).toContain('<style scoped>');
       expect(reconstructed).toContain('<div>Test</div>');
+    });
+  });
+
+  describe('transformTransitionClasses', () => {
+    it('should transform .v-enter to .v-enter-from', () => {
+      const css = '.v-enter { opacity: 0; } .v-leave { opacity: 1; }';
+      const result = transformTransitionClasses(css);
+      expect(result.modified).toBe(true);
+      expect(result.css).toContain('.v-enter-from');
+      expect(result.css).toContain('.v-leave-from');
+      expect(result.css).not.toContain('.v-enter {');
+      expect(result.css).not.toContain('.v-leave {');
+    });
+
+    it('should not modify .v-enter-from (already Vue 3)', () => {
+      const css = '.v-enter-from { opacity: 0; }';
+      const result = transformTransitionClasses(css);
+      expect(result.modified).toBe(false);
+      expect(result.css).not.toContain('.v-enter-from-from');
+    });
+  });
+
+  describe('transformVueFileParts with transition classes', () => {
+    it('should transform transition classes in style blocks', () => {
+      const content = `
+<template><div></div></template>
+<script></script>
+<style>
+.v-enter { opacity: 0; }
+.v-leave { opacity: 1; }
+</style>
+`;
+      const parts = parseVueFile(content);
+      const result = transformVueFileParts(parts);
+      expect(result.modified).toBe(true);
+      expect(result.parts.styles[0].content).toContain('.v-enter-from');
+      expect(result.parts.styles[0].content).toContain('.v-leave-from');
+      expect(result.issues.some((i) => i.includes('Transition classes'))).toBe(true);
     });
   });
 

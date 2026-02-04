@@ -173,6 +173,60 @@ describe('Template Transformations', () => {
     });
   });
 
+  describe('v-bind.sync', () => {
+    it('should transform v-bind:prop.sync to v-model:prop', () => {
+      const template = '<MyComponent v-bind:title.sync="myString" />';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('v-model:title="myString"');
+      expect(result.template).not.toContain('.sync');
+    });
+
+    it('should transform :prop.sync shorthand', () => {
+      const template = '<MyComponent :value.sync="data" />';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('v-model:value="data"');
+    });
+  });
+
+  describe('keyboard modifiers', () => {
+    it('should transform keycode .112 to .f1', () => {
+      const template = '<input @keyup.112="validate" />';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('@keyup.f1');
+      expect(result.template).not.toContain('.112');
+    });
+
+    it('should transform keycode .13 to .enter', () => {
+      const template = '<input v-on:keyup.13="submit" />';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('keyup.enter');
+    });
+  });
+
+  describe('@hook lifecycle events', () => {
+    it('should transform @hook:mounted to @vnode-mounted', () => {
+      const template = '<MyComponent @hook:mounted="foo" />';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('@vnode-mounted');
+      expect(result.template).not.toContain('@hook:mounted');
+    });
+  });
+
+  describe('.native modifier', () => {
+    it('should remove .native modifier', () => {
+      const template = '<MyComponent @click.native="handler" />';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('@click="handler"');
+      expect(result.template).not.toContain('.native');
+    });
+  });
+
   describe('existing transformations', () => {
     it('should transform slot-scope to v-slot', () => {
       const template = '<template slot-scope="props">{{ props.data }}</template>';

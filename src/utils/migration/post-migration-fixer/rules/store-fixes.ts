@@ -17,6 +17,19 @@ function findMatchingBrace(content: string, startIdx: number): number {
   return -1;
 }
 
+/** Find the index of the closing paren that matches the opening paren at startIdx */
+function findMatchingParen(content: string, startIdx: number): number {
+  let depth = 0;
+  for (let i = startIdx; i < content.length; i++) {
+    if (content[i] === "(") depth++;
+    else if (content[i] === ")") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 /**
  * Fix: Make functions async if they use await (generic: any function with await).
  * Handles nested braces (try/finally, etc.) by matching brace depth.
@@ -26,9 +39,9 @@ export const asyncFunctionRule: FixRule = {
   description: "Make functions async if they use await",
   priority: 90,
   shouldApply: (filePath, content) => {
-    return (filePath.includes("/store/") || filePath.endsWith(".ts") || filePath.endsWith(".js")) &&
-           content.includes("await") &&
-           !content.includes("async async");
+    // Apply to any JS/TS/Vue file that uses await or has duplicate async (stores, components, composables, etc.)
+    const isScriptFile = /\.(ts|js|vue)$/i.test(filePath);
+    return isScriptFile && (content.includes("await") || content.includes("async async"));
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
@@ -40,38 +53,71 @@ export const asyncFunctionRule: FixRule = {
 
     let fixed = content;
 
-    // Pattern: function name(...): returnType { ... } - find body by matching braces
-    const functionStartRe = /function\s+(\w+)\s*\([^)]*\)\s*(?::\s*[\w<>,\s[\]]|]+\s*)?\{/g;
-    let match;
+    // Pattern: function name(params): returnType { ... } - use findMatchingParen for params with nested ()
     const replacements: Array<{ start: number; end: number; funcName: string; replacement: string }> = [];
-
-    while ((match = functionStartRe.exec(content)) !== null) {
-      if (match[0].startsWith("async ")) continue;
-      const braceStart = content.indexOf("{", match.index);
+    let i = 0;
+    while ((i = content.indexOf("function ", i)) !== -1) {
+      if (content.substring(i, i + 15) === "async function ") {
+        i++;
+        continue;
+      }
+      const nameMatch = content.slice(i + 9).match(/^(\w+)\s*\(/);
+      if (!nameMatch) {
+        i++;
+        continue;
+      }
+      const parenStart = i + 9 + nameMatch[0].indexOf("(");
+      const parenEnd = findMatchingParen(content, parenStart);
+      if (parenEnd === -1) {
+        i++;
+        continue;
+      }
+      const afterParams = content.slice(parenEnd + 1);
+      const braceMatch = afterParams.match(/^\s*(?::\s*[^{]+)?\s*\{/);
+      if (!braceMatch) {
+        i++;
+        continue;
+      }
+      const braceStart = parenEnd + 1 + braceMatch[0].indexOf("{");
       const braceEnd = findMatchingBrace(content, braceStart);
-      if (braceEnd === -1) continue;
+      if (braceEnd === -1) {
+        i++;
+        continue;
+      }
       const body = content.slice(braceStart + 1, braceEnd);
-      if (!body.includes("await")) continue;
-      const full = content.slice(match.index, braceEnd + 1);
+      if (!body.includes("await")) {
+        i++;
+        continue;
+      }
+      const full = content.slice(i, braceEnd + 1);
       let replacement = full.replace(/^function\s+/, "async function ");
-      const returnTypeMatch = full.match(/\)\s*:\s*(\w+)\s*\{/);
+      const returnTypeMatch = full.match(/\)\s*:\s*([^{]+)\s*\{/);
       if (returnTypeMatch) {
+        const returnType = returnTypeMatch[1].trim();
+        const newReturnType = returnType.startsWith("Promise<") ? returnType : `Promise<${returnType}>`;
         replacement = replacement.replace(
-          new RegExp(`\\)\\s*:\\s*${returnTypeMatch[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{`),
-          "): Promise<" + returnTypeMatch[1] + "> {"
+          new RegExp(`\\)\\s*:\\s*${returnType.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{`),
+          "): " + newReturnType + " {"
         );
       }
-      replacements.push({ start: match.index, end: braceEnd + 1, funcName: match[1], replacement });
+      replacements.push({ start: i, end: braceEnd + 1, funcName: nameMatch[1], replacement });
+      i = braceEnd + 1;
     }
 
-    // Pattern: object method name() { or name(x) { (no nested parens in params - avoid matching defineStore('user', {)
+    // Pattern: object method name(params) { - no "function" keyword, no return type before {
     const objectMethodBlocklist = new Set(["function", "defineStore", "state", "actions", "getters", "mutations", "if", "for", "while", "switch", "catch"]);
-    const methodShorthandRe = /(\w+)\s*\([^()]*\)\s*\{/g;
+    const methodShorthandRe = /(\w+)\s*\(/g;
+    let match;
     while ((match = methodShorthandRe.exec(content)) !== null) {
       const methodName = match[1];
-      if (objectMethodBlocklist.has(methodName) || match[0].startsWith("async ")) continue;
+      if (objectMethodBlocklist.has(methodName) || content.substring(match.index, match.index + 6) === "async ") continue;
       if (content.substring(Math.max(0, match.index - 9), match.index) === "function ") continue;
-      const braceStart = content.indexOf("{", match.index);
+      const parenStart = match.index + match[0].indexOf("(");
+      const parenEnd = findMatchingParen(content, parenStart);
+      if (parenEnd === -1) continue;
+      const afterParams = content.slice(parenEnd + 1);
+      if (!/^\s*\{/.test(afterParams)) continue; // must be ) followed by { (no return type)
+      const braceStart = parenEnd + 1 + afterParams.match(/^\s*/)![0].length;
       const braceEnd = findMatchingBrace(content, braceStart);
       if (braceEnd === -1) continue;
       const body = content.slice(braceStart + 1, braceEnd);

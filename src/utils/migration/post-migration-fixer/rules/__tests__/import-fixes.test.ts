@@ -9,7 +9,8 @@ import {
   mergeDuplicateImportsRule,
   duplicateSameIdentifierImportsRule,
   correctWrongStoreImportsRule,
-  addMissingStoreImportsRule
+  addMissingStoreImportsRule,
+  vueSetRule
 } from "../import-fixes";
 
 // Mock store-analysis-cache
@@ -534,5 +535,40 @@ const users = fetchUsers();
 
     expect(result.fixed).toBe(false);
     expect(result.content).not.toContain("useUserStore");
+  });
+});
+
+describe("vueSetRule", () => {
+  it("should replace Vue.set with direct assignment", async () => {
+    const content = `Vue.set(obj, 'key', value)`;
+    const result = await vueSetRule.apply("test.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("obj['key'] = value");
+    expect(result.content).not.toContain("Vue.set");
+  });
+
+  it("should replace this.$set with direct assignment", async () => {
+    const content = `this.$set(this.form, 'name', newValue)`;
+    const result = await vueSetRule.apply("Component.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("this.form['name'] = newValue");
+    expect(result.content).not.toContain("$set");
+  });
+
+  it("should replace Vue.delete with delete statement", async () => {
+    const content = `Vue.delete(obj, 'key')`;
+    const result = await vueSetRule.apply("test.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("delete obj['key']");
+    expect(result.content).not.toContain("Vue.delete");
   });
 });

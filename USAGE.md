@@ -240,6 +240,27 @@ vue-ai-migrator rollback ./my-vue2-project --all --install
 vue-ai-migrator rollback ./my-vue2-project --all --clean-install
 ```
 
+### 7. Re-run Post-Migration Fixes (`fix` command)
+
+If you've already migrated a project and want to re-apply post-migration fixes (e.g. correct `indexStore.fetchUser` → `userStore.fetchUser`), use the `fix` command:
+
+```bash
+# Re-run fixes on an already migrated project
+vue-ai-migrator fix ./my-vue2-project
+
+# With TypeScript mode
+vue-ai-migrator fix ./my-vue2-project --typescript
+
+# Verbose output (see which fixes were applied)
+vue-ai-migrator fix ./my-vue2-project -v
+```
+
+**Options:**
+- `--typescript`: Enable TypeScript mode for fixes
+- `-v, --verbose`: Show detailed fix information
+
+> 💡 **Use case**: After updating vue-ai-migrator, run `fix` to apply the latest corrections without re-migrating the entire project.
+
 ## 🔧 Advanced Configuration
 
 ### Create a Configuration File

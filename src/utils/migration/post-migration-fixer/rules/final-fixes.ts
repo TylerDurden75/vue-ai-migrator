@@ -191,6 +191,8 @@ export const nullChecksLengthRule: FixRule = {
 
 /**
  * Fix: Fix Detail views to use store.allItems.find() instead of store.currentItem
+ * NE PAS appliquer quand storeVar.method(id) existe : currentXxx est mis à jour par l'API.
+ * Détection structurelle générique : tout appel store avec un identifiant (props, route, id).
  */
 export const detailViewStoreRule: FixRule = {
   id: "detail-view-store",
@@ -198,9 +200,17 @@ export const detailViewStoreRule: FixRule = {
   priority: 3,
   dependencies: ["null-checks-length"],
   shouldApply: (filePath, content) => {
-    return (filePath.includes("Detail") || content.includes("Detail")) &&
-           content.includes("current") &&
-           content.includes("Store");
+    if (!(filePath.includes("Detail") || content.includes("Detail")) ||
+        !content.includes("current") ||
+        !content.includes("Store")) {
+      return false;
+    }
+    // Ne pas appliquer si storeVar.method(...) reçoit un identifiant (pattern structurel générique)
+    // Couvre : props.id, props.xxx, route.params.id, route.params.xxx, id, slug, etc.
+    if (/\w+Store\.\w+\s*\([^)]*(?:props\.\w+|route\.params(?:\.\w+|\[\s*['"]?\w+['"]?\s*\])|\.id\b|\bid\b|\bslug\b)[^)]*\)/.test(content)) {
+      return false;
+    }
+    return true;
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {

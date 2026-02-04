@@ -160,7 +160,21 @@ export function reconstructVueFile(parts: VueFileParts): string {
 }
 
 /**
- * Transform Vue file parts (including template transformation)
+ * Transform Vue 2 transition CSS classes to Vue 3
+ * Vue 3: .v-enter → .v-enter-from, .v-leave → .v-leave-from
+ */
+export function transformTransitionClasses(css: string): { css: string; modified: boolean } {
+  let modified = false;
+  // Match .name-enter and .name-leave (not followed by -from, -to, -active)
+  const result = css.replace(/\.([a-zA-Z0-9_-]*)(enter|leave)(?!-)/g, (match) => {
+    modified = true;
+    return `${match}-from`;
+  });
+  return { css: result, modified };
+}
+
+/**
+ * Transform Vue file parts (including template and style transformations)
  */
 export function transformVueFileParts(parts: VueFileParts): {
   parts: VueFileParts;
@@ -178,6 +192,20 @@ export function transformVueFileParts(parts: VueFileParts): {
       modified = true;
       issues.push(...templateResult.issues);
     }
+  }
+
+  // Transform transition classes in style sections (Vue 3: .v-enter → .v-enter-from)
+  let transitionClassesModified = false;
+  parts.styles.forEach((style) => {
+    const styleResult = transformTransitionClasses(style.content);
+    if (styleResult.modified) {
+      style.content = styleResult.css;
+      modified = true;
+      transitionClassesModified = true;
+    }
+  });
+  if (transitionClassesModified) {
+    issues.push('Transition classes updated: .v-enter → .v-enter-from, .v-leave → .v-leave-from');
   }
 
   return { parts, modified, issues };

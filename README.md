@@ -494,7 +494,34 @@ vue-ai-migrator migrate ./my-project --typescript --clean-install
 
 > 💡 **Note**: With `--typescript`, the migrated code automatically generates `<script setup lang="ts">` if the code is transformed to Composition API. See [EXPLICATION_SCRIPT_SETUP.md](EXPLICATION_SCRIPT_SETUP.md) for more details.
 
+#### `fix` - Re-run Post-Migration Fixes
+
+Re-apply post-migration fixes on an already migrated project (e.g. fix `indexStore.fetchUser` → `userStore.fetchUser`):
+
+```bash
+vue-ai-migrator fix <project-path> [options]
+```
+
+**Options:**
+
+- `--typescript`: Enable TypeScript mode for fixes
+- `-v, --verbose`: Show detailed fix information
+
+**Examples:**
+
+```bash
+vue-ai-migrator fix ./my-project
+vue-ai-migrator fix ./my-project --typescript -v
+```
+
 **Output:**
+
+```
+✔ Post-migration fixes completed!
+✓ 5 file(s) fixed out of 14 processed
+```
+
+#### `migrate` - Output
 
 ```
 ✔ Migration completed!
@@ -703,6 +730,14 @@ module.exports = {
   - Example: `<div v-for="..." v-if="...">` → `<template v-for="..."><div v-if="...">`
 - ✅ **transition-group root**: Ensures `<transition-group>` has single root element
   - Example: `<transition-group><div></div><div></div>` → `<transition-group><div><div></div><div></div></div>`
+- ✅ **v-bind.sync**: `v-bind:prop.sync` / `:prop.sync` → `v-model:prop`
+- ✅ **Keyboard modifiers**: Keycodes (`.112`, `.13`) → key names (`.f1`, `.enter`)
+- ✅ **@hook lifecycle**: `@hook:mounted` → `@vnode-mounted`
+- ✅ **.native modifier**: Removed (events in `$attrs` in Vue 3)
+- ✅ **Transition classes** (in `<style>`): `.v-enter` → `.v-enter-from`, `.v-leave` → `.v-leave-from`
+- ✅ **Vue.set / $set**: Replaced with direct assignment (`obj[key] = value`)
+- ✅ **Vue.delete / $delete**: Replaced with `delete obj[key]`
+- ⚠️ **ref with v-for**: Detection and warning (Vue 3 behavior changed)
 
 ### File Support
 
@@ -1181,6 +1216,14 @@ If you want AI assistance:
 #### Errors after migration (userStore not defined, computed syntax, etc.)
 
 **Solution**: Re-run the migration from a clean state (or rollback then migrate again). If issues persist, check the report and fix manually; open an issue if you think it's a bug.
+
+#### "Cannot find module '../parser/tsx'" or dependency conflicts
+
+**Solution**: The migrator no longer auto-removes `node_modules` when conflicts are detected (this could break jscodeshift). If you see dependency conflict warnings:
+
+- Run the migration as-is; run `npm install` **after** migration to resolve conflicts
+- Or use `--clean-install` only **after** migration (e.g. `vue-ai-migrator migrate ./my-project --install` to reinstall deps, or run `npm install` manually in the project afterward)
+- Avoid manually removing `node_modules` before migrating
 
 #### Rollback not working
 

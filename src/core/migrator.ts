@@ -26,7 +26,6 @@ import {
 } from "../utils/migration/post-migration-fixer";
 import {
   checkDependencyConflicts,
-  cleanupDependencies,
   verifyDependencyConsistency,
 } from "../utils/migration/dependency-checker";
 import { createOrUpdateTsConfig } from "../utils/migration/typescript-config";
@@ -117,22 +116,12 @@ export async function migrate(
           console.warn(`  - ${conflict.packageName}: ${conflict.message}`);
         });
 
-        // Auto-cleanup if conflicts are detected
-        if (options.verbose) {
-          console.log("Cleaning up dependencies to resolve conflicts...");
-        }
-        const cleanupResult = await cleanupDependencies(projectPath, dryRun);
-
-        if (cleanupResult.cleaned && !dryRun) {
-          console.log(`✓ Cleaned up: ${cleanupResult.removedFiles.join(", ")}`);
-          result.warnings.push(
-            `Cleaned up dependencies before migration: ${cleanupResult.removedFiles.join(", ")}`
-          );
-        } else if (dryRun) {
-          result.warnings.push(
-            `[DRY RUN] Would clean up: ${cleanupResult.removedFiles.join(", ")}`
-          );
-        }
+        // Do NOT auto-cleanup: removing node_modules can cause "Cannot find module '../parser/tsx'"
+        // when jscodeshift runs codemods (module resolution may fail). Users should run
+        // `npm install` or `--clean-install` after migration if needed.
+        result.warnings.push(
+          "Dependency conflicts detected. Run 'npm install' after migration to resolve. Avoid removing node_modules before migration."
+        );
 
         // Show recommendations
         if (preMigrationConflicts.recommendations.length > 0) {
@@ -707,6 +696,13 @@ export async function migrate(
             // Always backup package.json before modifying it
             // backupFile will read the current content, so this must be called BEFORE migratePackageJson
             await rollbackManager.backupFile(packageJsonPath);
+            // Also backup package-lock.json for clean rollback (avoids webpack/vue-loader version mismatch)
+            const packageLockPath = path.join(projectPath, "package-lock.json");
+            try {
+              await rollbackManager.backupFile(packageLockPath);
+            } catch {
+              // package-lock.json might not exist (yarn/pnpm)
+            }
           } catch {
             // File doesn't exist or can't be read, skip silently
           }

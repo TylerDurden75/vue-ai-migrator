@@ -5,17 +5,22 @@
 import { analyzePiniaStores } from "../store-analyzer";
 import * as fs from "fs/promises";
 import * as path from "path";
+import { glob } from "glob";
 
-// Mock fs
+// Mock fs and glob
 jest.mock("fs/promises");
+jest.mock("glob");
 
 const mockFs = fs as jest.Mocked<typeof fs>;
+const mockGlob = glob as jest.MockedFunction<typeof glob>;
 
 describe("analyzePiniaStores", () => {
   const mockProjectRoot = "/test/project";
+  const modulesPath = path.join(mockProjectRoot, "src", "store", "modules");
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGlob.mockResolvedValue([]);
   });
 
   it("should analyze stores from src/store/modules", async () => {
@@ -53,7 +58,10 @@ export const useProductStore = defineStore('product', () => {
 });
 `;
 
-    mockFs.readdir.mockResolvedValue(["user.ts", "product.ts"] as any);
+    mockGlob.mockResolvedValue([
+      path.join(modulesPath, "user.ts"),
+      path.join(modulesPath, "product.ts"),
+    ]);
     mockFs.readFile
       .mockResolvedValueOnce(userStoreContent)
       .mockResolvedValueOnce(productStoreContent);
@@ -65,16 +73,11 @@ export const useProductStore = defineStore('product', () => {
     expect(result.get("allUsers")).toBe("user");
     expect(result.get("fetchUsers")).toBe("user");
     expect(result.get("allProducts")).toBe("product");
-    
-    expect(mockFs.readdir).toHaveBeenCalledWith(
-      path.join(mockProjectRoot, "src", "store", "modules")
-    );
   });
 
   it("should fallback to src/stores if src/store/modules doesn't exist", async () => {
-    mockFs.readdir
-      .mockRejectedValueOnce(new Error("Not found"))
-      .mockResolvedValueOnce(["user.store.ts"] as any);
+    mockGlob.mockResolvedValue([]);
+    mockFs.readdir.mockResolvedValue(["user.store.ts"] as any);
 
     const storeContent = `
 export const useUserStore = defineStore('user', () => {
@@ -107,7 +110,7 @@ export const useUserStore = defineStore('user', () => {
 });
 `;
 
-    mockFs.readdir.mockResolvedValue(["user.ts"] as any);
+    mockGlob.mockResolvedValue([path.join(modulesPath, "user.ts")]);
     mockFs.readFile.mockResolvedValueOnce(storeContent);
 
     const result = await analyzePiniaStores(mockProjectRoot);
@@ -134,7 +137,7 @@ export const useUserStore = defineStore('user', () => {
 });
 `;
 
-    mockFs.readdir.mockResolvedValue(["user.ts"] as any);
+    mockGlob.mockResolvedValue([path.join(modulesPath, "user.ts")]);
     mockFs.readFile.mockResolvedValueOnce(storeContent);
 
     const result = await analyzePiniaStores(mockProjectRoot);
@@ -156,7 +159,7 @@ export const useUserStore = defineStore('user', () => {
 });
 `;
 
-    mockFs.readdir.mockResolvedValue(["user.ts"] as any);
+    mockGlob.mockResolvedValue([path.join(modulesPath, "user.ts")]);
     mockFs.readFile.mockResolvedValueOnce(storeContent);
 
     const result = await analyzePiniaStores(mockProjectRoot);
@@ -169,7 +172,7 @@ export const useUserStore = defineStore('user', () => {
   });
 
   it("should return empty map if no stores found", async () => {
-    mockFs.readdir.mockResolvedValue([]);
+    mockGlob.mockResolvedValue([]);
 
     const result = await analyzePiniaStores(mockProjectRoot);
 
@@ -177,8 +180,8 @@ export const useUserStore = defineStore('user', () => {
   });
 
   it("should return empty map if directory doesn't exist", async () => {
+    mockGlob.mockResolvedValue([]);
     mockFs.readdir.mockRejectedValue(new Error("Directory not found"));
-    mockFs.readFile.mockRejectedValue(new Error("File not found"));
 
     const result = await analyzePiniaStores(mockProjectRoot);
 
@@ -186,7 +189,10 @@ export const useUserStore = defineStore('user', () => {
   });
 
   it("should skip non-TypeScript/JavaScript files", async () => {
-    mockFs.readdir.mockResolvedValue(["user.ts", "readme.md", "product.js", "config.json"] as any);
+    mockGlob.mockResolvedValue([
+      path.join(modulesPath, "user.ts"),
+      path.join(modulesPath, "product.js"),
+    ]);
 
     const userStoreContent = `
 export const useUserStore = defineStore('user', () => {
@@ -206,9 +212,27 @@ export const useProductStore = defineStore('product', () => {
 
     const result = await analyzePiniaStores(mockProjectRoot);
 
-    // readFile: 2 for user.ts + product.js, then 2 for store index.ts / index.js attempts
-    expect(mockFs.readFile).toHaveBeenCalledTimes(4);
+    // readFile: 2 for user.ts + product.js, then up to 4 for store index attempts
+    expect(mockFs.readFile).toHaveBeenCalledTimes(6);
     expect(result.size).toBeGreaterThan(0);
+  });
+
+  it("should analyze nested modules (store/modules/cart/index.js)", async () => {
+    const cartStoreContent = `
+export const useCartStore = defineStore('cart', () => {
+  const items = ref([]);
+  return { items, addItem: () => {} };
+});
+`;
+    mockGlob.mockResolvedValue([
+      path.join(modulesPath, "cart", "index.ts"),
+    ]);
+    mockFs.readFile.mockResolvedValueOnce(cartStoreContent);
+
+    const result = await analyzePiniaStores(mockProjectRoot);
+
+    expect(result.get("items")).toBe("cart");
+    expect(result.get("addItem")).toBe("cart");
   });
 
   it("should handle stores without return statement", async () => {
@@ -219,7 +243,7 @@ export const useUserStore = defineStore('user', () => {
 });
 `;
 
-    mockFs.readdir.mockResolvedValue(["user.ts"] as any);
+    mockGlob.mockResolvedValue([path.join(modulesPath, "user.ts")]);
     mockFs.readFile.mockResolvedValueOnce(storeContent);
 
     const result = await analyzePiniaStores(mockProjectRoot);

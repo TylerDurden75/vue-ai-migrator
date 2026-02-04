@@ -263,4 +263,23 @@ const user = computed<any>(() => userStore.currentUser);
     // Should detect and potentially fix the pattern
     expect(result).toBeDefined();
   });
+
+  it("should NOT apply when storeVar.method(id) exists - currentXxx is set by API (generic patterns)", async () => {
+    const patterns = [
+      { name: "getUser", content: "userStore.getUser(parseInt(props.id))" },
+      { name: "loadProduct", content: "productStore.loadProduct(route.params.id)" },
+      { name: "fetch", content: "orderStore.fetch(route.params.orderId)" },
+      { name: "load by slug", content: "articleStore.loadBySlug(route.params.slug)" },
+      { name: "get with props.articleId", content: "articleStore.get(props.articleId)" },
+      { name: "route.params['id']", content: "itemStore.load(route.params['id'])" },
+    ];
+    for (const { name, content } of patterns) {
+      const fullContent = `<script setup lang="ts">
+const item = computed(() => someStore.currentItem);
+${content}
+</script>`;
+      const shouldApply = detailViewStoreRule.shouldApply?.("SomeDetail.vue", fullContent);
+      expect(shouldApply).toBe(false);
+    }
+  });
 });

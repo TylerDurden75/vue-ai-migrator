@@ -427,6 +427,16 @@ export const correctWrongStoreImportsRule: FixRule = {
 
     // Track usage per store variable to determine correct module for each
     const storeVarUsage = new Map<string, Map<string, number>>(); // storeVar → (module → count)
+    const storeVarMembers = new Map<string, Set<string>>(); // storeVar → Set<member> (for exclusive-module check)
+
+    const addUsage = (storeVar: string, member: string, module: string) => {
+      if (!storeVarUsage.has(storeVar)) {
+        storeVarUsage.set(storeVar, new Map());
+        storeVarMembers.set(storeVar, new Set());
+      }
+      storeVarUsage.get(storeVar)!.set(module, (storeVarUsage.get(storeVar)!.get(module) || 0) + 10);
+      storeVarMembers.get(storeVar)!.add(member);
+    };
 
     // Pattern 1: Detect store.method() calls
     const storeMethodPattern = /(\w+Store)\.(\w+)\s*\(/g;
@@ -435,11 +445,7 @@ export const correctWrongStoreImportsRule: FixRule = {
       const [, storeVar, methodName] = match;
       const module = storeMethodMap[methodName];
       if (module) {
-        if (!storeVarUsage.has(storeVar)) {
-          storeVarUsage.set(storeVar, new Map());
-        }
-        const usage = storeVarUsage.get(storeVar)!;
-        usage.set(module, (usage.get(module) || 0) + 10); // High priority
+        addUsage(storeVar, methodName, module);
       }
     }
 
@@ -449,11 +455,7 @@ export const correctWrongStoreImportsRule: FixRule = {
       const [, storeVar, propertyName] = match;
       const module = storeMethodMap[propertyName];
       if (module) {
-        if (!storeVarUsage.has(storeVar)) {
-          storeVarUsage.set(storeVar, new Map());
-        }
-        const usage = storeVarUsage.get(storeVar)!;
-        usage.set(module, (usage.get(module) || 0) + 10); // High priority
+        addUsage(storeVar, propertyName, module);
       }
     }
 
@@ -530,6 +532,23 @@ export const correctWrongStoreImportsRule: FixRule = {
       const wrongModulePath = importedModule !== correctModule;
       const wrongStoreName = storeNameFromImport !== correctModule; // e.g. importing useProductStore but usage says user
       if (maxUsage > 0 && (wrongModulePath || wrongStoreName)) {
+        // Don't replace module store with index when the store uses methods exclusive to the module
+        // (e.g. userStore.fetchUser - index has fetchCurrentUser but not fetchUser(id))
+        if (correctModule === "index" && importedModule !== "index") {
+          const indexMembers = new Set(
+            Object.entries(storeMethodMap).filter(([, mod]) => mod === "index").map(([m]) => m)
+          );
+          const usedMembers = new Set<string>();
+          for (const av of actualVars) {
+            storeVarMembers.get(av)?.forEach((m) => usedMembers.add(m));
+          }
+          const usesExclusiveModuleMethod = [...usedMembers].some(
+            (member) => storeMethodMap[member] === importedModule && !indexMembers.has(member)
+          );
+          if (usesExclusiveModuleMethod) {
+            return; // Keep module store - it's needed for fetchUser/fetchProduct etc.
+          }
+        }
         wrongImports.push({
           importLine,
           wrongStore: storeName,
@@ -545,7 +564,9 @@ export const correctWrongStoreImportsRule: FixRule = {
     if (wrongImports.length > 0) {
       wrongImports.forEach(({ importLine, wrongStore, wrongModule: _wrongModule, correctModule, actualVarNames }) => {
         const correctStore = `use${correctModule.charAt(0).toUpperCase() + correctModule.slice(1)}Store`;
-        const correctImport = `import { ${correctStore} } from '@/store/modules/${correctModule}'`;
+        const correctImportPath =
+          correctModule === "index" ? "@/store/index" : `@/store/modules/${correctModule}`;
+        const correctImport = `import { ${correctStore} } from '${correctImportPath}'`;
         const correctStoreVar = `${correctModule}Store`;
 
         scriptContent = scriptContent.replace(importLine, correctImport);
@@ -686,7 +707,7 @@ export const addMissingStoreImportsRule: FixRule = {
     
     usedStores.forEach((moduleName, storeVar) => {
       const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
-      const importPath = `@/store/modules/${moduleName}`;
+      const importPath = moduleName === "index" ? "@/store/index" : `@/store/modules/${moduleName}`;
 
       // Check if store is already imported
       const importPattern = new RegExp(`import\\s+.*${storeName}.*from`, "g");
@@ -733,6 +754,49 @@ export const addMissingStoreImportsRule: FixRule = {
       }
     }
 
+    return result;
+  }
+};
+
+/**
+ * Fix: Replace Vue.set/$set and Vue.delete/$delete (removed in Vue 3)
+ * Vue 3 reactivity allows direct assignment and delete with reactive()/ref()
+ */
+export const vueSetRule: FixRule = {
+  id: "vue-set-removal",
+  description: "Replace Vue.set/$set and Vue.delete/$delete (removed in Vue 3)",
+  priority: 88,
+  shouldApply: (_filePath, content) => {
+    return (
+      content.includes("Vue.set") ||
+      content.includes("this.$set") ||
+      content.includes("Vue.delete") ||
+      content.includes("this.$delete")
+    );
+  },
+  apply: async (_filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    let fixed = content;
+    // Vue.set(obj, key, value) or this.$set → obj[key] = value
+    fixed = fixed.replace(
+      /(?:Vue\.set|this\.\$set)\s*\(\s*([^,]+?),\s*([^,]+?),\s*((?:[^()]|\([^)]*\))*)\s*\)/g,
+      (_, obj, key, val) => {
+        result.fixed = true;
+        return `${obj.trim()}[${key.trim()}] = ${val.trim()}`;
+      }
+    );
+    // Vue.delete(obj, key) or this.$delete → delete obj[key]
+    fixed = fixed.replace(
+      /(?:Vue\.delete|this\.\$delete)\s*\(\s*([^,]+?),\s*([^)]+?)\s*\)/g,
+      (_, obj, key) => {
+        result.fixed = true;
+        return `delete ${obj.trim()}[${key.trim()}]`;
+      }
+    );
+    if (result.fixed) {
+      result.content = fixed;
+      result.fixes.push("Replaced Vue.set/$set and Vue.delete/$delete with direct assignment/delete");
+    }
     return result;
   }
 };

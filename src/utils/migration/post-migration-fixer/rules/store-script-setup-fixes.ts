@@ -559,10 +559,40 @@ export const fixStoreMemberMismatchRule: FixRule = {
     const replacements: Array<{ wrongStore: string; wrongMember: string; correctStore: string; correctMember: string }> = [];
     const storesToAdd = new Map<string, { storeVar: string; useStore: string; importPath: string }>();
 
+    // Collect storeVar -> Set<member> for "don't replace module with index when fetchXxx is used" check
+    const storeVarUsedMembers = new Map<string, Set<string>>();
+    const addUsedMember = (storeVar: string, member: string) => {
+      if (!storeVarUsedMembers.has(storeVar)) storeVarUsedMembers.set(storeVar, new Set());
+      storeVarUsedMembers.get(storeVar)!.add(member);
+    };
+
+    const indexMembers = new Set(
+      Object.entries(storeMethodMap).filter(([, mod]) => mod === "index").map(([m]) => m)
+    );
+
+    const shouldSkipReplaceWithIndex = (
+      wrongStore: string,
+      correctStore: string,
+      correctModule: string
+    ): boolean => {
+      if (correctModule !== "index") return false;
+      const wrongModule = storeVarToModule.get(wrongStore);
+      if (!wrongModule || wrongModule === "index") return false;
+      const usedMembers = storeVarUsedMembers.get(wrongStore);
+      if (!usedMembers) return false;
+      // If wrongStore uses a method exclusive to its module (e.g. fetchUser), keep it for all usages
+      const usesExclusiveMethod = [...usedMembers].some(
+        (member) =>
+          storeMethodMap[member] === wrongModule && !indexMembers.has(member)
+      );
+      return usesExclusiveMethod;
+    };
+
     // Check storeVar.method()
     const methodPattern = /(\w+Store)\.(\w+)\s*\(/g;
     while ((m = methodPattern.exec(scriptContent)) !== null) {
       const [, storeVar, member] = m;
+      addUsedMember(storeVar, member);
       const storeModule = storeVarToModule.get(storeVar);
       const memberModule = storeMethodMap[member];
       if (!memberModule || !storeModule) continue;
@@ -570,12 +600,13 @@ export const fixStoreMemberMismatchRule: FixRule = {
       if (storeHasMember) continue;
       const correctModule = memberModule.toLowerCase();
       const correctStoreVar = moduleToStoreVar.get(correctModule);
+      const importPath = correctModule === "index" ? "@/store/index" : `@/store/modules/${correctModule}`;
       if (!correctStoreVar) {
         const useStore = `use${correctModule.charAt(0).toUpperCase() + correctModule.slice(1)}Store`;
         storesToAdd.set(correctModule, {
           storeVar: `${correctModule}Store`,
           useStore,
-          importPath: `@/store/modules/${correctModule}`
+          importPath
         });
         replacements.push({ wrongStore: storeVar, wrongMember: member, correctStore: `${correctModule}Store`, correctMember: member });
       } else if (correctStoreVar !== storeVar) {
@@ -588,6 +619,7 @@ export const fixStoreMemberMismatchRule: FixRule = {
     const propMatches: Array<{ storeVar: string; member: string }> = [];
     while ((m = propPattern.exec(scriptContent)) !== null) {
       propMatches.push({ storeVar: m[1], member: m[2] });
+      addUsedMember(m[1], m[2]);
     }
     for (const { storeVar, member } of propMatches) {
       const storeModule = storeVarToModule.get(storeVar);
@@ -608,12 +640,14 @@ export const fixStoreMemberMismatchRule: FixRule = {
 
       const correctModule = memberModule.toLowerCase();
       const correctStoreVar = moduleToStoreVar.get(correctModule);
+      const importPath = correctModule === "index" ? "@/store/index" : `@/store/modules/${correctModule}`;
+      if (shouldSkipReplaceWithIndex(storeVar, correctStoreVar || `${correctModule}Store`, correctModule)) continue;
       if (!correctStoreVar) {
         const useStore = `use${correctModule.charAt(0).toUpperCase() + correctModule.slice(1)}Store`;
         storesToAdd.set(correctModule, {
           storeVar: `${correctModule}Store`,
           useStore,
-          importPath: `@/store/modules/${correctModule}`
+          importPath
         });
         replacements.push({ wrongStore: storeVar, wrongMember: member, correctStore: `${correctModule}Store`, correctMember });
       } else if (correctStoreVar !== storeVar || correctMember !== member) {

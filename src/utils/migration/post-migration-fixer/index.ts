@@ -22,7 +22,7 @@ import {
   piniaStoreCrossStoreDepsRule
 } from "./rules/store-fixes";
 import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, routerGuardPiniaRule, catchAllRouteRule, routeQueryRedirectGuardRule, routerPushNameParamsToPathRule } from "./rules/router-fixes";
-import { missingVueImportsRule, splitImportsOnSameLineRule, removeVuexImportsRule, removeVueCompilerMacrosRule, mergeDuplicateImportsRule, duplicateSameIdentifierImportsRule, correctWrongStoreImportsRule, addMissingStoreImportsRule } from "./rules/import-fixes";
+import { missingVueImportsRule, splitImportsOnSameLineRule, removeVuexImportsRule, removeVueCompilerMacrosRule, mergeDuplicateImportsRule, duplicateSameIdentifierImportsRule, correctWrongStoreImportsRule, addMissingStoreImportsRule, vueSetRule } from "./rules/import-fixes";
 import { computedValueRule, vueComputedExtraParenRule, malformedComputedRule, computedSyntaxRule } from "./rules/computed-fixes";
 import { templateInterpolationParensRule, templateCurrencyNonNumericRule, missingComponentImportsRule, templateFilterFunctionImportsRule, missingFilterImportsRule, vModelBindingsRule } from "./rules/template-fixes";
 import { wrongStorePropertyRule, nullChecksLengthRule, detailViewStoreRule } from "./rules/final-fixes";
@@ -62,6 +62,7 @@ ruleEngine.registerRules([
   storeEventTypeRule,             // Priority 83 (Event → any in params)
   storeReturnCurrentUserRule,     // Priority 82 (key: keyComputed in return, generic)
   removeVuexImportsRule,          // Priority 85
+  vueSetRule,                     // Priority 88 (Vue.set/$set, Vue.delete/$delete → direct assignment)
   removeVueCompilerMacrosRule,   // Priority 86 (defineProps/defineEmits)
   scriptSetupThisEmitRule,       // Priority 85 (this.$emit → emit in script setup)
   vueStoreVuexToPiniaRule,       // Priority 84 (this.$store.getters/dispatch → Pinia in .vue)

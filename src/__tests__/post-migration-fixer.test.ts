@@ -4,10 +4,19 @@ import {
 } from '../utils/migration/post-migration-fixer';
 import * as path from 'path';
 import * as fs from 'fs';
+import { getStoreMethodMap } from '../utils/migration/post-migration-fixer/utils/store-analysis-cache';
+
+jest.mock('../utils/migration/post-migration-fixer/utils/store-analysis-cache');
+
+const mockGetStoreMethodMap = getStoreMethodMap as jest.MockedFunction<typeof getStoreMethodMap>;
 
 describe('Post Migration Fixer', () => {
   const testProjectRoot = path.join(__dirname, '../../test-project');
   const hasTestProject = fs.existsSync(testProjectRoot);
+
+  beforeEach(() => {
+    mockGetStoreMethodMap.mockResolvedValue({});
+  });
 
   describe('fixPostMigrationIssues', () => {
     it('should fix missing computed import', async () => {
@@ -431,6 +440,14 @@ const filteredUsers = ref([]);
     });
 
     (hasTestProject ? it : it.skip)('should fix indexStore.fetchUser and indexStore.allIndexs to userStore (fixStoreMemberMismatchRule)', async () => {
+      mockGetStoreMethodMap.mockResolvedValue({
+        fetchUser: "user",
+        allUsers: "user",
+        currentUser: "user",
+        isLoading: "index",
+        loading: "index",
+        fetchCurrentUser: "index"
+      });
       const code = `
 <template>
   <div class="user-detail">

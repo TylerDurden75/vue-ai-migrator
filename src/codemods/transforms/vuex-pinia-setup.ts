@@ -80,12 +80,14 @@ export const vuexPiniaSetupTransform: Transform = (
         (hasVuexStructure && !path.value.declaration.callee)
       ) {
         // This is a Vuex module - transform it to a Pinia store
+        // For store/modules/cart/index.js → "cart"; for store/modules/cart.js → "cart"
         const fileName = fileInfo.path || "module";
+        const parts = fileName.replace(/\.(js|ts)$/, "").split("/");
+        const basename = parts[parts.length - 1] || "module";
         const moduleName =
-          fileName
-            .replace(/\.(js|ts)$/, "")
-            .split("/")
-            .pop() || "module";
+          basename === "index" && parts.length > 1
+            ? parts[parts.length - 2]
+            : basename;
 
         const storeName =
           moduleName.charAt(0).toUpperCase() + moduleName.slice(1);
@@ -1533,4 +1535,3 @@ export const vuexPiniaSetupTransform: Transform = (
 
   return resultCode;
 };
-

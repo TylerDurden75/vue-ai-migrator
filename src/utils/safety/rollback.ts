@@ -93,11 +93,20 @@ export class RollbackManager {
       return false;
     }
 
-    // Special handling for tsconfig.json: if backup is empty, don't restore (file was created during migration)
+    // Special handling: if backup is empty, file was created during migration - delete it instead of restoring
     const fileName = path.basename(filePath);
-    if (fileName === 'tsconfig.json' && (!backup.originalContent || backup.originalContent.trim() === '')) {
-      // Don't restore empty backup for tsconfig.json - it will be handled in the TypeScript cleanup section
-      return false;
+    if (!backup.originalContent || backup.originalContent.trim() === '') {
+      if (fileName === 'tsconfig.json') {
+        return false; // Handled in TypeScript cleanup section
+      }
+      if (fileName === 'package-lock.json') {
+        try {
+          await fs.unlink(filePath);
+          return true;
+        } catch {
+          return false;
+        }
+      }
     }
 
     try {

@@ -3,6 +3,7 @@
 import { Command } from "commander";
 import { migrate, MigrationOptions } from "./core/migrator";
 import { RollbackManager } from "./utils/safety";
+import { fixPostMigrationIssues } from "./utils/migration/post-migration-fixer";
 import { MigrationClassifier } from "./core/classifier";
 import { MigrationReporter } from "./core/reporter";
 import { getDiffSummary } from "./utils/codegen";
@@ -352,6 +353,99 @@ program
   });
 
 program
+  .command("fix")
+  .description(
+    "Re-run post-migration fixes on an already migrated project (e.g. fix indexStore.fetchUser → userStore.fetchUser)",
+  )
+  .argument("<path>", "Path to the project to fix")
+  .option(
+    "--typescript",
+    "Enable TypeScript mode for fixes",
+    false,
+  )
+  .option(
+    "-v, --verbose",
+    "Show detailed fix information",
+    false,
+  )
+  .action(async (projectPath: string, options) => {
+    const spinner = ora("Running post-migration fixes...").start();
+
+    try {
+      const { glob } = await import("glob");
+      const vueFiles = await glob("**/*.{vue,ts,js}", {
+        cwd: projectPath,
+        ignore: ["node_modules/**", "dist/**", "build/**"],
+        absolute: true,
+      });
+      const storeFiles = await glob("**/store/**/*.{ts,js}", {
+        cwd: projectPath,
+        ignore: ["node_modules/**", "dist/**"],
+        absolute: true,
+      });
+      const mainFiles = await glob("**/main.{ts,js}", {
+        cwd: projectPath,
+        ignore: ["node_modules/**", "dist/**"],
+        absolute: true,
+      });
+      const filesToFix = [
+        ...new Set([
+          ...vueFiles.filter((f) => f.endsWith(".vue")),
+          ...storeFiles,
+          ...mainFiles,
+        ]),
+      ];
+
+      let fixedCount = 0;
+      const enableTypeScript = !!options.typescript;
+
+      for (const filePath of filesToFix) {
+        try {
+          const content = await fs.readFile(filePath, "utf-8");
+          const result = await fixPostMigrationIssues(
+            filePath,
+            content,
+            enableTypeScript,
+            projectPath,
+          );
+          if (result.fixed) {
+            await fs.writeFile(filePath, result.content);
+            fixedCount++;
+            if (options.verbose) {
+              console.log(
+                chalk.green(`  ✓ ${path.relative(projectPath, filePath)}`),
+              );
+              result.fixes.forEach((f) => console.log(chalk.gray(`    - ${f}`)));
+            }
+          }
+        } catch (err) {
+          if (options.verbose) {
+            console.log(
+              chalk.yellow(`  ⚠ ${path.relative(projectPath, filePath)}: ${err instanceof Error ? err.message : String(err)}`),
+            );
+          }
+        }
+      }
+
+      spinner.succeed(`Post-migration fixes completed!`);
+      console.log(
+        chalk.green(`\n✓ ${fixedCount} file(s) fixed out of ${filesToFix.length} processed`),
+      );
+      if (fixedCount > 0 && !options.verbose) {
+        console.log(
+          chalk.blue("  Run with -v to see which fixes were applied"),
+        );
+      }
+    } catch (error) {
+      spinner.fail("Error during fix");
+      console.error(
+        chalk.red(error instanceof Error ? error.message : String(error)),
+      );
+      process.exit(1);
+    }
+  });
+
+program
   .command("analyze")
   .description("Analyze a Vue project and classify migration complexity")
   .argument("<path>", "Path to the project to analyze")
@@ -561,7 +655,7 @@ program
           );
           console.log(
             chalk.yellow(
-              `   Your node_modules may still contain Vue 3 dependencies, which can cause errors.`,
+              `   Your node_modules may still contain Vue 3 dependencies. If you see errors (e.g. webpack/lib/RuleSet), run rollback with --clean-install.`,
             ),
           );
 

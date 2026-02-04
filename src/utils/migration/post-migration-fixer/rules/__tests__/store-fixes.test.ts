@@ -97,6 +97,45 @@ describe("asyncFunctionRule", () => {
     expect(result.content).not.toContain("async async");
   });
 
+  it("should make function with params and : void return type async (Pinia store style)", async () => {
+    const content = `  function fetchUser(userId: number): void {
+    SET_LOADING(true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const user = { id: userId, name: "User " + userId };
+      SET_CURRENT_USER(user);
+    } finally {
+      SET_LOADING(false);
+    }
+  }`;
+
+    const result = await asyncFunctionRule.apply("src/store/modules/user.ts", content, {
+      enableTypeScript: true,
+      isVueFile: false
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("async function fetchUser(userId: number)");
+    expect(result.content).toContain("): Promise<void> {");
+    expect(result.content).toContain("await new Promise");
+  });
+
+  it("should make function with : void return type async", async () => {
+    const content = `function fetchCurrentUser(): void {
+  await userStore.fetchCurrentUser();
+}`;
+
+    const result = await asyncFunctionRule.apply("src/store/index.ts", content, {
+      enableTypeScript: true,
+      isVueFile: false
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("async function fetchCurrentUser");
+    expect(result.content).toContain("): Promise<void> {");
+    expect(result.content).not.toContain("): void {");
+  });
+
   it("should not apply when no await is present", async () => {
     const content = `export const useUserStore = defineStore('user', {
   actions: {
