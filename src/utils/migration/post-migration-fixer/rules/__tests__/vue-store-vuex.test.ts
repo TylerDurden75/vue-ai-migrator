@@ -52,4 +52,22 @@ this.$store.dispatch('user/setFilter', {
     expect(result.content).toContain("value: q");
     expect(result.content).not.toContain("this.$store");
   });
+
+  it("should replace this.$store.state.items with indexStore.items", async () => {
+    const content = `<script setup>
+const comment = computed(() => this.$store.state.items[props.id]);
+</script>`;
+
+    const result = await vueStoreVuexToPiniaRule.apply("src/components/Comment.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: "",
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("indexStore.items");
+    expect(result.content).not.toContain("this.$store");
+    expect(result.content).toContain("import { useIndexStore } from");
+    expect(result.content).toContain("const indexStore = useIndexStore()");
+  });
 });

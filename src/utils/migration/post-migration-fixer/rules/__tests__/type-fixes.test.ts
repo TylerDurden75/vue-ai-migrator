@@ -248,6 +248,22 @@ describe("typescriptTypeImprovementsRule", () => {
     expect(result.fixed).toBe(false);
   });
 
+  it("should remove computed<any> and ref<any> when TypeScript is enabled", async () => {
+    const content = `const items = ref<any>([]);
+const filtered = computed<any>(() => items.value.filter(x => x));`;
+
+    const result = await typescriptTypeImprovementsRule.apply("test.ts", content, {
+      enableTypeScript: true,
+      isVueFile: false
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("ref(");
+    expect(result.content).toContain("computed(");
+    expect(result.content).not.toContain("ref<any>");
+    expect(result.content).not.toContain("computed<any>");
+  });
+
   it("should not modify content when TypeScript is enabled but no improvements needed", async () => {
     const content = `const test: any = 1;`;
 
@@ -256,32 +272,31 @@ describe("typescriptTypeImprovementsRule", () => {
       isVueFile: false
     });
 
-    // This rule is a placeholder for future improvements
     expect(result.fixed).toBe(false);
   });
 
-  it("should apply when TypeScript is enabled and content has : any", async () => {
-    const content = `const test: any = 1;`;
+  it("should apply when TypeScript is enabled and content has computed<any>", async () => {
+    const content = `const x = computed<any>(() => 1);`;
 
     const result = await typescriptTypeImprovementsRule.apply("test.ts", content, {
       enableTypeScript: true,
       isVueFile: false
     });
 
-    // Rule should apply but may not fix anything yet (placeholder)
-    expect(result).toBeDefined();
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("computed(() => 1)");
   });
 
-  it("should apply when TypeScript is enabled and content has as any", async () => {
-    const content = `const test = value as any;`;
+  it("should apply when TypeScript is enabled and content has ref<any>", async () => {
+    const content = `const test = ref<any>(null);`;
 
     const result = await typescriptTypeImprovementsRule.apply("test.ts", content, {
       enableTypeScript: true,
       isVueFile: false
     });
 
-    // Rule should apply but may not fix anything yet (placeholder)
-    expect(result).toBeDefined();
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("ref(null)");
   });
 
   it("should not apply when no type annotations are present", async () => {

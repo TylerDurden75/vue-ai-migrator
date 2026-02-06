@@ -2,13 +2,18 @@
  * Tests for store-related rules
  */
 
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 import {
   asyncFunctionRule,
   storeIndexRemoveObsoleteImportsRule,
   storeDefineStoreClosingRule,
   storeVuexGettersDispatchRule,
   duplicateKeysRule,
-  piniaStoreCrossStoreDepsRule
+  piniaStoreCrossStoreDepsRule,
+  storeAddMissingAuthMethodsRule,
+  storeComputedRefMissingValueRule,
 } from "../store-fixes";
 import type { FixContext } from "../../types";
 
@@ -28,14 +33,18 @@ describe("asyncFunctionRule", () => {
   }
 });`;
 
-    const result = await asyncFunctionRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await asyncFunctionRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("async fetchUsers()");
-    expect(result.fixes.some(fix => fix.includes("fetchUsers"))).toBe(true);
+    expect(result.fixes.some((fix) => fix.includes("fetchUsers"))).toBe(true);
   });
 
   it("should make arrow function async if it uses await", async () => {
@@ -51,10 +60,14 @@ describe("asyncFunctionRule", () => {
   }
 });`;
 
-    const result = await asyncFunctionRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await asyncFunctionRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("async");
@@ -71,10 +84,14 @@ describe("asyncFunctionRule", () => {
   }
 });`;
 
-    const result = await asyncFunctionRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await asyncFunctionRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     // Should not add duplicate async
     const asyncMatches = result.content.match(/async\s+async/g);
@@ -89,7 +106,7 @@ describe("asyncFunctionRule", () => {
 
     const result = await asyncFunctionRule.apply("test.ts", content, {
       enableTypeScript: true,
-      isVueFile: false
+      isVueFile: false,
     });
 
     // The rule should clean up multiple async keywords
@@ -109,13 +126,19 @@ describe("asyncFunctionRule", () => {
     }
   }`;
 
-    const result = await asyncFunctionRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await asyncFunctionRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
-    expect(result.content).toContain("async function fetchUser(userId: number)");
+    expect(result.content).toContain(
+      "async function fetchUser(userId: number)"
+    );
     expect(result.content).toContain("): Promise<void> {");
     expect(result.content).toContain("await new Promise");
   });
@@ -125,10 +148,14 @@ describe("asyncFunctionRule", () => {
   await userStore.fetchCurrentUser();
 }`;
 
-    const result = await asyncFunctionRule.apply("src/store/index.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await asyncFunctionRule.apply(
+      "src/store/index.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("async function fetchCurrentUser");
@@ -145,10 +172,14 @@ describe("asyncFunctionRule", () => {
   }
 });`;
 
-    const result = await asyncFunctionRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: false,
-      isVueFile: false
-    });
+    const result = await asyncFunctionRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: false,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(false);
   });
@@ -167,10 +198,14 @@ describe("asyncFunctionRule", () => {
   }
 });`;
 
-    const result = await asyncFunctionRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await asyncFunctionRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("async fetchUsers()");
@@ -186,7 +221,7 @@ describe("asyncFunctionRule", () => {
 
     const result = await asyncFunctionRule.apply("src/utils/api.js", content, {
       enableTypeScript: false,
-      isVueFile: false
+      isVueFile: false,
     });
 
     expect(result.fixed).toBe(true);
@@ -201,7 +236,7 @@ describe("asyncFunctionRule", () => {
 
     const result = await asyncFunctionRule.apply("src/utils/data.js", content, {
       enableTypeScript: false,
-      isVueFile: false
+      isVueFile: false,
     });
 
     expect(result.fixed).toBe(true);
@@ -216,7 +251,7 @@ describe("asyncFunctionRule", () => {
 
     const result = await asyncFunctionRule.apply("src/utils/math.js", content, {
       enableTypeScript: false,
-      isVueFile: false
+      isVueFile: false,
     });
 
     expect(result.fixed).toBe(true);
@@ -225,7 +260,10 @@ describe("asyncFunctionRule", () => {
 });
 
 describe("storeDefineStoreClosingRule", () => {
-  const emptyContext = { enableTypeScript: true, isVueFile: false } as FixContext;
+  const emptyContext = {
+    enableTypeScript: true,
+    isVueFile: false,
+  } as FixContext;
 
   it("should fix }; }; }); at end of store to } });", async () => {
     const content = `export const useAppStore = defineStore('app', () => {
@@ -237,10 +275,16 @@ describe("storeDefineStoreClosingRule", () => {
 };
 });
 `;
-    const result = await storeDefineStoreClosingRule.apply("src/store/modules/app.ts", content, emptyContext);
+    const result = await storeDefineStoreClosingRule.apply(
+      "src/store/modules/app.ts",
+      content,
+      emptyContext
+    );
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("  }\n});");
-    expect(result.content).not.toMatch(/\}\s*;\s*\n+\s*\}\s*;\s*\n+\s*\}\s*\)\s*;\s*$/m);
+    expect(result.content).not.toMatch(
+      /\}\s*;\s*\n+\s*\}\s*;\s*\n+\s*\}\s*\)\s*;\s*$/m
+    );
   });
 
   it("should fix even when content has trailing newline after });", async () => {
@@ -251,7 +295,11 @@ describe("storeDefineStoreClosingRule", () => {
 };
 });
 `;
-    const result = await storeDefineStoreClosingRule.apply("src/store/modules/app.ts", content, emptyContext);
+    const result = await storeDefineStoreClosingRule.apply(
+      "src/store/modules/app.ts",
+      content,
+      emptyContext
+    );
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("  }\n});");
     expect(result.content.trimEnd()).toMatch(/\}\s*\)\s*;\s*$/);
@@ -262,13 +310,20 @@ describe("storeDefineStoreClosingRule", () => {
   return { theme: ref('light') }
 });
 `;
-    const result = await storeDefineStoreClosingRule.apply("src/store/modules/app.ts", content, emptyContext);
+    const result = await storeDefineStoreClosingRule.apply(
+      "src/store/modules/app.ts",
+      content,
+      emptyContext
+    );
     expect(result.fixed).toBe(false);
   });
 });
 
 describe("storeIndexRemoveObsoleteImportsRule", () => {
-  const emptyContext = { enableTypeScript: false, isVueFile: false } as FixContext;
+  const emptyContext = {
+    enableTypeScript: false,
+    isVueFile: false,
+  } as FixContext;
 
   it("should remove default imports from ./modules/* in store/index", async () => {
     const content = `import { defineStore } from "pinia";
@@ -284,7 +339,11 @@ export const useIndexStore = defineStore("index", () => {
 });
 export default useIndexStore;
 `;
-    const result = await storeIndexRemoveObsoleteImportsRule.apply("src/store/index.js", content, emptyContext);
+    const result = await storeIndexRemoveObsoleteImportsRule.apply(
+      "src/store/index.js",
+      content,
+      emptyContext
+    );
     expect(result.fixed).toBe(true);
     expect(result.content).not.toContain("import userModule from");
     expect(result.content).not.toContain("import productModule from");
@@ -302,7 +361,11 @@ export const useIndexStore = defineStore("index", () => {
   return { userStore };
 });
 `;
-    const result = await storeIndexRemoveObsoleteImportsRule.apply("src/store/index.js", content, emptyContext);
+    const result = await storeIndexRemoveObsoleteImportsRule.apply(
+      "src/store/index.js",
+      content,
+      emptyContext
+    );
     expect(result.fixed).toBe(true);
     expect(result.content).not.toContain('import Vue from "vue"');
   });
@@ -312,7 +375,11 @@ export const useIndexStore = defineStore("index", () => {
 import { useUserStore } from "@/store/modules/user";
 export const useIndexStore = defineStore("index", () => ({ userStore: useUserStore() }));
 `;
-    const result = await storeIndexRemoveObsoleteImportsRule.apply("src/store/index.js", content, emptyContext);
+    const result = await storeIndexRemoveObsoleteImportsRule.apply(
+      "src/store/index.js",
+      content,
+      emptyContext
+    );
     expect(result.fixed).toBe(false);
   });
 });
@@ -332,16 +399,22 @@ export default defineStore("index", () => {
   return { loading, isAuthenticated, currentUser, fetchCurrentUser };
 });`;
 
-    const result = await storeVuexGettersDispatchRule.apply("src/store/index.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await storeVuexGettersDispatchRule.apply(
+      "src/store/index.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("userStore.isAuthenticated");
     expect(result.content).toContain("userStore.currentUser");
     expect(result.content).toContain("userStore.fetchCurrentUser()");
-    expect(result.content).toContain("import { useUserStore } from '@/store/modules/user'");
+    expect(result.content).toContain(
+      "import { useUserStore } from '@/store/modules/user'"
+    );
     expect(result.content).toContain("const userStore = useUserStore();");
     expect(result.content).not.toContain('getters["user/');
     expect(result.content).not.toContain('dispatch("user/');
@@ -360,17 +433,21 @@ describe("duplicateKeysRule", () => {
   };
 });`;
 
-    const result = await duplicateKeysRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await duplicateKeysRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     // Should keep the ref (source of truth in Pinia)
     expect(result.content).toContain("currentUser: currentUser");
     // Should not have the computed duplicate
     expect(result.content).not.toContain("currentUser: currentUserComputed");
-    expect(result.fixes.some(fix => fix.includes("duplicate"))).toBe(true);
+    expect(result.fixes.some((fix) => fix.includes("duplicate"))).toBe(true);
   });
 
   it("should handle duplicate keys on same line (one key-value per line only)", async () => {
@@ -384,10 +461,14 @@ describe("duplicateKeysRule", () => {
   };
 });`;
 
-    const result = await duplicateKeysRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await duplicateKeysRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("users: users");
@@ -405,10 +486,14 @@ describe("duplicateKeysRule", () => {
   };
 });`;
 
-    const result = await duplicateKeysRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await duplicateKeysRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("items: items");
@@ -426,10 +511,14 @@ describe("duplicateKeysRule", () => {
   };
 });`;
 
-    const result = await duplicateKeysRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: false,
-      isVueFile: false
-    });
+    const result = await duplicateKeysRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: false,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(false);
   });
@@ -441,10 +530,14 @@ describe("duplicateKeysRule", () => {
   })
 });`;
 
-    const result = await duplicateKeysRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: false,
-      isVueFile: false
-    });
+    const result = await duplicateKeysRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: false,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(false);
   });
@@ -464,10 +557,14 @@ describe("duplicateKeysRule", () => {
   };
 });`;
 
-    const result = await duplicateKeysRule.apply("src/store/modules/user.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await duplicateKeysRule.apply(
+      "src/store/modules/user.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("users: users");
@@ -496,15 +593,23 @@ export const useIndexStore = defineStore("index", () => {
 });
 `;
 
-    const result = await piniaStoreCrossStoreDepsRule.apply("src/store/index.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await piniaStoreCrossStoreDepsRule.apply(
+      "src/store/index.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(true);
-    expect(result.content).toContain("import { useUserStore } from '@/store/modules/user'");
+    expect(result.content).toContain(
+      "import { useUserStore } from '@/store/modules/user'"
+    );
     expect(result.content).toContain("const userStore = useUserStore();");
-    expect(result.content).toMatch(/defineStore\s*\(\s*["']index["'].*?\{\s*\n\s*const userStore = useUserStore\(\)/s);
+    expect(result.content).toMatch(
+      /defineStore\s*\(\s*["']index["'].*?\{\s*\n\s*const userStore = useUserStore\(\)/s
+    );
   });
 
   it("should not add store ref when already defined", async () => {
@@ -520,10 +625,14 @@ export const useIndexStore = defineStore("index", () => {
 });
 `;
 
-    const result = await piniaStoreCrossStoreDepsRule.apply("src/store/index.ts", content, {
-      enableTypeScript: true,
-      isVueFile: false
-    });
+    const result = await piniaStoreCrossStoreDepsRule.apply(
+      "src/store/index.ts",
+      content,
+      {
+        enableTypeScript: true,
+        isVueFile: false,
+      }
+    );
 
     expect(result.fixed).toBe(false);
     expect(result.content).toBe(content);
@@ -531,6 +640,182 @@ export const useIndexStore = defineStore("index", () => {
 
   it("should not apply to .vue files", () => {
     const content = "const userStore = useUserStore(); userStore.foo();";
-    expect(piniaStoreCrossStoreDepsRule.shouldApply("src/views/Home.vue", content)).toBe(false);
+    expect(
+      piniaStoreCrossStoreDepsRule.shouldApply("src/views/Home.vue", content)
+    ).toBe(false);
+  });
+});
+
+describe("storeComputedRefMissingValueRule", () => {
+  it("should add .value when computed returns ref directly", async () => {
+    const content = `import { defineStore } from "pinia";
+import { ref, computed } from "vue";
+
+export const useBlogStore = defineStore("blog", () => {
+  const posts = ref([]);
+  const filteredPosts = computed(() => posts);
+  return { posts, filteredPosts };
+});`;
+
+    const result = await storeComputedRefMissingValueRule.apply(
+      "src/store/modules/blog.js",
+      content,
+      { enableTypeScript: false, isVueFile: false }
+    );
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("computed(() => posts.value)");
+    expect(result.content).not.toContain("computed(() => posts)");
+  });
+
+  it("should not add .value when already present", async () => {
+    const content = `import { defineStore } from "pinia";
+import { ref, computed } from "vue";
+export const useBlogStore = defineStore("blog", () => {
+  const items = ref([]);
+  const filtered = computed(() => items.value);
+  return { items, filtered };
+});`;
+    const result = await storeComputedRefMissingValueRule.apply(
+      "store/modules/blog.js",
+      content,
+      { enableTypeScript: false, isVueFile: false }
+    );
+    expect(result.fixed).toBe(false);
+  });
+});
+
+describe("storeAddMissingAuthMethodsRule", () => {
+  it("should add any called-but-missing method to index store (generic)", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "vue-migrator-store-auth-"));
+    try {
+      await fs.mkdir(path.join(tmpDir, "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(tmpDir, "src", "App.vue"),
+        `<script setup>
+import { useIndexStore } from "@/store/index";
+const indexStore = useIndexStore();
+indexStore.fetchCurrentUser();
+</script>`
+      );
+
+      const content = `import { defineStore } from "pinia";
+import { ref } from "vue";
+
+export const useIndexStore = defineStore("index", () => {
+  const items = ref([]);
+  return {
+    items: items,
+  };
+});`;
+
+      const result = await storeAddMissingAuthMethodsRule.apply(
+        "src/store/index.js",
+        content,
+        {
+          enableTypeScript: false,
+          isVueFile: false,
+          projectRoot: tmpDir,
+        }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("function fetchCurrentUser()");
+      expect(result.content).toContain("return Promise.resolve();");
+      expect(result.content).toContain("fetchCurrentUser: fetchCurrentUser");
+      expect(result.content).toContain("items: items,");
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("should not add methods that already exist in store", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "vue-migrator-store-auth-"));
+    try {
+      await fs.mkdir(path.join(tmpDir, "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(tmpDir, "src", "App.vue"),
+        "indexStore.fetchCurrentUser();"
+      );
+
+      const content = `export const useIndexStore = defineStore("index", () => {
+  function fetchCurrentUser() { return Promise.resolve(); }
+  return { fetchCurrentUser };
+});`;
+
+      const result = await storeAddMissingAuthMethodsRule.apply(
+        "src/store/index.js",
+        content,
+        {
+          enableTypeScript: false,
+          isVueFile: false,
+          projectRoot: tmpDir,
+        }
+      );
+
+      expect(result.fixed).toBe(false);
+      expect(result.content).toBe(content);
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("should add to return when function exists but is not exported (e.g. setRoute)", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "vue-migrator-store-auth-"));
+    try {
+      await fs.mkdir(path.join(tmpDir, "src"), { recursive: true });
+      await fs.writeFile(
+        path.join(tmpDir, "src", "app.js"),
+        `const store = useIndexStore(pinia);
+router.afterEach((to) => { store.setRoute(to); });`
+      );
+
+      const content = `import { defineStore } from "pinia";
+import { ref } from "vue";
+
+export const useIndexStore = defineStore("index", () => {
+  const currentRoute = ref(null);
+  function setRoute(to) {
+    currentRoute.value = to;
+  }
+  return {
+    currentRoute: currentRoute,
+  };
+});`;
+
+      const result = await storeAddMissingAuthMethodsRule.apply(
+        "src/store/index.js",
+        content,
+        {
+          enableTypeScript: false,
+          isVueFile: false,
+          projectRoot: tmpDir,
+        }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("setRoute: setRoute");
+      expect(result.content).not.toContain("function setRoute()"); // no new no-op, already defined
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("should not apply to non-index store files", () => {
+    expect(
+      storeAddMissingAuthMethodsRule.shouldApply(
+        "src/store/modules/user.js",
+        "defineStore()"
+      )
+    ).toBe(false);
+  });
+
+  it("should apply to index store (shouldApply) when defineStore and return exist", () => {
+    expect(
+      storeAddMissingAuthMethodsRule.shouldApply(
+        "src/store/index.js",
+        "defineStore('index', () => { return { items: [] }; });"
+      )
+    ).toBe(true);
   });
 });

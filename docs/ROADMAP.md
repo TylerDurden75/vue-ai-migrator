@@ -62,6 +62,7 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 - [x] correctWrongStoreImportsRule / fixStoreMemberMismatchRule: no longer revert userStore→indexStore in detail views (fetchUser, etc.)
 - [x] Import path fix: `@/store/index` (not `@/store/modules/index`) for index store
 - [x] missingVueImportsRule: add lifecycle hooks (onMounted, onUnmounted, etc.) and reactive when used but not imported
+- [x] E2E test: full migration flow (fixtures/vue2-minimal → migrate → fix → build)
 - [ ] Fix remaining edge cases as reported by tests (computed filtered, store imports when no blog store in project)
 
 ### Performance

@@ -116,7 +116,7 @@ describe('Post Migration Fixer', () => {
 
       expect(result.fixed).toBe(true);
       expect(result.content).toContain("router.push({ path:");
-      expect(result.content).toContain("`/blog/${postId}`");
+      expect(result.content).toContain("`/blog-post/${postId}`");
     });
 
     it('should fix incomplete filtered computed with dynamic property detection', async () => {

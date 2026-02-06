@@ -41,7 +41,9 @@ export const vueStoreVuexToPiniaRule: FixRule = {
     return (
       filePath.endsWith(".vue") &&
       content.includes("<script setup") &&
-      (content.includes("this.$store.getters") || content.includes("this.$store.dispatch"))
+      (content.includes("this.$store.getters") ||
+        content.includes("this.$store.dispatch") ||
+        content.includes("this.$store.state"))
     );
   },
   apply: async (filePath, content, _context: FixContext) => {
@@ -106,6 +108,16 @@ export const vueStoreVuexToPiniaRule: FixRule = {
     for (const { start, end, replacement } of dispatchReplacements.sort((a, b) => b.start - a.start)) {
       scriptContent = scriptContent.slice(0, start) + replacement + scriptContent.slice(end);
     }
+
+    // 2b) this.$store.state.X → indexStore.X (Pinia exposes state as direct properties)
+    scriptContent = scriptContent.replace(
+      /this\.\$store\.state\.(\w+)/g,
+      (_match, stateKey) => {
+        ensureStore("index");
+        const { storeVar } = moduleToStore("index");
+        return `${storeVar}.${stateKey}`;
+      }
+    );
 
     // 3) this.$store.getters.property and this.$store.dispatch('action') without module
     let storeMethodMap: Record<string, string> = {};

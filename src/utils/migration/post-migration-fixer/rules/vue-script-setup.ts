@@ -12,7 +12,7 @@ export const scriptSetupTagSpaceRule: FixRule = {
   description: "Fix <scriptsetup to <script setup",
   priority: 99,
   shouldApply: (filePath, content) => {
-    return filePath.endsWith(".vue") && /<scriptsetup\b/.test(content);
+    return filePath.endsWith(".vue") && /<scriptsetup\b/i.test(content);
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
@@ -21,7 +21,7 @@ export const scriptSetupTagSpaceRule: FixRule = {
       fixes: [],
       issues: []
     };
-    const fixed = content.replace(/<scriptsetup\b/g, "<script setup");
+    const fixed = content.replace(/<scriptsetup\b/gi, "<script setup");
     if (fixed !== content) {
       result.content = fixed;
       result.fixed = true;

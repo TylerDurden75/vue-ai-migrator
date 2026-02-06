@@ -13,16 +13,24 @@ import {
   MigrationError,
 } from "../utils/safety";
 import { RollbackManager } from "../utils/safety";
-import { migratePackageJson } from "../utils/migration";
+import { migratePackageJson, migratePackageJsonForViteSSR, mergeVuexStore } from "../utils/migration";
 import {
   migrateWebpackConfig,
   migrateVueConfig,
 } from "../utils/migration/webpack-config-migrator";
 import { migrateToViteConfig } from "../utils/migration/vite-config-migrator";
+import {
+  migrateWebpackToVite,
+  migrateCreateApi,
+  addCreateApiViteAlias,
+  migrateSSRToVite,
+} from "../utils/migration";
+import { detectProjectPatterns } from "../utils/detectors";
 import { validateMigration } from "../utils/migration";
 import {
   fixPostMigrationIssues,
   fixImportPaths,
+  fixSFCStructureBeforeMigration,
 } from "../utils/migration/post-migration-fixer";
 import {
   checkDependencyConflicts,
@@ -151,6 +159,20 @@ export async function migrate(
 
     const defaultIgnore = ["node_modules/**", "dist/**", "build/**"];
     const ignorePatterns = options.ignore ?? defaultIgnore;
+
+    // Merge split Vuex store BEFORE building file list (merge deletes actions.js, etc.)
+    if (!dryRun) {
+      try {
+        const mergeResult = await mergeVuexStore(projectPath, false);
+        if (mergeResult.merged) {
+          result.warnings.push(
+            ...mergeResult.changes.map((c) => `Store merge: ${c}`)
+          );
+        }
+      } catch {
+        /* merge-store may fail if store is not in expected format */
+      }
+    }
 
     // Find all Vue files
     const vueFiles = await glob("**/*.{vue,js,ts}", {
@@ -363,10 +385,19 @@ export async function migrate(
               }
             }
 
+            // Pre-process: fix SFC structure (script/style inside template) before codemods
+            let contentForCodemod = content;
+            if (filePath.endsWith(".vue")) {
+              const sfcFix = await fixSFCStructureBeforeMigration(filePath, content);
+              if (sfcFix.fixed) {
+                contentForCodemod = sfcFix.content;
+              }
+            }
+
             // Apply codemod transformations
             const codemodResult = await codemodRunner.transform(
               filePath,
-              content,
+              contentForCodemod,
               {
                 transformations: transformationsToApply,
                 enableTypeScript: options.enableTypeScript || false,
@@ -375,6 +406,10 @@ export async function migrate(
 
             let finalCode = codemodResult.code;
             let migrated = codemodResult.modified;
+            const hadPreProcessingFix = contentForCodemod !== content;
+            if (hadPreProcessingFix && !migrated) {
+              migrated = true; // Ensure we run fixer and save when SFC structure was fixed
+            }
             let explanation: string | undefined;
 
             // Debug: Log migration status
@@ -824,37 +859,83 @@ export async function migrate(
       }
     }
 
-    // Migrate vue.config.js to vite.config.js/ts (Vue 3 uses Vite, not Vue CLI)
+    // Migrate to Vite (Vue 3 uses Vite, not Vue CLI / Webpack)
     let viteConfigResult: any = null;
     try {
+      const detection = await detectProjectPatterns(projectPath);
       const vueConfigPath = path.join(projectPath, "vue.config.js");
-      // Backup vue.config.js before migration if not already backed up
       if (rollbackManager && !dryRun) {
         try {
           await rollbackManager.backupFile(vueConfigPath);
         } catch {
-          // Already backed up or doesn't exist
+          /* already backed up or doesn't exist */
         }
       }
 
-      // Migrate to Vite (recommended for Vue 3)
-      // This will create vite.config.ts/js, update package.json, and clean up old config files
-      try {
-        viteConfigResult = await migrateToViteConfig(
-          projectPath,
-          dryRun,
-          options.enableTypeScript || false,
-          rollbackManager
-        );
-        if (viteConfigResult.modified || viteConfigResult.created) {
-          result.warnings.push(
-            ...viteConfigResult.changes.map((c: string) => `Vite Config: ${c}`)
+      // Webpack SSR project (build/webpack.*.config.js) → migrateWebpackToVite
+      if (detection.hasWebpackSSR && detection.hasSSREntries) {
+        try {
+          viteConfigResult = await migrateWebpackToVite(
+            projectPath,
+            dryRun,
+            options.enableTypeScript || false,
+            rollbackManager
           );
-          result.warnings.push(...viteConfigResult.warnings);
+          if (viteConfigResult.modified || viteConfigResult.created) {
+            result.warnings.push(
+              ...viteConfigResult.changes.map((c: string) => `Vite SSR: ${c}`)
+            );
+            result.warnings.push(...viteConfigResult.warnings);
+            const pkgViteResult = await migratePackageJsonForViteSSR(
+              projectPath,
+              dryRun
+            );
+            if (pkgViteResult.modified) {
+              result.warnings.push(
+                ...pkgViteResult.changes.map((c) => `Package (Vite): ${c}`)
+              );
+            }
+          }
+          // SSR entry points and server
+          const ssrResult = await migrateSSRToVite(projectPath, dryRun, rollbackManager ?? undefined);
+          if (ssrResult.modified) {
+            result.warnings.push(
+              ...ssrResult.changes.map((c) => `SSR: ${c}`)
+            );
+          }
+          // create-api (client/server alias)
+          if (detection.hasCreateApiPattern && !dryRun) {
+            const createApiResult = await migrateCreateApi(projectPath, dryRun);
+            if (createApiResult.modified) {
+              result.warnings.push(
+                ...createApiResult.changes.map((c) => `Create-API: ${c}`)
+              );
+              await addCreateApiViteAlias(projectPath, dryRun);
+            }
+          }
+        } catch (error) {
+          viteConfigResult = null;
         }
-      } catch (error) {
-        // Vite migration failed, continue with vue.config.js / webpack path
-        viteConfigResult = null;
+      }
+
+      // Otherwise: vue.config.js → migrateToViteConfig
+      if (!viteConfigResult || (!viteConfigResult.modified && !viteConfigResult.created)) {
+        try {
+          viteConfigResult = await migrateToViteConfig(
+            projectPath,
+            dryRun,
+            options.enableTypeScript || false,
+            rollbackManager
+          );
+          if (viteConfigResult.modified || viteConfigResult.created) {
+            result.warnings.push(
+              ...viteConfigResult.changes.map((c: string) => `Vite Config: ${c}`)
+            );
+            result.warnings.push(...viteConfigResult.warnings);
+          }
+        } catch (error) {
+          viteConfigResult = null;
+        }
       }
 
       // Skip vue.config.js migration if Vite migration was successful
@@ -945,7 +1026,27 @@ export async function migrate(
           ignore: ignorePatterns,
           absolute: true,
         });
-        const vueFilesToFix = [...vueOnly, ...storeFiles, ...mainFiles];
+        const routerFiles = await glob("**/router/**/*.{ts,js}", {
+          cwd: projectPath,
+          ignore: ignorePatterns,
+          absolute: true,
+        });
+        const appFiles = await glob("**/app.{ts,js}", {
+          cwd: path.join(projectPath, "src"),
+          ignore: ignorePatterns,
+          absolute: true,
+        });
+        const utilFiles = await glob("**/util/**/*.{ts,js}", {
+          cwd: path.join(projectPath, "src"),
+          ignore: ignorePatterns,
+          absolute: true,
+        });
+        const utilsFiles = await glob("**/utils/**/*.{ts,js}", {
+          cwd: path.join(projectPath, "src"),
+          ignore: ignorePatterns,
+          absolute: true,
+        });
+        const vueFilesToFix = [...vueOnly, ...storeFiles, ...mainFiles, ...routerFiles, ...appFiles, ...utilFiles, ...utilsFiles];
 
         const { fixPostMigrationIssues: fixPostMigrationIssuesBatch } =
           await import("../utils/migration/post-migration-fixer");

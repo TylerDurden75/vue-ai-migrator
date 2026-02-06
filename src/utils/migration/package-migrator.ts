@@ -87,6 +87,15 @@ export async function migratePackageJson(
       }
     }
 
+    // Remove vuex-router-sync (Pinia does not need it)
+    if (allDeps["vuex-router-sync"]) {
+      if (packageJson.dependencies?.["vuex-router-sync"]) {
+        delete packageJson.dependencies["vuex-router-sync"];
+        result.changes.push("Removed vuex-router-sync (not needed with Pinia)");
+        result.modified = true;
+      }
+    }
+
     // Migrate Vuex → Pinia
     if (allDeps.vuex) {
       const vuexVersion = allDeps.vuex;
@@ -164,6 +173,18 @@ export async function migratePackageJson(
         packageJson.devDependencies["@vue/compiler-sfc"] = "^3.4.21";
         result.changes.push(
           "Added @vue/compiler-sfc: ^3.4.21 (required for vue-loader v17)",
+        );
+        result.modified = true;
+      }
+    }
+
+    // Replace vue-server-renderer with @vue/server-renderer (Vue 3 SSR)
+    if (allDeps["vue-server-renderer"]) {
+      if (packageJson.dependencies?.["vue-server-renderer"]) {
+        delete packageJson.dependencies["vue-server-renderer"];
+        packageJson.dependencies["@vue/server-renderer"] = "^3.4.0";
+        result.changes.push(
+          "Replaced vue-server-renderer with @vue/server-renderer (Vue 3 SSR)",
         );
         result.modified = true;
       }
@@ -250,6 +271,88 @@ export async function migratePackageJson(
         `Error migrating package.json: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    return result;
+  }
+}
+
+/** Webpack-related deps to remove when migrating to Vite */
+const WEBPACK_DEPS = [
+  "webpack",
+  "vue-loader",
+  "webpack-dev-middleware",
+  "webpack-hot-middleware",
+  "webpack-merge",
+  "webpack-node-externals",
+  "extract-text-webpack-plugin",
+  "sw-precache-webpack-plugin",
+  "babel-loader",
+  "css-loader",
+  "file-loader",
+  "url-loader",
+  "stylus-loader",
+  "friendly-errors-webpack-plugin",
+];
+
+/**
+ * Clean up package.json when migrating from Webpack to Vite SSR
+ * Removes webpack deps, adds type: module, clears postinstall
+ */
+export async function migratePackageJsonForViteSSR(
+  projectPath: string,
+  dryRun: boolean = false,
+): Promise<PackageMigrationResult> {
+  const result: PackageMigrationResult = {
+    modified: false,
+    changes: [],
+    warnings: [],
+  };
+
+  const packageJsonPath = path.join(projectPath, "package.json");
+
+  try {
+    const content = await fs.readFile(packageJsonPath, "utf-8");
+    const packageJson: PackageJson = JSON.parse(content);
+
+    for (const dep of WEBPACK_DEPS) {
+      if (packageJson.devDependencies?.[dep]) {
+        delete packageJson.devDependencies[dep];
+        result.changes.push(`Removed ${dep} (Vite replaces Webpack)`);
+        result.modified = true;
+      }
+      if (packageJson.dependencies?.[dep]) {
+        delete packageJson.dependencies[dep];
+        result.changes.push(`Removed ${dep} (Vite replaces Webpack)`);
+        result.modified = true;
+      }
+    }
+
+    if (!packageJson.type || packageJson.type !== "module") {
+      packageJson.type = "module";
+      result.changes.push('Added "type": "module" for ESM server.js');
+      result.modified = true;
+    }
+
+    if (
+      packageJson.scripts?.postinstall === "npm run build" ||
+      packageJson.scripts?.postinstall?.includes("build")
+    ) {
+      packageJson.scripts.postinstall = "";
+      result.changes.push("Cleared postinstall (run npm run build manually after install)");
+      result.modified = true;
+    }
+
+    if (result.modified && !dryRun) {
+      await fs.writeFile(
+        packageJsonPath,
+        JSON.stringify(packageJson, null, 2) + "\n",
+      );
+    }
+
+    return result;
+  } catch (error) {
+    result.warnings.push(
+      `Vite package cleanup error: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return result;
   }
 }

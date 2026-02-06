@@ -108,6 +108,12 @@ program
     "Run npm run build after migration to verify the project compiles (exits with error code if build fails)",
     false,
   )
+  .option(
+    "--run-fix",
+    "Run post-migration fixes after migration (fixes scriptsetup, guards, etc.) - default: true",
+    true,
+  )
+  .option("--no-run-fix", "Skip post-migration fixes (run 'vue-ai-migrator fix' manually)")
   .action(async (projectPath: string, options) => {
     const spinner = ora("Analyzing project...").start();
 
@@ -283,7 +289,60 @@ program
           ),
         );
       }
-      
+
+      // Run post-migration fixes (scriptsetup, guards, etc.)
+      if (!options.dryRun && options.runFix !== false && result.filesModified > 0) {
+        spinner.start("Running post-migration fixes...");
+        try {
+          const { glob } = await import("glob");
+          const defaultIgnore = ["node_modules/**", "dist/**", "build/**"];
+          const vueFiles = await glob("**/*.vue", {
+            cwd: projectPath,
+            ignore: defaultIgnore,
+            absolute: true,
+          });
+          const storeFiles = await glob("**/store/**/*.{ts,js}", {
+            cwd: projectPath,
+            ignore: defaultIgnore,
+            absolute: true,
+          });
+          const mainFiles = await glob("**/main.{ts,js}", {
+            cwd: projectPath,
+            ignore: defaultIgnore,
+            absolute: true,
+          });
+          const filesToFix = [...new Set([...vueFiles, ...storeFiles, ...mainFiles])];
+          let fixCount = 0;
+          for (const filePath of filesToFix) {
+            try {
+              const content = await fs.readFile(filePath, "utf-8");
+              const fixResult = await fixPostMigrationIssues(
+                filePath,
+                content,
+                options.typescript || false,
+                projectPath,
+              );
+              if (fixResult.fixed) {
+                await fs.writeFile(filePath, fixResult.content);
+                fixCount++;
+              }
+            } catch {
+              // Skip files that fail
+            }
+          }
+          if (fixCount > 0) {
+            spinner.succeed(`Post-migration fixes applied (${fixCount} file(s))`);
+          } else {
+            spinner.succeed("Post-migration fixes completed (no changes needed)");
+          }
+        } catch (err) {
+          spinner.warn("Post-migration fixes skipped");
+          if (options.verbose) {
+            console.log(chalk.yellow(`  ${err instanceof Error ? err.message : String(err)}`));
+          }
+        }
+      }
+
       // Handle dependency installation after migration
       if (!options.dryRun && (options.install || options.cleanInstall)) {
         if (options.cleanInstall) {
@@ -512,6 +571,53 @@ program
       }
     } catch (error) {
       spinner.fail("Error during fix");
+      console.error(
+        chalk.red(error instanceof Error ? error.message : String(error)),
+      );
+      process.exit(1);
+    }
+  });
+
+program
+  .command("merge-store")
+  .description(
+    "Merge split Vuex store (actions.js, mutations.js, getters.js) into a single store/index.js - required before Vuex→Pinia migration",
+  )
+  .argument("<path>", "Path to the project")
+  .option("-d, --dry-run", "Preview changes without modifying files", false)
+  .action(async (projectPath: string, options) => {
+    const spinner = ora("Merging Vuex store...").start();
+
+    try {
+      const { mergeVuexStore } = await import("./utils/migration/vuex-store-merge");
+      const result = await mergeVuexStore(
+        path.resolve(projectPath),
+        options.dryRun || false,
+      );
+
+      if (result.errors.length > 0) {
+        spinner.fail("Merge failed");
+        result.errors.forEach((err) => console.log(chalk.red(`  • ${err}`)));
+        process.exit(1);
+      }
+
+      if (!result.merged && result.mergedFiles.length === 0 && result.warnings.length > 0) {
+        spinner.warn("Nothing to merge");
+        result.warnings.forEach((w) => console.log(chalk.yellow(`  • ${w}`)));
+        process.exit(0);
+      }
+
+      spinner.succeed("Store merge completed!");
+      console.log(chalk.green("\n✓ Results:"));
+      result.changes.forEach((c) => console.log(chalk.cyan(`  • ${c}`)));
+      if (result.removedFiles.length > 0) {
+        console.log(chalk.gray(`  Removed: ${result.removedFiles.join(", ")}`));
+      }
+      if (options.dryRun) {
+        console.log(chalk.blue("\n  (dry run - run without --dry-run to apply)"));
+      }
+    } catch (error) {
+      spinner.fail("Merge failed");
       console.error(
         chalk.red(error instanceof Error ? error.message : String(error)),
       );

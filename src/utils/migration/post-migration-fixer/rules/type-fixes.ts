@@ -264,24 +264,24 @@ export const stripTypeScriptAnnotationsRule: FixRule = {
 
 /**
  * Fix: TypeScript type improvements
+ * - computed<any>(() => ...) → computed(() => ...) when inference works
+ * - ref<any>(...) → ref(...) when inference works
  */
 export const typescriptTypeImprovementsRule: FixRule = {
   id: "typescript-type-improvements",
-  description: "Improve TypeScript type annotations",
+  description: "Improve TypeScript type annotations (remove redundant any when inferrable)",
   priority: 12,
   dependencies: ["filters-key-access"],
   shouldApply: (filePath, content) => {
-    return content.includes(": any") || content.includes("as any");
+    return (
+      content.includes("computed<any>") ||
+      content.includes("ref<any>") ||
+      content.includes("reactive<any>")
+    );
   },
-  apply: async (filePath, content, _context: FixContext) => {
-    // Only apply if TypeScript is enabled
-    if (!_context.enableTypeScript) {
-      return {
-        content,
-        fixed: false,
-        fixes: [],
-        issues: []
-      };
+  apply: async (filePath, content, context: FixContext) => {
+    if (!context.enableTypeScript) {
+      return { content, fixed: false, fixes: [], issues: [] };
     }
 
     const result: FixRuleResult = {
@@ -291,12 +291,31 @@ export const typescriptTypeImprovementsRule: FixRule = {
       issues: []
     };
 
-    // This rule can be extended to improve type annotations
-    // For now, it's a placeholder for future improvements
-    
-    // Example: Could improve computed<any>() to computed<ReturnType>()
-    // Example: Could improve ref<any> to ref<SpecificType>()
-    
+    let fixed = content;
+
+    // computed<any>(() => ...) → computed(() => ...) - TypeScript infers from callback
+    if (fixed.includes("computed<any>")) {
+      fixed = fixed.replace(/computed<any>\s*\(/g, "computed(");
+      result.fixed = true;
+    }
+
+    // ref<any>(...) → ref(...) when value allows inference (e.g. ref(0), ref([]))
+    if (fixed.includes("ref<any>")) {
+      fixed = fixed.replace(/ref<any>\s*\(/g, "ref(");
+      result.fixed = true;
+    }
+
+    // reactive<any>(...) → reactive(...)
+    if (fixed.includes("reactive<any>")) {
+      fixed = fixed.replace(/reactive<any>\s*\(/g, "reactive(");
+      result.fixed = true;
+    }
+
+    if (result.fixed) {
+      result.content = fixed;
+      result.fixes.push("Removed redundant any from computed/ref/reactive (TypeScript infers)");
+    }
+
     return result;
   }
 };

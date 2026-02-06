@@ -453,6 +453,8 @@ The project includes robust error handling:
 
 ## 🔍 Troubleshooting
 
+For a detailed guide of common errors and solutions, see **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**.
+
 ### Error: "This project does not appear to be a Vue 2 project"
 
 Check that your `package.json` contains Vue 2:

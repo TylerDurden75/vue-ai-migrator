@@ -51,8 +51,9 @@ tmp/
 temp/
 *.tmp
 
-# Test project (for local testing only)
+# Test projects (for local testing only)
 test-project/
+vue-hackernews-2.0/
 
 # Test e2e (keep for development but don't publish)
 test-e2e/

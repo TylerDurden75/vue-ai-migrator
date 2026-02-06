@@ -6,6 +6,17 @@ import * as fsSync from "fs";
 import * as path from "path";
 import type { FixRule, FixContext, FixRuleResult } from "../types";
 import { getCachedRegex } from "../utils/regex-cache";
+import { getStoreMethodMap } from "../utils/store-analysis-cache";
+
+function moduleToStore(module: string): { storeVar: string; storeName: string; importPath: string } {
+  if (module === "index") {
+    return { storeVar: "indexStore", storeName: "useIndexStore", importPath: "@/store/index" };
+  }
+  const storeVar = `${module}Store`;
+  const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
+  const importPath = `@/store/modules/${module}`;
+  return { storeVar, storeName, importPath };
+}
 
 /**
  * Fix: createApp syntax in main.js/main.ts
@@ -369,7 +380,56 @@ export const createWebHistoryRule: FixRule = {
 };
 
 /**
- * Fix: Replace router.app.$store in navigation guards with Pinia (getActivePinia + useIndexStore)
+ * Fix: createRouter naming conflict - export function createRouter shadows import
+ */
+export const createRouterConflictRule: FixRule = {
+  id: "create-router-conflict",
+  description: "Fix createRouter naming conflict (alias import)",
+  priority: 94,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.includes("router") &&
+      content.includes("from 'vue-router'") &&
+      content.includes("export function createRouter") &&
+      /return\s+createRouter\s*\(/.test(content) &&
+      !content.includes("createRouter as createVueRouter")
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+
+    let fixed = content
+      .replace(
+        /import\s*\{\s*createRouter\s*,\s*createWebHistory\s*\}\s*from\s*['"]vue-router['"]/,
+        "import { createRouter as createVueRouter, createWebHistory } from 'vue-router'"
+      )
+      .replace(
+        /import\s*\{\s*createWebHistory\s*,\s*createRouter\s*\}\s*from\s*['"]vue-router['"]/,
+        "import { createRouter as createVueRouter, createWebHistory } from 'vue-router'"
+      )
+      .replace(
+        /return\s+createRouter\s*\(\s*\{/,
+        "return createVueRouter({"
+      );
+
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Fixed createRouter naming conflict (aliased import)");
+    }
+
+    return result;
+  }
+};
+
+/**
+ * Fix: Replace router.app.$store in navigation guards with Pinia.
+ * Generic: uses store analysis to detect which store has the auth getter (isAuthenticated, etc.).
  */
 export const routerGuardPiniaRule: FixRule = {
   id: "router-guard-pinia",
@@ -379,7 +439,7 @@ export const routerGuardPiniaRule: FixRule = {
     return (filePath.includes("router") || filePath.endsWith("router/index.ts") || filePath.endsWith("router/index.js")) &&
            (content.includes("router.app.$store") || content.includes("router.app?.$store"));
   },
-  apply: async (filePath, content, _context: FixContext) => {
+  apply: async (filePath, content, context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -387,27 +447,37 @@ export const routerGuardPiniaRule: FixRule = {
       issues: []
     };
     let fixed = content;
+    const getterMatch = fixed.match(/router\.app\.\??\$store\.getters\.(\w+)/);
+    const getterName = getterMatch ? getterMatch[1] : "isAuthenticated";
+    let module = "index";
+    if (context.projectRoot) {
+      try {
+        const storeMethodMap = await getStoreMethodMap(context.projectRoot);
+        module = storeMethodMap[getterName] ?? "index";
+      } catch {
+        module = "index";
+      }
+    }
+    const { storeVar, storeName, importPath } = moduleToStore(module);
     if (!fixed.includes("getActivePinia")) {
       const insertAfterRouter = fixed.match(/(import\s+[^;]+from\s+['"]vue-router['"]\s*;?\s*\n)/);
       const insertIdx = insertAfterRouter ? (insertAfterRouter.index! + insertAfterRouter[0].length) : 0;
       fixed = fixed.slice(0, insertIdx) +
-        'import { getActivePinia } from "pinia";\nimport { useIndexStore } from "@/store/index";\n' +
+        `import { getActivePinia } from "pinia";\nimport { ${storeName} } from "${importPath}";\n` +
         fixed.slice(insertIdx);
       result.fixed = true;
     }
-    const getterMatch = fixed.match(/router\.app\.\??\$store\.getters\.(\w+)/);
-    const getterName = getterMatch ? getterMatch[1] : "isAuthenticated";
     fixed = fixed.replace(
       /if\s*\(\s*!?\s*router\.app\.\??\$store\.getters\.\w+\s*\)\s*\{[\s\S]*?next\s*\(\s*\{\s*name:\s*['"]([^'"]+)['"]\s*\}\s*\)[\s\S]*?\}\s*else\s*\{[\s\S]*?next\s*\(\s*\)[\s\S]*?\}/,
       (match) => {
         const redirectNameMatch = match.match(/name:\s*['"]([^'"]+)['"]/);
         const redirectName = redirectNameMatch ? redirectNameMatch[1] : "Home";
-        return `const pinia = getActivePinia();\n    const indexStore = pinia ? useIndexStore(pinia) : null;\n    if (!indexStore?.${getterName}) {\n      next({ name: '${redirectName}' });\n    } else {\n      next();\n    }`;
+        return `const pinia = getActivePinia();\n    const ${storeVar} = pinia ? ${storeName}(pinia) : null;\n    if (!${storeVar}?.${getterName}) {\n      next({ name: '${redirectName}' });\n    } else {\n      next();\n    }`;
       }
     );
     if (fixed !== content) {
       result.fixed = true;
-      result.fixes.push("Replaced router.app.$store in guard with Pinia (getActivePinia + useIndexStore)");
+      result.fixes.push(`Replaced router.app.$store in guard with Pinia (${storeName})`);
     }
     result.content = fixed;
     return result;
@@ -542,16 +612,8 @@ export const routerPushNameParamsToPathRule: FixRule = {
     let fixed = scriptContent;
     for (let i = matches.length - 1; i >= 0; i--) {
       const { fullMatch, routeName, paramValue } = matches[i];
-      const r = routeName.toLowerCase();
-      let inferredPath: string;
-      if (r.includes("post") || r.includes("detail")) {
-        inferredPath = `/blog/\${${paramValue}}`;
-      } else if (r.includes("user") || r.includes("profile")) {
-        inferredPath = `/user/\${${paramValue}}`;
-      } else {
-        const pathSegment = routeName.replace(/([A-Z])/g, "-$1").toLowerCase().replace(/^-/, "");
-        inferredPath = `/${pathSegment}/\${${paramValue}}`;
-      }
+      const pathSegment = routeName.replace(/([A-Z])/g, "-$1").toLowerCase().replace(/^-/, "");
+      const inferredPath = `/${pathSegment}/\${${paramValue}}`;
       const replacement = `router.push({ path: \`${inferredPath}\` })`;
       fixed = fixed.replace(fullMatch, replacement);
       result.fixes.push(`Secured router.push with params for route '${routeName}' (Vue Router 4 - using path)`);
@@ -568,4 +630,51 @@ export const routerPushNameParamsToPathRule: FixRule = {
     }
     return result;
   }
+};
+
+/**
+ * Fix: Unwrap defineAsyncComponent in router - Vue Router expects () => import() for lazy routes.
+ * component: defineAsyncComponent(() => import('./X.vue')) → component: () => import('./X.vue')
+ * Generic: applies to any router file (router/, router.js, router.ts).
+ */
+export const routerDefineAsyncComponentUnwrapRule: FixRule = {
+  id: "router-define-async-component-unwrap",
+  description: "Unwrap defineAsyncComponent in router for lazy route components",
+  priority: 90,
+  shouldApply: (filePath, content) => {
+    const isRouter = filePath.includes("router/") || filePath.endsWith("router.js") || filePath.endsWith("router.ts");
+    return isRouter && content.includes("defineAsyncComponent");
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    let fixed = content;
+    fixed = fixed.replace(
+      /component\s*:\s*defineAsyncComponent\s*\(\s*\(\s*\)\s*=>\s*import\s*\(([^)]+)\)\s*\)/g,
+      "component: () => import($1)"
+    );
+    fixed = fixed.replace(
+      /(\w+)\s*=\s*defineAsyncComponent\s*\(\s*\(\s*\)\s*=>\s*import\s*\(([^)]+)\)\s*\)/g,
+      "$1 = () => import($2)"
+    );
+    if (fixed !== content) {
+      result.fixed = true;
+      result.fixes.push("Unwrapped defineAsyncComponent for router lazy components");
+      const contentWithoutImports = fixed.replace(/import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"]\s*;?\s*\n?/g, "");
+      const stillUsesDefineAsync = contentWithoutImports.includes("defineAsyncComponent");
+      if (!stillUsesDefineAsync) {
+        fixed = fixed.replace(
+          /import\s*\{([^}]*),\s*defineAsyncComponent\s*\}\s*from\s*['"]vue['"]/,
+          (_, s) => `import { ${s.trim()} } from "vue"`
+        ).replace(
+          /import\s*\{\s*defineAsyncComponent\s*(?:,\s*)?([^}]*)\}\s*from\s*['"]vue['"]/,
+          (_, s) => s.trim() ? `import { ${s.trim()} } from "vue"` : ""
+        ).replace(
+          /import\s*\{\s*defineAsyncComponent\s*\}\s*from\s*['"]vue['"]\s*;?\s*\n?/,
+          ""
+        );
+      }
+      result.content = fixed;
+    }
+    return result;
+  },
 };

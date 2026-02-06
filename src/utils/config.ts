@@ -13,6 +13,10 @@ export interface VueMigratorConfig {
   ignore?: string[];
   /** Custom store paths (e.g. ["src/stores", "src/store"]) - used by store analyzer */
   storePaths?: string[];
+  /** Custom filter file paths (e.g. ["src/filters", "src/util/filters"]) - for filter imports */
+  filterPaths?: string[];
+  /** Custom router paths (e.g. ["src/router", "src/routes"]) - for router detection */
+  routerPaths?: string[];
   /** Fixer rules to enable (by rule id) - only these run if specified */
   fixerRulesEnable?: string[];
   /** Fixer rules to disable (by rule id) */
@@ -67,6 +71,8 @@ function mergeConfig(
   return {
     ignore: user.ignore ?? defaults.ignore,
     storePaths: user.storePaths ?? defaults.storePaths,
+    filterPaths: user.filterPaths ?? defaults.filterPaths,
+    routerPaths: user.routerPaths ?? defaults.routerPaths,
     fixerRulesEnable: user.fixerRulesEnable,
     fixerRulesDisable: user.fixerRulesDisable,
     transformations: user.transformations ?? defaults.transformations,

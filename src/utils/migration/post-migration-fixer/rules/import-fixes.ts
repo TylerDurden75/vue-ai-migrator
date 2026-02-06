@@ -742,6 +742,9 @@ export const addMissingStoreImportsRule: FixRule = {
       return result; // No store information available
     }
 
+    // Only add imports for modules that exist in the project (avoid adding useBlogStore when no blog store)
+    const existingModules = new Set(Object.values(storeMethodMap));
+
     let fixed = content;
     const scriptMatch = fixed.match(/<script[^>]*>([\s\S]*?)<\/script>/);
     
@@ -802,10 +805,11 @@ export const addMissingStoreImportsRule: FixRule = {
       }
     });
 
-    // Add missing imports and initializations
+    // Add missing imports and initializations (only for modules that exist in project)
     const addedImports: string[] = [];
     
     usedStores.forEach((moduleName, storeVar) => {
+      if (!existingModules.has(moduleName)) return; // Skip if store module doesn't exist
       const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
       const importPath = moduleName === "index" ? "@/store/index" : `@/store/modules/${moduleName}`;
 

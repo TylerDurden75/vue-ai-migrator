@@ -10,25 +10,33 @@ import {
   asyncFunctionRule,
   storeIndexRemoveObsoleteImportsRule,
   storeIndexNamedExportRule,
+  storeCreateStoreToUseIndexRule,
   storeDefineStoreClosingRule,
   storeVuexGettersDispatchRule,
   storeCommitToDirectRule,
-  storeGettersToRefRule,
+  storeGettersToRefRule,           // Priority 86 (getters.xxx → xxx.value)
+  storeSetItemsParamShadowRule,   // Priority 86 (SET_ITEMS param shadowing)
+  storeComputedRefMissingValueRule,
   storeComputedResultRule,
   storeAddLoadingRule,
   storeEventTypeRule,
   storeReturnCurrentUserRule,
   duplicateKeysRule,
-  piniaStoreCrossStoreDepsRule
+  piniaStoreCrossStoreDepsRule,
+  storeAddMissingAuthMethodsRule
 } from "./rules/store-fixes";
-import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, routerGuardPiniaRule, catchAllRouteRule, routeQueryRedirectGuardRule, routerPushNameParamsToPathRule } from "./rules/router-fixes";
+import { createAppSyntaxRule, createRouterConflictRule, vue2GlobalApiRule, createWebHistoryRule, routerGuardPiniaRule, catchAllRouteRule, routeQueryRedirectGuardRule, routerPushNameParamsToPathRule, routerDefineAsyncComponentUnwrapRule } from "./rules/router-fixes";
 import { missingVueImportsRule, splitImportsOnSameLineRule, removeVuexImportsRule, removeVueCompilerMacrosRule, mergeDuplicateImportsRule, duplicateSameIdentifierImportsRule, correctWrongStoreImportsRule, addMissingStoreImportsRule, vueSetRule, dataImportConflictRule } from "./rules/import-fixes";
 import { computedValueRule, vueComputedExtraParenRule, malformedComputedRule, computedSyntaxRule } from "./rules/computed-fixes";
-import { templateInterpolationParensRule, templateCurrencyNonNumericRule, missingComponentImportsRule, templateFilterFunctionImportsRule, missingFilterImportsRule, vModelBindingsRule } from "./rules/template-fixes";
+import { routerViewTransitionRule, componentVariableShadowingRule, webpackPublicAliasRule, templateAdjacentMustacheSpacingRule, templateInterpolationParensRule, routerLinkUserContentRule, timeAgoWrongArgRule, templateCurrencyNonNumericRule, missingComponentImportsRule, hostWrongArgRule, templateFilterFunctionImportsRule, missingFilterImportsRule, vModelBindingsRule } from "./rules/template-fixes";
+import { scriptStyleInsideTemplateRule, duplicateSymbolDeclarationRule, scriptSetupUndeclaredVarsRule, loadingRefRule } from "./rules/vue-structure-fixes";
+import { routerVueUseRemovalRule, routerSSRHistoryRule, ssrContextToInjectRule, asyncDataStoreDispatchRule, storeDispatchToDirectRule, barIndexStoreFixRule, storePiniaStateFixRule, onBeforeUnmountAddLetDeclarationRule, onBeforeUnmountOptionalChainingRule, watchListPropsGuardRule, listsPropsGuardRule, storeRouteSyncRule, storeSelfDispatchRule, storeActiveIdsRouteRule } from "./rules/ssr-fixes";
 import { wrongStorePropertyRule, nullChecksLengthRule, detailViewStoreRule } from "./rules/final-fixes";
+import { eventBusDetectionRule } from "./rules/event-bus-fixes";
 import { destructuringKeyValueParamRule, incorrectEventTypeRule, filtersKeyAccessRule, stripTypeScriptAnnotationsRule, typescriptTypeImprovementsRule } from "./rules/type-fixes";
+import { processEnvToImportMetaRule } from "./rules/env-fixes";
 import { vueStoreVuexToPiniaRule } from "./rules/vue-store-vuex";
-import { storeScriptSetupRule, replaceThisRouterRouteRule, missingUseRouteImportRule, missingUseRouterImportRule, watchPropsRefRule, storeThemeBindingRule, secureRouterPushRule, routerPushTypeCheckRule, fixStoreMemberMismatchRule } from "./rules/store-script-setup-fixes";
+import { storeScriptSetupRule, replaceThisRouterRouteRule, missingUseRouteImportRule, missingUseRouterImportRule, watchPropsRefRule, storeThemeBindingRule, secureRouterPushRule, routerPushTypeCheckRule, fixStoreMemberMismatchRule, storeRefsFromIndexStoreRule, thisBarToGetCurrentInstanceRule, indexStoreDuplicateRule, thisStoreCommitToStoreRule, thisStoreToIndexStoreRule, thisRootIsMountedRule, thisNextTickRule, returnThisInScriptSetupRule } from "./rules/store-script-setup-fixes";
 import { formatWithPrettier } from "../prettier-formatter";
 import { astCache } from "./utils/ast-cache";
 import { loadConfig } from "../../config";
@@ -42,23 +50,41 @@ ruleEngine.registerRules([
   scriptSetupTagSpaceRule,         // Priority 99 (<scriptsetup → <script setup)
   removeExportDefaultRule,        // Priority 100 (remove export default in script setup)
   createAppSyntaxRule,            // Priority 95
+  scriptStyleInsideTemplateRule,  // Priority 96 (script/style inside template → correct SFC)
+  routerVueUseRemovalRule,         // Priority 93 (remove Vue.use(Router))
+  routerSSRHistoryRule,           // Priority 92 (createMemoryHistory for SSR)
+  ssrContextToInjectRule,         // Priority 91 (this.$ssrContext → inject(ssrContext))
+  createRouterConflictRule,       // Priority 94 (createRouter naming conflict)
   vue2GlobalApiRule,              // Priority 94 (Vue.filter, app.mixin when not imported, etc.)
   createWebHistoryRule,           // Priority 94
   routerGuardPiniaRule,           // Priority 93 (router.app.$store → Pinia in guard)
   catchAllRouteRule,              // Priority 93
   routeQueryRedirectGuardRule,   // Priority 92 (route.query.redirect → typeof check)
   routerPushNameParamsToPathRule, // Priority 91 (router.push name+params → path)
+  routerDefineAsyncComponentUnwrapRule, // Priority 90 (defineAsyncComponent → () => import in router)
   missingVueImportsRule,          // Priority 91 (add ref/computed/watch when used but not imported)
   splitImportsOnSameLineRule,      // Priority 92 (split ';import on same line)
   dataImportConflictRule,         // Priority 89 (const X = ref(X) when X imported → alias import)
   asyncFunctionRule,              // Priority 90
   storeIndexNamedExportRule,      // Priority 78 (store/index: add useIndexStore export)
+  storeAddMissingAuthMethodsRule, // Priority 78 (add fetchCurrentUser etc. no-op when missing)
+  storeCreateStoreToUseIndexRule, // Priority 77 (createStore() → useIndexStore)
+  storeRouteSyncRule,             // Priority 76 (setRoute, currentRoute for router sync)
+  storeActiveIdsRouteRule,        // Priority 75 (activeIds → use currentRoute)
+  storeSelfDispatchRule,          // Priority 87 (dispatch('X') → X() inside store)
+  processEnvToImportMetaRule,     // Priority 88 (process.env → import.meta.env for Vite client)
+  asyncDataStoreDispatchRule,     // Priority 88 (store.dispatch → store.METHOD in asyncData)
+  storeDispatchToDirectRule,      // Priority 87 (store.dispatch → store.METHOD anywhere)
+  barIndexStoreFixRule,           // Priority 86 (bar.indexStore.X → bar.X, progress bar)
+  storePiniaStateFixRule,         // Priority 86 (store.indexStore → store, store.state.X → store.X)
   storeIndexRemoveObsoleteImportsRule, // Priority 79 (remove default module imports + Vue)
   storeDefineStoreClosingRule,    // Priority 79 (}; }; }); → } });)
   storeVuexGettersDispatchRule,   // Priority 89 (getters/dispatch → storeVar in stores)
   piniaStoreCrossStoreDepsRule,   // Priority 88 (store using another store)
   storeCommitToDirectRule,        // Priority 87 (commit → SET_LOADING etc.)
   storeGettersToRefRule,          // Priority 86 (getters.xxx → xxx.value)
+  storeSetItemsParamShadowRule,   // Priority 86 (SET_ITEMS param shadowing)
+  storeComputedRefMissingValueRule, // Priority 86 (computed(() => refVar) → refVar.value)
   storeComputedResultRule,        // Priority 85 (computed(() => result) → filter logic)
   storeAddLoadingRule,            // Priority 84 (add loading + SET_LOADING if missing)
   storeEventTypeRule,             // Priority 83 (Event → any in params)
@@ -82,6 +108,7 @@ ruleEngine.registerRules([
   computedValueRule,               // Priority 80
   vueComputedExtraParenRule,       // Priority 72 (})); → });)
   malformedComputedRule,          // Priority 75
+  duplicateSymbolDeclarationRule, // Priority 75 (function X + const X → doX)
   computedSyntaxRule,             // Priority 70
   
   // Store script setup fixes
@@ -90,16 +117,38 @@ ruleEngine.registerRules([
   missingUseRouteImportRule,       // Priority 69 (useRoute() used but not imported → add to vue-router)
   missingUseRouterImportRule,      // Priority 69 (useRouter() used but not imported → add to vue-router)
   watchPropsRefRule,              // Priority 67 (watch(() => prop.value) → watch(() => props.prop))
-  storeThemeBindingRule,         // Priority 66 (currentTheme from appStore when v-model currentTheme)
+  storeRefsFromIndexStoreRule,    // Priority 66 (lists/itemsPerPage → indexStore.lists/itemsPerPage)
+  storeThemeBindingRule,          // Priority 66 (currentTheme from appStore when v-model currentTheme)
+  thisBarToGetCurrentInstanceRule,// Priority 65 (this.$bar → getCurrentInstance $bar)
   secureRouterPushRule,           // Priority 65
+  thisStoreToIndexStoreRule,      // Priority 64 (this.$store → indexStore)
+  thisRootIsMountedRule,          // Priority 64 (this.$root._isMounted → !import.meta.env.SSR)
+  thisNextTickRule,               // Priority 64 (this.$nextTick → nextTick)
+  returnThisInScriptSetupRule,    // Priority 64 (return this → api + defineExpose)
+  indexStoreDuplicateRule,        // Priority 64 (indexStore.indexStore.X → indexStore.X)
   routerPushTypeCheckRule,        // Priority 64
+  thisStoreCommitToStoreRule,     // Priority 63 (this.$store.commit → indexStore.X)
+  watchListPropsGuardRule,        // Priority 61 (if (!props.X) return before watchList)
+  listsPropsGuardRule,            // Priority 60 (indexStore.lists[props.X] ?? [] for SSR)
+  onBeforeUnmountAddLetDeclarationRule, // Priority 63 (let unwatchList when missing)
+  scriptSetupUndeclaredVarsRule,        // Priority 64 (_timer, _cut etc. assigned but not declared)
+  loadingRefRule,                      // Priority 65 (loading = x + template use → ref)
+  onBeforeUnmountOptionalChainingRule, // Priority 62 (unwatchList?.() in cleanup)
   
   // Template fixes
+  routerViewTransitionRule,        // Priority 60 (router-view inside transition → slot props)
+  componentVariableShadowingRule,  // Priority 59 (variable shadowing component → use PascalCase)
   missingComponentImportsRule,     // Priority 60
+  webpackPublicAliasRule,          // Priority 59 (~public/ → /public/)
+  templateAdjacentMustacheSpacingRule,  // Priority 59 (}}{{ → }} {{ )
   templateInterpolationParensRule,  // Priority 58 ({{ expr) }} / {{ fn(arg }} → fix parens)
+  routerLinkUserContentRule,        // Priority 58 (router-link to user: username in link, timeAgo in ago)
+  timeAgoWrongArgRule,              // Priority 57 (timeAgo(x.by) → timeAgo(x.time))
+  hostWrongArgRule,                  // Priority 57 (host(item.score) → item.score)
   templateCurrencyNonNumericRule,   // Priority 57 (currency(.name/.category) → remove currency)
   templateFilterFunctionImportsRule, // Priority 56 ({{ capitalize() }} → import from @/filters)
   missingFilterImportsRule,        // Priority 55
+  eventBusDetectionRule,          // Priority 50 (detect $on/$off/$once → suggest mitt/provide-inject)
   vModelBindingsRule,             // Priority 50
   
   // Medium priority: Dependent fixes
@@ -200,3 +249,28 @@ export { clearStoreAnalysisCache } from "./utils/store-analysis-cache";
  * Re-export fixImportPaths for migration pipeline compatibility
  */
 export { fixImportPaths } from "../import-paths";
+
+/**
+ * Pre-migration SFC structure fix: move script/style from inside template to correct position.
+ * Call this BEFORE codemods so the parser can correctly parse the file.
+ */
+export async function fixSFCStructureBeforeMigration(
+  filePath: string,
+  content: string
+): Promise<{ content: string; fixed: boolean }> {
+  if (!filePath.endsWith(".vue")) return { content, fixed: false };
+  if (!scriptStyleInsideTemplateRule.shouldApply(filePath, content)) {
+    return { content, fixed: false };
+  }
+  const result = await scriptStyleInsideTemplateRule.apply(filePath, content, {
+    enableTypeScript: false,
+    projectRoot: undefined,
+    isVueFile: true,
+    scriptContent: "",
+    templateContent: "",
+    astCache: { get: () => ({}), update: () => {} } as any,
+    fixerRulesDisable: undefined,
+    fixerRulesEnable: undefined,
+  });
+  return { content: result.content, fixed: result.fixed };
+}

@@ -6,6 +6,9 @@
 // Analysis utilities
 export * from './analysis';
 
+// Project detectors
+export * from './detectors';
+
 // Cache utilities
 export * from './cache';
 

@@ -8,6 +8,170 @@ import type { FixRule, FixContext, FixRuleResult } from "../types";
 import { getCachedRegex } from "../utils/regex-cache";
 
 /**
+ * Fix: Vue Router 4 - <router-view> can no longer be used directly inside <transition>.
+ * Use slot props: <router-view v-slot="{ Component }"><transition><component :is="Component" /></transition></router-view>
+ */
+export const routerViewTransitionRule: FixRule = {
+  id: "router-view-transition",
+  description: "Fix router-view inside transition for Vue Router 4 (use slot props)",
+  priority: 60,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      /<transition[^>]*>[\s\S]*?<router-view[\s>]/.test(content) &&
+      !content.includes('v-slot="{ Component }"')
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: [],
+    };
+    const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
+    if (!templateMatch) return result;
+    const [, openTag, template, closeTag] = templateMatch;
+    // <transition ...><router-view ...></router-view></transition> (flexible whitespace/newlines)
+    const pattern = /<transition\s+([^>]*)>[\s\S]*?<router-view\s*([^>]*)>\s*<\/router-view>[\s\S]*?<\/transition>/;
+    const match = template.match(pattern);
+    if (!match) return result;
+    const [, transitionAttrs, routerViewAttrs] = match;
+    const fixed = template.replace(
+      pattern,
+      `<router-view v-slot="{ Component }">
+      <transition ${transitionAttrs}>
+        <component :is="Component" ${routerViewAttrs.trim()} />
+      </transition>
+    </router-view>`
+    );
+    result.content = content.replace(
+      /<template[^>]*>[\s\S]*?<\/template>/,
+      `${openTag}${fixed}${closeTag}`
+    );
+    result.fixed = true;
+    result.fixes.push("Fixed router-view inside transition for Vue Router 4");
+    return result;
+  },
+};
+
+/**
+ * Fix: Variable shadowing component - when const X = computed(...) shadows imported component X.
+ * Use PascalCase <X> in template for the component so Vue resolves to the component, not the variable.
+ * Pattern: <comment v-for="id in comment.kids"> where comment is a variable → <Comment v-for=...>
+ */
+export const componentVariableShadowingRule: FixRule = {
+  id: "component-variable-shadowing",
+  description: "Fix variable shadowing component - use PascalCase for component in template",
+  priority: 59,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script setup")) return false;
+    const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    // Find variables that could shadow: const x = computed(...) or const x = ref(...)
+    const varMatches = script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:computed|ref)\s*\(/g);
+    for (const m of varMatches) {
+      const varName = m[1];
+      const pascalName = varName.charAt(0).toUpperCase() + varName.slice(1);
+      // Template uses <varname (kebab) and we import PascalName
+      if (
+        new RegExp(`<${varName}[\\s>]`).test(template) &&
+        (script.includes(`import ${pascalName}`) || script.includes(`import { ${pascalName} }`))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+    if (!templateMatch || !scriptMatch) return result;
+    const [, openTag, template, closeTag] = templateMatch;
+    const script = scriptMatch[1];
+    const varMatches = [...script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:computed|ref)\s*\(/g)];
+    let fixed = template;
+    for (const m of varMatches) {
+      const varName = m[1];
+      const pascalName = varName.charAt(0).toUpperCase() + varName.slice(1);
+      if (
+        new RegExp(`<${varName}[\\s>]`).test(fixed) &&
+        (script.includes(`import ${pascalName}`) || script.includes(`import { ${pascalName} }`))
+      ) {
+        fixed = fixed.replace(new RegExp(`<${varName}([\\s>])`, "g"), `<${pascalName}$1`);
+        fixed = fixed.replace(new RegExp(`</${varName}>`, "g"), `</${pascalName}>`);
+        result.fixed = true;
+      }
+    }
+    if (result.fixed) {
+      result.content = content.replace(/<template[^>]*>[\s\S]*?<\/template>/, `${openTag}${fixed}${closeTag}`);
+      result.fixes.push("Fixed component variable shadowing (use PascalCase for component)");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: Webpack alias ~public/ to Vite path /public/
+ */
+export const webpackPublicAliasRule: FixRule = {
+  id: "webpack-public-alias",
+  description: "Replace ~public/ with /public/ for Vite",
+  priority: 59,
+  shouldApply: (filePath, content) =>
+    filePath.endsWith(".vue") && content.includes("~public/"),
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+    const fixed = content.replace(/~public\//g, "/public/");
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Replaced ~public/ with /public/ (Vite)");
+    }
+    return result;
+  }
+};
+
+/**
+ * Fix: Adjacent template interpolations or tag+mustache missing space (e.g. "user56 minutes").
+ * Patterns: }}{{ → }} {{ ; ></tag>{{ → ></tag> {{
+ * Generic: applies to any Vue template.
+ */
+export const templateAdjacentMustacheSpacingRule: FixRule = {
+  id: "template-adjacent-mustache-spacing",
+  description: "Add space between adjacent {{ }} or tag+{{ to fix formatting",
+  priority: 59,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<template>")) return false;
+    const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
+    return /\}\}\{\{/.test(template) || /<\/(?:[\w-]+)[^>]*>\{\{/.test(template);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
+    if (!templateMatch) return result;
+    const [, openTag, template, closeTag] = templateMatch;
+    let fixed = template.replace(/\}\}\{\{/g, "}} {{ ");
+    fixed = fixed.replace(/(<\/(?:[\w-]+)[^>]*>)(\{\{)/g, "$1 $2");
+    if (fixed !== template) {
+      result.content = content.replace(
+        /<template[^>]*>[\s\S]*?<\/template>/,
+        `${openTag}${fixed}${closeTag}`
+      );
+      result.fixed = true;
+      result.fixes.push("Added space between adjacent template interpolations");
+    }
+    return result;
+  }
+};
+
+/**
  * Fix: Malformed template interpolations - missing or extra parentheses in {{ }}
  * - {{ fn(arg }} → {{ fn(arg) }} (missing closing paren)
  * - {{ expr) }} → {{ expr }} (extra closing paren before }})
@@ -67,10 +231,13 @@ function resolveFilterPath(projectRoot: string | undefined): string {
       path.join(projectRoot, "src", "filters", "index.ts"),
       path.join(projectRoot, "src", "utils", "filters", "index.js"),
       path.join(projectRoot, "src", "utils", "filters.ts"),
+      path.join(projectRoot, "src", "util", "filters.js"),
+      path.join(projectRoot, "src", "util", "filters.ts"),
       path.join(projectRoot, "src", "filters.js")
     ];
     const hit = candidates.find((p) => fs.existsSync(p));
-    if (hit && (hit.includes("utils") && hit.includes("filters"))) return "@/utils/filters";
+    if (hit && hit.includes("util") && hit.includes("filters")) return "@/util/filters";
+    if (hit && hit.includes("utils") && hit.includes("filters")) return "@/utils/filters";
     if (hit) return "@/filters";
   }
   return "@/filters";
@@ -177,18 +344,125 @@ export const missingComponentImportsRule: FixRule = {
   }
 };
 
+/** Author prop aliases (username): .by (HN), .author */
+const AUTHOR_PROPS = "by|author";
+/** Timestamp prop aliases: .time (HN), .createdAt */
+const TIME_PROPS = "time|createdAt";
+
+/**
+ * Fix: router-link to profile/user page with wrong content - link should show username (x.by), not time.
+ * Pattern: <router-link :to="'/user/' + x.by">{{ timeAgo(x.time) }}</router-link>{{ x.time }} ago
+ * → <router-link :to="...">{{ x.by }}</router-link> {{ timeAgo(x.time) }} ago
+ * Generic: .by/.author for username, .time/.createdAt for timestamp.
+ */
+export const routerLinkUserContentRule: FixRule = {
+  id: "router-link-user-content",
+  description: "Fix router-link: show username in link, timeAgo in 'ago' part",
+  priority: 58,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<template>")) return false;
+    const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
+    return (
+      new RegExp(`<router-link[^>]*:to="[^"]*\\+\\s*\\w+\\.(?:${AUTHOR_PROPS})"[^>]*>\\s*\\{\\{\\s*timeAgo\\s*\\(\\s*\\w+\\.(?:${TIME_PROPS})\\s*\\)\\s*\\}\\}\\s*<\\/router-link>`).test(template) &&
+      new RegExp(`\\{\\{\\s*\\w+\\.(?:${TIME_PROPS})\\s*\\}\\}\\s*ago`).test(template)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
+    if (!templateMatch) return result;
+    const [, openTag, template, closeTag] = templateMatch;
+    const pattern = new RegExp(
+      `(<router-link[^>]*:to="[^"]*\\+\\s*(\\w+)\\.(${AUTHOR_PROPS})"[^>]*>)\\s*\\{\\{\\s*timeAgo\\s*\\(\\s*\\2\\.(${TIME_PROPS})\\s*\\)\\s*\\}\\}\\s*(<\\/router-link>)\\s*\\{\\{\\s*\\2\\.\\4\\s*\\}\\}\\s*ago`,
+      "g"
+    );
+    const fixed = template.replace(pattern, "$1{{ $2.$3 }}$5 {{ timeAgo($2.$4) }} ago");
+    if (fixed !== template) {
+      result.content = content.replace(/<template[^>]*>[\s\S]*?<\/template>/, `${openTag}${fixed}${closeTag}`);
+      result.fixed = true;
+      result.fixes.push("Fixed router-link to user: username in link, timeAgo in ago part");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: timeAgo(x.by) → timeAgo(x.time) - timeAgo expects timestamp, .by is username.
+ * Generic: .by/.author (username) → .time/.createdAt (timestamp).
+ */
+const WRONG_TIMEAGO_PROPS = "by|author";
+const RIGHT_TIMEAGO_PROPS: Record<string, string> = { by: "time", author: "createdAt" };
+
+export const timeAgoWrongArgRule: FixRule = {
+  id: "time-ago-wrong-arg",
+  description: "Replace timeAgo(x.by/author) with timeAgo(x.time/createdAt) - timeAgo expects timestamp",
+  priority: 57,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<template>")) return false;
+    const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
+    return new RegExp(`timeAgo\\s*\\(\\s*\\w+\\.(?:${WRONG_TIMEAGO_PROPS})\\s*\\)`).test(template);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
+    if (!templateMatch) return result;
+    const [, openTag, template, closeTag] = templateMatch;
+    const pattern = new RegExp(`timeAgo\\s*\\(\\s*(\\w+)\\.(${WRONG_TIMEAGO_PROPS})\\s*\\)`, "g");
+    const fixed = template.replace(pattern, (_, varName, prop) =>
+      `timeAgo(${varName}.${RIGHT_TIMEAGO_PROPS[prop] ?? "time"})`
+    );
+    if (fixed !== template) {
+      result.content = content.replace(/<template[^>]*>[\s\S]*?<\/template>/, `${openTag}${fixed}${closeTag}`);
+      result.fixed = true;
+      result.fixes.push("Fixed timeAgo(.by/.author) → timeAgo(.time/.createdAt)");
+    }
+    return result;
+  },
+};
+
+/** Properties that are NOT URLs - host() expects URL, passing these is wrong */
+const NON_URL_PROPS = "score|id|count|amount|name|title|price|value|index|key|type|status|date|time";
+
+/**
+ * Fix: host(item.score) → item.score (host expects URL, not numeric/text props).
+ * Generic: host(x.prop) when prop is non-URL (score, id, count, etc.) → raw value.
+ */
+export const hostWrongArgRule: FixRule = {
+  id: "host-wrong-arg",
+  description: "Replace host(non-URL) with raw value (host expects URL)",
+  priority: 57,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<template>")) return false;
+    const template = content.match(/<template>([\s\S]*?)<\/template>/)?.[1] ?? "";
+    return new RegExp(`host\\s*\\(\\s*[^)]*\\.(?:${NON_URL_PROPS})\\s*\\)`).test(template);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const templateMatch = content.match(/(<template>)([\s\S]*?)(<\/template>)/);
+    if (!templateMatch) return result;
+    let template = templateMatch[2];
+    const fixed = template.replace(new RegExp(`host\\s*\\(\\s*([^)]*\\.(?:${NON_URL_PROPS}))\\s*\\)`, "g"), "$1");
+    if (fixed !== template) {
+      result.content = content.replace(templateMatch[0], templateMatch[1] + fixed + templateMatch[3]);
+      result.fixed = true;
+      result.fixes.push("Replaced host(non-URL) with raw value");
+    }
+    return result;
+  },
+};
+
 /**
  * Fix: Add filter imports when template uses filter as function (e.g. {{ capitalize(x) }}, {{ currency(price) }})
- * Vue 3 has no global filters - each component must import. Path is resolved from project (src/filters, src/utils/filters, etc.)
+ * Vue 3 has no global filters - each component must import. Generic: detects any fn(x) in template.
  */
 export const templateFilterFunctionImportsRule: FixRule = {
   id: "template-filter-function-imports",
-  description: "Add filter imports when template uses capitalize(), currency() etc. (path from project)",
+  description: "Add filter imports when template uses filter functions (path from project)",
   priority: 56,
   shouldApply: (filePath, content) => {
     if (!filePath.endsWith(".vue") || !content.includes("<script setup") || !content.includes("<template>")) return false;
     const templateSection = content.match(/<template>([\s\S]*?)<\/template>/)?.[1] ?? "";
-    return /\{\{\s*(capitalize|currency)\s*\(/.test(templateSection);
+    return /\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\(/.test(templateSection);
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
@@ -196,8 +470,11 @@ export const templateFilterFunctionImportsRule: FixRule = {
     const scriptMatch = content.match(/<script([^>]*)>([\s\S]*?)<\/script>/);
     if (!scriptMatch) return result;
     const usedFilters = new Set<string>();
-    for (const name of ["capitalize", "currency"]) {
-      if (new RegExp(`\\{\\{\\s*${name}\\s*\\(`).test(templateSection)) usedFilters.add(name);
+    const fnCallRe = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g;
+    const SKIP_BUILTINS = new Set(["JSON", "parseFloat", "parseInt", "Number", "String", "Boolean", "Array", "Object", "Math", "Date", "RegExp", "Map", "Set", "Promise", "Symbol", "BigInt"]);
+    let m;
+    while ((m = fnCallRe.exec(templateSection)) !== null) {
+      if (!SKIP_BUILTINS.has(m[1])) usedFilters.add(m[1]);
     }
     if (usedFilters.size === 0) return result;
     let scriptContent = scriptMatch[2];

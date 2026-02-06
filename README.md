@@ -667,6 +667,9 @@ module.exports = {
 
   // Custom store paths (for store analyzer)
   storePaths: ["src/store", "src/stores", "store"],
+  // Custom filter/router paths (override detection)
+  filterPaths: ["src/filters", "src/util/filters"],
+  routerPaths: ["src/router", "src/routes"],
 
   // Fixer rules to disable (by rule id)
   fixerRulesDisable: ["detail-view-store-rule"],

@@ -51,31 +51,44 @@ export function transformTemplate(template: string): TemplateTransformResult {
   }
 
   // Transform slot attribute to v-slot (non-scoped)
-  // Old: <div slot="name">
-  // New: <template v-slot:name><div>
-  // Note: This is complex and may need manual review
-  const slotAttrRegex = /<(\w+)([^>]*)\s+slot\s*=\s*["']([^"']+)["']([^>]*)>/gi;
-  if (slotAttrRegex.test(transformed)) {
-    result.issues.push('Slot attributes found - may need manual conversion to v-slot');
+  // Old: <div slot="name">content</div> inside component
+  // New: <template v-slot:name><div>content</div></template>
+  // Note: Nested same-name tags may need manual review (regex limitation)
+  const slotAttrRegex = /<(\w+)([^>]*)\s+slot\s*=\s*["']([^"']+)["']([^>]*)>([\s\S]*?)<\/\1>/gi;
+  transformed = transformed.replace(slotAttrRegex, (match, tag, attrs1, slotName, attrs2, content) => {
+    const fullAttrs = (attrs1 + attrs2).replace(/\s*slot\s*=\s*["'][^"']+["']/, '').trim();
     result.modified = true;
-  }
+    return `<template v-slot:${slotName}><${tag}${fullAttrs ? ' ' + fullAttrs : ''}>${content}</${tag}></template>`;
+  });
 
-  // Transform filters in templates
-  // Old: {{ value | filterName }}
-  // New: {{ filterName(value) }} or computed property
-  const filterRegex = /\{\{\s*([^|]+)\s*\|\s*(\w+)(?:\(([^)]*)\))?\s*\}\}/g;
-  if (filterRegex.test(transformed)) {
-    transformed = transformed.replace(
-      /\{\{\s*([^|]+)\s*\|\s*(\w+)(?:\(([^)]*)\))?\s*\}\}/g,
-      (_match, value, filterName, args) => {
+  // Transform filters in templates (supports chained filters)
+  // Old: {{ value | filterName }} or {{ value | f1 | f2 }}
+  // New: {{ filterName(value) }} or {{ f2(f1(value)) }}
+  // Process each {{ }} block to avoid matching | outside mustaches
+  let filterModified = false;
+  const mustacheRegex = /\{\{([^}]*)\}\}/g;
+  transformed = transformed.replace(mustacheRegex, (fullMatch, inner) => {
+    if (!inner.includes('|')) return fullMatch;
+    // Match (value) | (filter) - skip whitespace-only value to avoid " " | "f"
+    const singleFilterRegex = /([^|{}]+)\s*\|\s*(\w+)(?:\(([^)]*)\))?/g;
+    let prev = '';
+    let innerResult = inner;
+    while (prev !== innerResult) {
+      prev = innerResult;
+      innerResult = innerResult.replace(singleFilterRegex, (_m: string, value: string, filterName: string, args?: string) => {
         const trimmedValue = value.trim();
+        if (!trimmedValue) return _m;
+        filterModified = true;
         const trimmedArgs = args ? args.trim() : '';
         if (trimmedArgs) {
-          return `{{ ${filterName}(${trimmedValue}, ${trimmedArgs}) }}`;
+          return `${filterName}(${trimmedValue}, ${trimmedArgs})`;
         }
-        return `{{ ${filterName}(${trimmedValue}) }}`;
-      }
-    );
+        return `${filterName}(${trimmedValue})`;
+      });
+    }
+    return `{{ ${innerResult.trim()} }}`;
+  });
+  if (filterModified) {
     result.modified = true;
     result.issues.push('Filters converted to function calls - ensure filter functions exist');
   }

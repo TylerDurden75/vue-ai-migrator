@@ -2,7 +2,7 @@
  * Unit tests for router fixes rules
  */
 
-import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, catchAllRouteRule } from "../rules/router-fixes";
+import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, catchAllRouteRule, routerDefineAsyncComponentUnwrapRule } from "../rules/router-fixes";
 
 describe("Router Fixes Rules", () => {
   describe("createAppSyntaxRule", () => {
@@ -129,6 +129,41 @@ app.mount("#app");`;
         expect(result.content).toContain("/:pathMatch(.*)*");
         expect(result.content).not.toContain("path: '*'");
       }
+    });
+  });
+
+  describe("routerDefineAsyncComponentUnwrapRule", () => {
+    it("unwraps defineAsyncComponent in route component", async () => {
+      const content = `import { createRouter } from "vue-router";
+import { defineAsyncComponent } from "vue";
+
+const routes = [
+  { path: "/item/:id", component: defineAsyncComponent(() => import("./ItemView.vue")) }
+];`;
+
+      const result = await routerDefineAsyncComponentUnwrapRule.apply(
+        "src/router/index.js",
+        content,
+        { enableTypeScript: false, isVueFile: false, scriptContent: content, templateContent: "" }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("component: () => import(\"./ItemView.vue\")");
+      expect(result.content).not.toContain("defineAsyncComponent");
+    });
+
+    it("unwraps variable declaration with defineAsyncComponent", async () => {
+      const content = `const ItemView = defineAsyncComponent(() => import("./ItemView.vue"));
+const routes = [{ path: "/item/:id", component: ItemView }];`;
+
+      const result = await routerDefineAsyncComponentUnwrapRule.apply(
+        "src/router/index.js",
+        content,
+        { enableTypeScript: false, isVueFile: false, scriptContent: content, templateContent: "" }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("ItemView = () => import(\"./ItemView.vue\")");
     });
   });
 });

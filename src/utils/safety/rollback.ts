@@ -93,19 +93,17 @@ export class RollbackManager {
       return false;
     }
 
-    // Special handling: if backup is empty, file was created during migration - delete it instead of restoring
+    // Special handling: if backup is empty, file was created during migration - delete it
     const fileName = path.basename(filePath);
     if (!backup.originalContent || backup.originalContent.trim() === '') {
       if (fileName === 'tsconfig.json') {
         return false; // Handled in TypeScript cleanup section
       }
-      if (fileName === 'package-lock.json') {
-        try {
-          await fs.unlink(filePath);
-          return true;
-        } catch {
-          return false;
-        }
+      try {
+        await fs.unlink(filePath);
+        return true;
+      } catch {
+        return false;
       }
     }
 

@@ -156,8 +156,9 @@ export class RuleEngine {
           result.issues.push(...ruleResult.issues);
         }
       } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
         result.issues.push(
-          `Error in rule ${rule.id}: ${error instanceof Error ? error.message : String(error)}`
+          `[${filePath}] Rule ${rule.id}: ${msg}. See docs/TROUBLESHOOTING.md for common solutions.`
         );
       }
     }

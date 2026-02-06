@@ -6,6 +6,13 @@ import type { FixRule, FixContext, FixRuleResult } from "../types";
 import { getCachedRegex } from "../utils/regex-cache";
 import { getStoreMethodMap } from "../utils/store-analysis-cache";
 
+/** Detect store variable from const X = useYStore(). Prefer indexStore, store, mainStore. */
+export function getStoreVarFromScript(scriptContent: string): string | null {
+  const storeVars = [...scriptContent.matchAll(/const\s+(\w+)\s*=\s*use\w+Store\s*\(\s*\)/g)].map((m) => m[1]);
+  const preferred = ["indexStore", "store", "mainStore"];
+  return storeVars.find((v) => preferred.includes(v)) ?? storeVars[0] ?? null;
+}
+
 /**
  * Fix: Replace this.methodName() / this.propertyName in <script setup> with methodName / propertyName.
  * (this.$router / this.$route are handled by replaceThisRouterRouteRule.)
@@ -275,50 +282,84 @@ export const watchPropsRefRule: FixRule = {
   }
 };
 
+/** Extract store vars and their setters (setX) from script */
+function getStoreSetters(script: string): Array<{ storeVar: string; setter: string; getter: string }> {
+  const stores = [...script.matchAll(/const\s+(\w+)\s*=\s*use\w+Store\s*\(\s*\)/g)].map((m) => m[1]);
+  const result: Array<{ storeVar: string; setter: string; getter: string }> = [];
+  for (const storeVar of stores) {
+    const setterRe = new RegExp(`${storeVar}\\.(set\\w+)\\s*\\(`, "g");
+    let m;
+    while ((m = setterRe.exec(script)) !== null) {
+      const setter = m[1];
+      const getter = setter.slice(3, 4).toLowerCase() + setter.slice(4);
+      result.push({ storeVar, setter, getter });
+    }
+  }
+  return result;
+}
+
+/** Extract v-model and {{ prop }} bindings from template */
+function getTemplateBindings(template: string): Set<string> {
+  const bindings = new Set<string>();
+  for (const m of template.matchAll(/v-model=["']([^"']+)["']/g)) bindings.add(m[1]);
+  for (const m of template.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) bindings.add(m[1]);
+  return bindings;
+}
+
 /**
- * Fix: Template uses binding (e.g. currentTheme) with appStore.setTheme but no reactive binding defined.
- * Pattern: template has v-model="themeName" or {{ themeName }}, script has appStore.setTheme, no themeName → add computed from store.
- * Generic: store getter/setter binding - when store has setX and template uses x, add computed({ get: () => store.x, set: (v) => store.setX(v) }).
+ * Fix: Template uses binding (e.g. v-model="currentTheme") but no reactive binding defined.
+ * Generic: when store has setX and template uses x/currentX, add computed({ get: () => store.x, set: (v) => store.setX(v) }).
  */
 export const storeThemeBindingRule: FixRule = {
   id: "store-theme-binding",
-  description: "Add computed theme binding (currentTheme) from app store when template uses it and setTheme exists",
+  description: "Add computed binding from store when template uses v-model/{{ prop }} and store has setX",
   priority: 66,
   shouldApply: (filePath, content) => {
     if (!filePath.endsWith(".vue") || !content.includes("<template>")) return false;
     const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
     const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
-    const templateUsesTheme = /(?:v-model=["']currentTheme["']|{{\s*currentTheme\s*}})/.test(template);
-    const hasAppStoreSetTheme = /(?:appStore|app\s*Store)\.setTheme/.test(script) || /setTheme\s*\(/.test(script);
-    const hasStore = /useAppStore|useStore\s*\(/.test(script);
-    const noCurrentTheme = !/const\s+currentTheme\s*=/.test(script) && !/currentTheme\s*=\s*computed/.test(script);
-    return templateUsesTheme && hasStore && hasAppStoreSetTheme && noCurrentTheme;
+    const bindings = getTemplateBindings(template);
+    const setters = getStoreSetters(script);
+    for (const { getter } of setters) {
+      const currentName = "current" + getter.charAt(0).toUpperCase() + getter.slice(1);
+      const templateName = bindings.has(getter) ? getter : bindings.has(currentName) ? currentName : null;
+      if (templateName && !new RegExp(`const\\s+${templateName}\\s*=`).test(script)) {
+        return true;
+      }
+    }
+    return false;
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
     if (!scriptMatch) return result;
     let scriptContent = scriptMatch[2];
-    const storeVarMatch = scriptContent.match(/(\w+)\s*=\s*useAppStore\s*\(\s*\)/);
-    const storeVar = storeVarMatch ? storeVarMatch[1] : "appStore";
-    const computedImport = scriptContent.includes("computed") && /import\s*\{[^}]*\bcomputed\b/.test(scriptContent);
-    const setterParam = _context.enableTypeScript ? "(v: string)" : "(v)";
-    const insertBlock = `const currentTheme = computed({\n  get: () => ${storeVar}.theme,\n  set: ${setterParam} => ${storeVar}.setTheme(v),\n});\n\n`;
-    let insertPos = scriptContent.indexOf("const changeTheme");
-    if (insertPos === -1) insertPos = scriptContent.indexOf("const " + storeVar);
-    if (insertPos === -1) insertPos = scriptContent.search(/\n(?!\s*\/\/)/);
-    if (insertPos >= 0) {
-      if (!computedImport && !scriptContent.includes("import { computed }")) {
-        scriptContent = scriptContent.replace(
-          /(import\s*\{)([^}]+)(\}\s*from\s*['"]vue['"])/,
-          (_: string, open: string, imports: string, close: string) =>
-            imports.includes("computed") ? open + imports + close : open + imports.trim() + ", computed " + close
-        );
+    const bindings = getTemplateBindings(template);
+    const setters = getStoreSetters(scriptContent);
+    for (const { storeVar, setter, getter } of setters) {
+      const currentName = "current" + getter.charAt(0).toUpperCase() + getter.slice(1);
+      const templateName = bindings.has(getter) ? getter : bindings.has(currentName) ? currentName : null;
+      if (!templateName) continue;
+      if (new RegExp(`const\\s+${templateName}\\s*=`).test(scriptContent)) continue;
+      const setterParam = _context.enableTypeScript ? "(v: string)" : "(v)";
+      const insertBlock = `const ${templateName} = computed({\n  get: () => ${storeVar}.${getter},\n  set: ${setterParam} => ${storeVar}.${setter}(v),\n});\n\n`;
+      let insertPos = scriptContent.indexOf(`const ${storeVar}`);
+      if (insertPos === -1) insertPos = scriptContent.search(/\n(?!\s*\/\/)/);
+      if (insertPos >= 0) {
+        if (!/import\s*\{[^}]*\bcomputed\b/.test(scriptContent)) {
+          scriptContent = scriptContent.replace(
+            /(import\s*\{)([^}]+)(\}\s*from\s*['"]vue['"])/,
+            (_: string, open: string, imports: string, close: string) =>
+              imports.includes("computed") ? open + imports + close : open + imports.trim() + ", computed " + close
+          );
+        }
+        scriptContent = scriptContent.slice(0, insertPos) + insertBlock + scriptContent.slice(insertPos);
+        result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+        result.fixed = true;
+        result.fixes.push(`Added ${templateName} computed from ${storeVar} for v-model binding`);
+        break;
       }
-      scriptContent = scriptContent.slice(0, insertPos) + insertBlock + scriptContent.slice(insertPos);
-      result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
-      result.fixed = true;
-      result.fixes.push("Added currentTheme computed from app store for v-model binding");
     }
     return result;
   }
@@ -739,3 +780,332 @@ export const fixStoreMemberMismatchRule: FixRule = {
     return result;
   }
 };
+
+/** List/pagination props often on store - bare refs need storeVar prefix */
+const STORE_LIST_PROPS = ["lists"] as const;
+const STORE_PAGINATION_PROPS = ["itemsPerPage", "pageSize", "perPage"] as const;
+
+/**
+ * Fix: Bare lists/itemsPerPage/pageSize etc. used without store prefix when useXStore exists.
+ * Generic: any list/pagination prop (lists, items, data, itemsPerPage, pageSize, perPage).
+ */
+export const storeRefsFromIndexStoreRule: FixRule = {
+  id: "store-refs-from-index-store",
+  description: "Replace bare lists/itemsPerPage/pageSize with storeVar prefix when useXStore exists",
+  priority: 66,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    const storeVar = getStoreVarFromScript(script);
+    if (!storeVar) return false;
+    for (const prop of [...STORE_LIST_PROPS, ...STORE_PAGINATION_PROPS]) {
+      const bareUse = STORE_LIST_PROPS.includes(prop as typeof STORE_LIST_PROPS[number])
+        ? new RegExp(`\\b${prop}\\s*\\[`).test(script)
+        : new RegExp(`(^|[^.\\w])${prop}\\b`).test(script);
+      const hasPrefix = new RegExp(`${storeVar}\\.${prop}`).test(script);
+      if (bareUse && !hasPrefix) return true;
+    }
+    return false;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+    const storeVar = getStoreVarFromScript(scriptContent);
+    if (!storeVar) return result;
+    const fixedProps: string[] = [];
+    for (const prop of STORE_LIST_PROPS) {
+      const pattern = new RegExp(`\\b${prop}\\s*\\[`, "g");
+      const prefixPattern = new RegExp(`${storeVar}\\.${prop}`);
+      if (pattern.test(scriptContent) && !prefixPattern.test(scriptContent)) {
+        scriptContent = scriptContent.replace(new RegExp(`\\b${prop}\\s*\\[`, "g"), `${storeVar}.${prop}[`);
+        fixedProps.push(prop);
+      }
+    }
+    for (const prop of STORE_PAGINATION_PROPS) {
+      const pattern = new RegExp(`(^|[^.\\w])${prop}\\b`, "g");
+      const prefixPattern = new RegExp(`${storeVar}\\.${prop}`);
+      if (pattern.test(scriptContent) && !prefixPattern.test(scriptContent)) {
+        scriptContent = scriptContent.replace(new RegExp(`(^|[^.\\w])${prop}\\b`, "g"), `$1${storeVar}.${prop}`);
+        fixedProps.push(prop);
+      }
+    }
+    if (fixedProps.length > 0) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+      result.fixed = true;
+      result.fixes.push(`Replaced bare ${fixedProps.join("/")} with ${storeVar}. prefix`);
+    }
+    return result;
+  },
+};
+
+/** Vue 2 global properties handled by other rules - do not convert to getCurrentInstance */
+const RESERVED_GLOBAL_PROPS = new Set(["router", "route", "store"]);
+
+/**
+ * Fix: this.$xxx → getCurrentInstance()?.appContext.config.globalProperties.$xxx in script setup.
+ * Generic: applies to any global plugin ($bar, $progress, $toast, etc.) - varName = xxx without $.
+ */
+export const thisBarToGetCurrentInstanceRule: FixRule = {
+  id: "this-bar-to-get-current-instance",
+  description: "Replace this.$xxx with getCurrentInstance for any global plugin",
+  priority: 65,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
+    const match = content.match(/this\.\$(\w+)/g);
+    return match?.some((m) => !RESERVED_GLOBAL_PROPS.has(m.replace("this.$", ""))) ?? false;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+    const props = new Set<string>();
+    let m;
+    const re = /this\.\$(\w+)/g;
+    while ((m = re.exec(scriptContent)) !== null) {
+      if (!RESERVED_GLOBAL_PROPS.has(m[1])) props.add(m[1]);
+    }
+    if (props.size === 0) return result;
+
+    if (!scriptContent.includes("getCurrentInstance")) {
+      const vueImport = scriptContent.match(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/);
+      if (vueImport) {
+        const imports = vueImport[1].trim();
+        scriptContent = scriptContent.replace(
+          /import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/,
+          `import { ${imports}, getCurrentInstance } from 'vue'`
+        );
+      } else {
+        scriptContent = "import { getCurrentInstance } from 'vue';\n" + scriptContent;
+      }
+    }
+
+    const afterImports = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/)?.[0]?.length ?? 0;
+    const decls: string[] = [];
+    for (const prop of props) {
+      const varName = prop;
+      const decl = `const ${varName} = getCurrentInstance()?.appContext.config.globalProperties.$${prop};`;
+      if (!scriptContent.includes(`const ${varName} = getCurrentInstance()`)) {
+        decls.push(decl);
+      }
+      scriptContent = scriptContent.replace(new RegExp(`this\\.\\$${prop}\\b`, "g"), varName);
+    }
+    if (decls.length > 0) {
+      scriptContent = scriptContent.slice(0, afterImports) + "\n" + decls.join("\n") + "\n" + scriptContent.slice(afterImports);
+    }
+    result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+    result.fixed = true;
+    result.fixes.push(`Replaced this.$${[...props].join(", this.$")} with getCurrentInstance`);
+    return result;
+  },
+};
+
+/**
+ * Fix: storeVar.storeVar.METHOD → storeVar.METHOD (duplicate store name). Generic for any store.
+ */
+export const indexStoreDuplicateRule: FixRule = {
+  id: "index-store-duplicate",
+  description: "Fix storeVar.storeVar.METHOD to storeVar.METHOD (duplicate store name)",
+  priority: 64,
+  shouldApply: (filePath, content) => {
+    return /\b(\w+)\.\1\./.test(content) || /\b(\w+)\s*\n\s*\.\1\./.test(content);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fixed = content
+      .replace(/\b(\w+)\.\1\./g, "$1.")
+      .replace(/\b(\w+)\s*\n\s*\.\1\./g, "$1.");
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Fixed storeVar.storeVar to storeVar");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: this.$store.commit("X", args) → indexStore.X(args) when indexStore exists.
+ */
+export const thisStoreCommitToStoreRule: FixRule = {
+  id: "this-store-commit-to-store",
+  description: "Replace this.$store.commit with store mutation call in script setup",
+  priority: 63,
+  shouldApply: (filePath, content) => {
+    return filePath.endsWith(".vue") && content.includes("this.$store.commit");
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+    const storeVar = getStoreVarFromScript(scriptContent);
+    if (!storeVar) return result;
+    scriptContent = scriptContent.replace(
+      /this\.\$store\.commit\s*\(\s*['"]([^'"]+)['"]\s*,\s*([^)]+)\)/g,
+      `${storeVar}.$1($2)`
+    );
+    if (scriptContent !== scriptMatch[2]) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+      result.fixed = true;
+      result.fixes.push("Replaced this.$store.commit with store mutation");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: this.$store → storeVar in script setup. Generic: detects store from const X = useYStore().
+ * In Composition API, this doesn't exist - use the store variable from useXStore().
+ */
+export const thisStoreToIndexStoreRule: FixRule = {
+  id: "this-store-to-index-store",
+  description: "Replace this.$store with store variable (Composition API has no this)",
+  priority: 64,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      content.includes("<script") &&
+      content.includes("this.$store")
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch || !/this\.\$store/.test(scriptMatch[2])) return result;
+    const scriptContent = scriptMatch[2];
+    const storeVar = getStoreVarFromScript(scriptContent);
+    if (!storeVar) return result;
+    const newScript = scriptContent.replace(/this\.\$store/g, storeVar);
+    if (newScript !== scriptContent) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[1] + newScript + scriptMatch[3]);
+      result.fixed = true;
+      result.fixes.push(`Replaced this.$store with ${storeVar}`);
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: this.$root._isMounted → !import.meta.env.SSR (Vue 3: $root._isMounted was SSR guard).
+ */
+export const thisRootIsMountedRule: FixRule = {
+  id: "this-root-is-mounted",
+  description: "Replace this.$root._isMounted with !import.meta.env.SSR for client check",
+  priority: 64,
+  shouldApply: (filePath, content) => {
+    return filePath.endsWith(".vue") && content.includes("this.$root._isMounted");
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fixed = content.replace(/this\.\$root\._isMounted/g, "!import.meta.env.SSR");
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Replaced this.$root._isMounted with !import.meta.env.SSR");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: this.$nextTick → nextTick in script setup. In Composition API, this doesn't exist.
+ */
+export const thisNextTickRule: FixRule = {
+  id: "this-next-tick",
+  description: "Replace this.$nextTick with nextTick from vue",
+  priority: 64,
+  shouldApply: (filePath, content) => {
+    return filePath.endsWith(".vue") && content.includes("this.$nextTick");
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+    if (!scriptContent.includes("this.$nextTick")) return result;
+    if (!scriptContent.includes("nextTick")) {
+      const vueImport = scriptContent.match(/import\s+\{([^}]+)\}\s+from\s+['"]vue['"]/);
+      if (vueImport) {
+        const imports = vueImport[1];
+        if (!/nextTick/.test(imports)) {
+          scriptContent = scriptContent.replace(
+            /import\s+\{([^}]+)\}\s+from\s+['"]vue['"]/,
+            (m, imps) => `import { ${imps.trim()}, nextTick } from 'vue'`
+          );
+        }
+      } else {
+        scriptContent = "import { nextTick } from 'vue';\n" + scriptContent;
+      }
+    }
+    scriptContent = scriptContent.replace(/this\.\$nextTick/g, "nextTick");
+    if (scriptContent !== scriptMatch[2]) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+      result.fixed = true;
+      result.fixes.push("Replaced this.$nextTick with nextTick");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: return this in script setup (method chaining). In Composition API, this doesn't exist.
+ * Replaces with api object + defineExpose for components used as bar.start().finish() etc.
+ */
+export const returnThisInScriptSetupRule: FixRule = {
+  id: "return-this-in-script-setup",
+  description: "Replace return this with api object + defineExpose for method chaining in script setup",
+  priority: 64,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      content.includes("<script") &&
+      content.includes("return this")
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch || !/return this/.test(scriptMatch[2])) return result;
+    let scriptContent = scriptMatch[2];
+    // Find const fnName = (...) => { ... return this } - collect fnNames
+    const methodNames = new Set<string>();
+    const fnPattern = /const\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>\s*\{/g;
+    let fnMatch;
+    while ((fnMatch = fnPattern.exec(scriptContent)) !== null) {
+      const fnName = fnMatch[1];
+      const start = fnMatch.index + fnMatch[0].length;
+      const brace = findMatchingBrace(scriptContent, start - 1);
+      if (brace >= 0) {
+        const body = scriptContent.slice(start, brace);
+        if (/return\s+this\b/.test(body)) methodNames.add(fnName);
+      }
+    }
+    if (methodNames.size === 0) return result;
+    const names = [...methodNames];
+    const apiName = "api";
+    if (scriptContent.includes("defineExpose")) return result;
+    scriptContent = scriptContent.replace(/\breturn\s+this\b/g, `return ${apiName}`);
+    const apiDecl = `\nconst ${apiName} = { ${names.join(", ")} };\ndefineExpose(${apiName});`;
+    scriptContent = scriptContent.trimEnd() + apiDecl;
+    result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+    result.fixed = true;
+    result.fixes.push("Replaced return this with api object + defineExpose");
+    return result;
+  },
+};
+
+function findMatchingBrace(str: string, openIdx: number): number {
+  if (str[openIdx] !== "{") return -1;
+  let depth = 1;
+  for (let i = openIdx + 1; i < str.length; i++) {
+    if (str[i] === "{") depth++;
+    else if (str[i] === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}

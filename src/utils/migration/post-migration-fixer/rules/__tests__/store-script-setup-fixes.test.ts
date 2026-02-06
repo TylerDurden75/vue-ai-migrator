@@ -7,7 +7,10 @@ import {
   secureRouterPushRule,
   routerPushTypeCheckRule,
   replaceThisRouterRouteRule,
-  fixStoreMemberMismatchRule
+  fixStoreMemberMismatchRule,
+  thisStoreToIndexStoreRule,
+  returnThisInScriptSetupRule,
+  thisBarToGetCurrentInstanceRule
 } from "../store-script-setup-fixes";
 import * as path from "path";
 
@@ -527,5 +530,123 @@ const fetchProduct = () => indexStore.fetchProduct(props.id);
     expect(result.content).toContain("productStore.fetchProduct");
     expect(result.content).not.toContain("indexStore.fetchProduct");
     expect(result.content).toMatch(/productStore\.(allProducts|currentProduct)/);
+  });
+});
+
+describe("thisStoreToIndexStoreRule (generic)", () => {
+  it("should replace this.$store with indexStore when useIndexStore exists", async () => {
+    const content = `<script setup>
+const indexStore = useIndexStore();
+const items = this.$store.state.items;
+</script>`;
+    const result = await thisStoreToIndexStoreRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("indexStore.state.items");
+    expect(result.content).not.toContain("this.$store");
+  });
+
+  it("should replace this.$store with userStore when only useUserStore exists (generic)", async () => {
+    const content = `<script setup>
+const userStore = useUserStore();
+const user = this.$store.state.user;
+</script>`;
+    const result = await thisStoreToIndexStoreRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("userStore.state.user");
+    expect(result.content).not.toContain("this.$store");
+  });
+
+  it("should not apply when no store variable exists", async () => {
+    const content = `<script setup>
+const items = this.$store.state.items;
+</script>`;
+    const result = await thisStoreToIndexStoreRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(false);
+  });
+});
+
+describe("thisBarToGetCurrentInstanceRule (generic)", () => {
+  it("replaces this.$bar with getCurrentInstance (vue-hackernews case)", async () => {
+    const content = `<script setup>
+const start = () => { this.$bar.start(); };
+</script>`;
+    const result = await thisBarToGetCurrentInstanceRule.apply("ProgressBar.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("bar.start()");
+    expect(result.content).toContain("const bar = getCurrentInstance()?.appContext.config.globalProperties.$bar");
+    expect(result.content).not.toContain("this.$bar");
+  });
+
+  it("replaces this.$progress (generic: any global plugin)", async () => {
+    const content = `<script setup>
+this.$progress.start();
+</script>`;
+    const result = await thisBarToGetCurrentInstanceRule.apply("App.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("progress.start()");
+    expect(result.content).toContain("const progress = getCurrentInstance()?.appContext.config.globalProperties.$progress");
+  });
+
+  it("does NOT replace this.$router, this.$route, this.$store (handled by other rules)", async () => {
+    expect(thisBarToGetCurrentInstanceRule.shouldApply("test.vue", "<script>this.$router.push('/')</script>")).toBe(false);
+    expect(thisBarToGetCurrentInstanceRule.shouldApply("test.vue", "<script>this.$store.dispatch('x')</script>")).toBe(false);
+  });
+});
+
+describe("returnThisInScriptSetupRule", () => {
+  it("should replace return this with api object and add defineExpose", async () => {
+    const content = `<script setup>
+const start = () => {
+  percent.value = 100;
+  return this;
+};
+const finish = () => {
+  hide();
+  return this;
+};
+</script>`;
+    const result = await returnThisInScriptSetupRule.apply("ProgressBar.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("return api");
+    expect(result.content).not.toContain("return this");
+    expect(result.content).toContain("defineExpose(api)");
+    expect(result.content).toContain("const api = { start, finish }");
+  });
+
+  it("should not apply when defineExpose already exists", async () => {
+    const content = `<script setup>
+const start = () => { return this; };
+defineExpose({ start });
+</script>`;
+    const result = await returnThisInScriptSetupRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(false);
   });
 });

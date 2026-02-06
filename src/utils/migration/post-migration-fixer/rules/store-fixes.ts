@@ -2,6 +2,9 @@
  * Rules for fixing Pinia store issues
  */
 
+import * as fs from "fs/promises";
+import * as path from "path";
+import { glob } from "glob";
 import type { FixRule, FixContext, FixRuleResult } from "../types";
 
 /** Find the index of the closing brace that matches the opening brace at startIdx */
@@ -398,6 +401,39 @@ export const duplicateKeysRule: FixRule = {
 };
 
 /**
+ * Fix: SET_ITEMS({ items }) param shadows reactive items - rename param to newItems
+ */
+export const storeSetItemsParamShadowRule: FixRule = {
+  id: "store-set-items-param-shadow",
+  description: "Fix SET_ITEMS param shadowing reactive items object",
+  priority: 86,
+  shouldApply: (filePath, content) => {
+    return (filePath.includes("/store/") || filePath.endsWith("store.js") || filePath.endsWith("store.ts")) &&
+           content.includes("defineStore") &&
+           /function SET_ITEMS\s*\(\s*\{\s*items\s*\}\s*\)/.test(content) &&
+           /items\.forEach\s*\(/.test(content);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: [],
+    };
+    const fixed = content.replace(
+      /function SET_ITEMS\s*\(\s*\{\s*items\s*\}\s*\)\s*\{\s*items\.forEach/g,
+      "function SET_ITEMS({ items: newItems }) {\n    newItems.forEach"
+    );
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Fixed SET_ITEMS param shadowing");
+    }
+    return result;
+  },
+};
+
+/**
  * Fix: In Pinia store files, convert Vuex getters['module/getter'] and dispatch('module/action')
  * to storeVar.getter / storeVar.action(), and add import + const storeVar = useXxxStore().
  * Keeps store return shape consistent.
@@ -556,6 +592,54 @@ export const storeGettersToRefRule: FixRule = {
 };
 
 /**
+ * Fix: computed(() => refVar) where refVar is a ref - add .value (returns array, not ref).
+ * Pattern: filteredPosts = computed(() => posts) → computed(() => posts.value)
+ */
+export const storeComputedRefMissingValueRule: FixRule = {
+  id: "store-computed-ref-missing-value",
+  description: "Fix computed(() => refVar) to use refVar.value when refVar is a ref",
+  priority: 86,
+  shouldApply: (filePath, content) => {
+    if (
+      !(filePath.includes("/store/") || filePath.includes("store.ts") || filePath.includes("store.js")) ||
+      !content.includes("defineStore") ||
+      !content.includes("computed")
+    ) {
+      return false;
+    }
+    const refVars = Array.from(content.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*ref\s*\(/g)).map((m) => m[1]);
+    if (refVars.length === 0) return false;
+    const refPattern = new RegExp(
+      `computed\\s*(<[^>]+>)?\\s*\\(\\s*[^)]*\\)\\s*=>\\s*(${refVars.join("|")})\\s*\\)`,
+      "g"
+    );
+    return refPattern.test(content);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const refVars = Array.from(content.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*ref\s*\(/g)).map((m) => m[1]);
+    if (refVars.length === 0) return result;
+
+    let fixed = content;
+    for (const refVar of refVars) {
+      // Match => refVar ) but not => refVar.value ) - use (?:) for non-capturing type param to get $2 = closing )
+      const pattern = new RegExp(
+        `(computed\\s*(?:<[^>]+>)?\\s*\\(\\s*[^)]*\\)\\s*=>\\s*)${refVar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\.value)(\\s*\\))`,
+        "g"
+      );
+      const before = fixed;
+      fixed = fixed.replace(pattern, `$1${refVar}.value$2`);
+      if (fixed !== before) {
+        result.fixed = true;
+        result.fixes.push(`Added .value to ${refVar} in computed`);
+      }
+    }
+    if (result.fixed) result.content = fixed;
+    return result;
+  }
+};
+
+/**
  * Fix: computed(() => result) where result is undefined → generate filter logic (filters + array).
  */
 export const storeComputedResultRule: FixRule = {
@@ -606,6 +690,7 @@ export const storeComputedResultRule: FixRule = {
         }
       }
       if (!arrayVar && arrayVars.length > 0) arrayVar = arrayVars[0];
+      if (!arrayVar) continue; // Skip if no ref to use (avoid null.value)
 
       let filterVar: string | null = null;
       for (const v of filterVars) {
@@ -816,7 +901,7 @@ export const storeReturnCurrentUserRule: FixRule = {
     return (
       (filePath.includes("/store/") || filePath.includes("store.ts") || filePath.includes("store.js")) &&
       content.includes("defineStore") &&
-      content.includes("Computed = computed") &&
+      /\w+Computed\s*=\s*computed/.test(content) &&
       content.includes("return {")
     );
   },
@@ -936,6 +1021,38 @@ export const storeIndexNamedExportRule: FixRule = {
     result.content = fixed;
     result.fixed = true;
     result.fixes.push("Added named export useIndexStore to store/index");
+    return result;
+  }
+};
+
+/**
+ * Fix: export function createStore() { return defineStore(...) } → export const useIndexStore = defineStore(...)
+ */
+export const storeCreateStoreToUseIndexRule: FixRule = {
+  id: "store-create-store-to-use-index",
+  description: "Convert createStore() wrapper to direct useIndexStore export",
+  priority: 77,
+  shouldApply: (filePath, content) => {
+    return (filePath.endsWith("store/index.ts") || filePath.endsWith("store/index.js")) &&
+           /export\s+function\s+createStore\s*\(\s*\)\s*\{\s*return\s+defineStore/.test(content) &&
+           !content.includes("export const useIndexStore");
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+    if (!/export\s+function\s+createStore\s*\(\s*\)\s*\{\s*return\s+defineStore/.test(content)) return result;
+    let fixed = content.replace(
+      /export\s+function\s+createStore\s*\(\s*\)\s*\{\s*return\s+defineStore/,
+      "export const useIndexStore = defineStore"
+    );
+    fixed = fixed.replace(/\}\)\s*;?\s*\n\s*\}\s*$/, "});");
+    result.content = fixed;
+    result.fixed = true;
+    result.fixes.push("Converted createStore() to useIndexStore export");
     return result;
   }
 };
@@ -1067,4 +1184,135 @@ export const piniaStoreCrossStoreDepsRule: FixRule = {
     );
     return result;
   }
+};
+
+/** Index-store variable names (convention: useIndexStore → indexStore, store, or $store) */
+const INDEX_STORE_VAR_PATTERN =
+  /(?:indexStore|(?<![a-zA-Z])store(?![a-zA-Z])|\$store)\.(\w+)(?:\s*\(|\b)/g;
+
+/**
+ * Detect which store methods are called on the index store in the project.
+ * Generic: no hardcoded method names; extracts any method called on indexStore/store/$store.
+ */
+/** Store-like names (store, XStore) - never add as methods (store.indexStore is wrong) */
+function isStoreVarName(name: string): boolean {
+  return name === "store" || /^\w+Store$/.test(name);
+}
+
+async function getCalledIndexStoreMethods(projectRoot: string): Promise<Set<string>> {
+  const called = new Set<string>();
+  try {
+    const files = await glob("**/*.{vue,js,ts}", {
+      cwd: projectRoot,
+      absolute: true,
+      ignore: ["**/node_modules/**", "**/dist/**", "**/*.d.ts"],
+    });
+    for (const file of files) {
+      const content = await fs.readFile(file, "utf-8").catch(() => "");
+      let m: RegExpExecArray | null;
+      INDEX_STORE_VAR_PATTERN.lastIndex = 0;
+      while ((m = INDEX_STORE_VAR_PATTERN.exec(content)) !== null) {
+        const method = m[1];
+        if (!isStoreVarName(method)) called.add(method);
+      }
+    }
+  } catch {
+    // If scan fails, return empty (no methods to add)
+  }
+  return called;
+}
+
+/** Extract members already in the store return object */
+function getMembersInReturn(content: string): Set<string> {
+  const inReturn = new Set<string>();
+  const returnMatch = content.match(/return\s*\{([\s\S]+?)\}\s*;?\s*\n\s*\}\)/);
+  if (returnMatch) {
+    const returnContent = returnMatch[1];
+    const propPattern = /(\w+)(?:\s*:\s*\w+)?/g;
+    let p: RegExpExecArray | null;
+    while ((p = propPattern.exec(returnContent)) !== null) {
+      inReturn.add(p[1]);
+    }
+  }
+  return inReturn;
+}
+
+/** Extract functions/const defined in the store (before return) */
+function getMembersDefined(content: string): Set<string> {
+  const defined = new Set<string>();
+  const funcPattern = /(?:function|const)\s+(\w+)\s*[=:(]/g;
+  let f: RegExpExecArray | null;
+  while ((f = funcPattern.exec(content)) !== null) {
+    const name = f[1];
+    if (!/^use\w+Store$/.test(name) && !["ref", "computed", "defineStore", "return", "export"].includes(name)) {
+      defined.add(name);
+    }
+  }
+  return defined;
+}
+
+/**
+ * Fix: Add missing store methods as no-op when called in project but absent from store.
+ * Generic: detects any method called on indexStore/store/$store by scanning project.
+ */
+export const storeAddMissingAuthMethodsRule: FixRule = {
+  id: "store-add-missing-auth-methods",
+  description: "Add no-op methods to index store when called in project but missing",
+  priority: 78,
+  shouldApply: (filePath, content) => {
+    const normalized = filePath.replace(/\\/g, "/");
+    const isIndexStore =
+      normalized.endsWith("store/index.js") ||
+      normalized.endsWith("store/index.ts") ||
+      normalized.endsWith("src/store/index.js") ||
+      normalized.endsWith("src/store/index.ts");
+    return isIndexStore && content.includes("defineStore") && content.includes("return {");
+  },
+  apply: async (filePath, content, context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const inReturn = getMembersInReturn(content);
+    const defined = getMembersDefined(content);
+    const called = context.projectRoot
+      ? await getCalledIndexStoreMethods(context.projectRoot)
+      : new Set<string>();
+    // Methods called but not in return object (defined or not)
+    const toAddToReturn = [...called].filter((m) => !inReturn.has(m));
+    if (toAddToReturn.length === 0) return result;
+
+    let fixed = content;
+
+    // 1. Add function declarations for methods that don't exist yet
+    const toAddAsNew = toAddToReturn.filter((m) => !defined.has(m));
+    const returnIdx = fixed.search(/\breturn\s*\{/);
+    if (returnIdx === -1) return result;
+
+    if (toAddAsNew.length > 0) {
+      const funcBlock = toAddAsNew.map((m) => `  function ${m}() {\n    return Promise.resolve();\n  }\n`).join("");
+      fixed = fixed.slice(0, returnIdx) + funcBlock + fixed.slice(returnIdx);
+    }
+
+    // 2. Add to return object (all toAddToReturn: new + defined-but-not-exported like setRoute)
+    const newReturnIdx = fixed.indexOf("return {", returnIdx);
+    const braceOpen = fixed.indexOf("{", newReturnIdx);
+    if (braceOpen === -1) return result;
+    const returnClose = findMatchingBrace(fixed, braceOpen);
+    if (returnClose === -1) return result;
+
+    const returnContent = fixed.slice(braceOpen + 1, returnClose);
+    const additions = toAddToReturn.map((m) => `    ${m}: ${m},`).join("\n");
+    const newReturnContent = returnContent.trimEnd().replace(/,?\s*$/, "") + ",\n" + additions;
+    fixed =
+      fixed.slice(0, braceOpen + 1) +
+      newReturnContent +
+      fixed.slice(returnClose);
+
+    result.content = fixed;
+    result.fixed = true;
+    const fixMsgs: string[] = [];
+    if (toAddAsNew.length > 0) fixMsgs.push(`Added no-op: ${toAddAsNew.join(", ")}`);
+    const toExportOnly = toAddToReturn.filter((m) => defined.has(m));
+    if (toExportOnly.length > 0) fixMsgs.push(`Added to return: ${toExportOnly.join(", ")}`);
+    result.fixes.push(fixMsgs.join("; "));
+    return result;
+  },
 };

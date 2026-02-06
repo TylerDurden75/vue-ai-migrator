@@ -238,6 +238,18 @@ describe('Template Transformations', () => {
       expect(result.template).not.toContain('slot-scope');
     });
 
+    it('should transform slot attribute to v-slot', () => {
+      const template = '<div slot="header">Header content</div>';
+
+      const result = transformTemplate(template);
+
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('<template v-slot:header>');
+      expect(result.template).toContain('<div>Header content</div>');
+      expect(result.template).toContain('</template>');
+      expect(result.template).not.toContain('slot="header"');
+    });
+
     it('should transform filters in templates', () => {
       const template = '{{ message | capitalize }}';
 
@@ -246,6 +258,25 @@ describe('Template Transformations', () => {
       expect(result.modified).toBe(true);
       expect(result.template).toContain('capitalize(message)');
       expect(result.template).not.toContain('|');
+    });
+
+    it('should transform chained filters', () => {
+      const template = '{{ value | filter1 | filter2 }}';
+
+      const result = transformTemplate(template);
+
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('filter2(filter1(value))');
+      expect(result.template).not.toContain('|');
+    });
+
+    it('should transform filters with arguments', () => {
+      const template = '{{ price | currency("€") }}';
+
+      const result = transformTemplate(template);
+
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('currency(price, "€")');
     });
 
     it('should transform $listeners to $attrs', () => {

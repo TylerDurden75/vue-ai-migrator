@@ -6,6 +6,7 @@
 export {
   fixPostMigrationIssues,
   fixImportPaths,
+  fixSFCStructureBeforeMigration,
   clearStoreAnalysisCache,
 } from "./post-migration-fixer/index";
 export type { FixResult } from "./post-migration-fixer/types";

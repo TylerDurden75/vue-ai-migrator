@@ -16,6 +16,7 @@
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:e2e": "jest --testPathPattern=e2e --testTimeout=120000",
     "benchmark": "ts-node benchmarks/performance-benchmark.ts",
     "validate": "ts-node benchmarks/validation-test.ts",
     "build": "echo 'TypeScript compilation...' && npx tsc && echo 'Adding shebang to dist/cli.js...' && node scripts/add-shebang.js && echo 'Build complete.'",
