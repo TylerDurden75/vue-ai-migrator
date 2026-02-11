@@ -20,6 +20,8 @@ _AST-based transformations + AI integration for reliable migrations_
 
 > 🎯 **Vision**: Build a migration tool that is **assisted, reliable, explainable and secure**, not a magic one-click migration.
 
+> 📌 **Target format**: Migrated components use **Composition API** with **`<script setup>`** (template → script → style).
+
 Automatic Vue 2 → Vue 3 migration combining:
 
 - **🆓 Free Mode (Default)**: AST-based transformations - **No API key required**
@@ -50,6 +52,7 @@ Automatic Vue 2 → Vue 3 migration combining:
 ## 🚀 Features
 
 - **🆓 Free mode by default**: AST-based transformations work without API keys
+- **Composition API + script setup**: Migrated components target `<script setup>` format
 - **Automatic codemods**: Comprehensive transformations from Vue 2 to Vue 3
 - **🤖 Optional AI assistance**: Use AI for complex migrations (opt-in with `--ai` flag)
 - **Vue SFC support**: Full parsing and transformation of `.vue` files (template, script, style)
@@ -726,10 +729,11 @@ module.exports = {
 - ✅ **Provide/Inject**: Detection and suggestions for Vue 3 improvements
 - ✅ **Async Components**: `() => import('./Comp.vue')` → `defineAsyncComponent(() => import('./Comp.vue'))`
   - Handles both arrow functions and object component definitions
-- ✅ **Render Functions**: `render(h)` → `render()` with `import { h } from 'vue'` and `resolveComponent()` for registered components
-  - Removes `h` parameter from render functions
-  - Transforms `h('ComponentName')` → `h(resolveComponent('ComponentName'))`
-  - Automatically adds `h` import when used
+- ✅ **Render Functions**: Vue 3 Render Function API (Composition API / script setup compatible)
+  - **Render-only .vue** → converted to **script setup + template**
+  - `render(h)` → `render()` with `import { h } from 'vue'` (for .js/.ts with render)
+  - `h('ComponentName')` → `h(resolveComponent('ComponentName'))` for registered components
+  - VNode props flattening: `attrs`, `domProps`, `on`, `staticClass`, `staticStyle` → Vue 3 flat structure
 
 ### Template Transformations
 
@@ -748,6 +752,10 @@ module.exports = {
 - ✅ **v-bind.sync**: `v-bind:prop.sync` / `:prop.sync` → `v-model:prop`
 - ✅ **Keyboard modifiers**: Keycodes (`.112`, `.13`) → key names (`.f1`, `.enter`)
 - ✅ **@hook lifecycle**: `@hook:mounted` → `@vnode-mounted`
+- ✅ **Custom Elements Interop**: `is` attribute on non-`<component>` tags
+  - Restricted elements (tr, li, option, etc.): `is="x"` → `is="vue:x"`
+  - Other elements: `<div is="x">` → `<component is="x">`
+- ✅ **Vue.config.ignoredElements**: → `app.config.compilerOptions.isCustomElement` (plugins + post-fixer)
 - ✅ **.native modifier**: Removed (events in `$attrs` in Vue 3)
 - ✅ **Transition classes** (in `<style>`): `.v-enter` → `.v-enter-from`, `.v-leave` → `.v-leave-from`
 - ✅ **Vue.set / $set**: Replaced with direct assignment (`obj[key] = value`)

@@ -1089,6 +1089,9 @@ export const storeRefsFromIndexStoreRule: FixRule = {
 /** Vue 2 global properties handled by other rules - do not convert to getCurrentInstance */
 const RESERVED_GLOBAL_PROPS = new Set(["router", "route", "store"]);
 
+/** Vue 2 instance properties removed in Vue 3 (no globalProperties equivalent) */
+const REMOVED_INSTANCE_PROPS = new Set(["children"]);
+
 /** Pinia store names (userStore, appStore, etc.) - use useXStore(), not getCurrentInstance */
 function isStoreGlobalProp(prop: string): boolean {
   return prop.endsWith("Store");
@@ -1108,9 +1111,14 @@ export const thisBarToGetCurrentInstanceRule: FixRule = {
     const match = content.match(/this\.\$(\w+)/g);
     return (
       match?.some(
-        (m) =>
-          !RESERVED_GLOBAL_PROPS.has(m.replace("this.$", "")) &&
-          !isStoreGlobalProp(m.replace("this.$", ""))
+        (m) => {
+          const prop = m.replace("this.$", "");
+          return (
+            !RESERVED_GLOBAL_PROPS.has(prop) &&
+            !REMOVED_INSTANCE_PROPS.has(prop) &&
+            !isStoreGlobalProp(prop)
+          );
+        }
       ) ?? false
     );
   },
@@ -1125,6 +1133,7 @@ export const thisBarToGetCurrentInstanceRule: FixRule = {
     while ((m = re.exec(scriptContent)) !== null) {
       if (
         !RESERVED_GLOBAL_PROPS.has(m[1]) &&
+        !REMOVED_INSTANCE_PROPS.has(m[1]) &&
         !isStoreGlobalProp(m[1])
       ) {
         props.add(m[1]);
@@ -1161,6 +1170,39 @@ export const thisBarToGetCurrentInstanceRule: FixRule = {
     result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
     result.fixed = true;
     result.fixes.push(`Replaced this.$${[...props].join(", this.$")} with getCurrentInstance`);
+    return result;
+  },
+};
+
+/** Vue 3: $children removed - placeholder returns [] and warns. Migrate to template refs. */
+const $CHILDREN_PLACEHOLDER =
+  `(console.warn("[vue-ai-migrator] $children was removed in Vue 3 - use template refs: https://v3-migration.vuejs.org/breaking-changes/children.html"), [])`;
+
+/**
+ * Fix: this.$children → placeholder (Vue 3 removed $children - use template refs)
+ * Generic: applies to .vue (all script blocks) and .js/.ts. Compatible with script setup migration.
+ */
+export const childrenRemovedRule: FixRule = {
+  id: "children-removed",
+  description: "Replace this.$children with placeholder ($children removed in Vue 3)",
+  priority: 70,
+  shouldApply: (filePath, content) => content.includes("this.$children"),
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    if (!content.includes("this.$children")) return result;
+    // Replace in entire file - handles .vue (all script blocks) and .js/.ts generically
+    const fixedContent = content.replace(
+      /this\.\$children\b/g,
+      $CHILDREN_PLACEHOLDER
+    );
+    result.content = fixedContent;
+    result.fixed = true;
+    result.fixes.push(
+      "Replaced this.$children with [] (Vue 3 removed - migrate to template refs)"
+    );
+    result.issues.push(
+      "$children was removed in Vue 3. Use template refs to access child components: https://v3-migration.vuejs.org/breaking-changes/children.html"
+    );
     return result;
   },
 };

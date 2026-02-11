@@ -36,6 +36,41 @@ function extractRootTemplateBlock(content: string): { full: string; attrs: strin
 }
 
 /**
+ * Fix: Remove { functional: true } from component options (removed in Vue 3)
+ */
+export const functionalOptionRemovalRule: FixRule = {
+  id: "functional-option-removal",
+  description: "Remove functional: true from component options (Vue 3)",
+  priority: 94,
+  shouldApply: (filePath, content) => {
+    return (
+      (filePath.endsWith(".vue") || filePath.endsWith(".js") || filePath.endsWith(".ts")) &&
+      /functional\s*:\s*true/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+
+    const fixed = content.replace(
+      /functional\s*:\s*true\s*,?\s*/g,
+      ""
+    );
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Removed functional: true option");
+    }
+
+    return result;
+  }
+};
+
+/**
  * Fix: Script and style blocks nested inside template - move to correct position
  * Malformed: <template><div>...<script>...</script><style>...</style></div></template>
  */

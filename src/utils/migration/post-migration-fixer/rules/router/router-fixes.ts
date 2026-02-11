@@ -61,6 +61,37 @@ export const createAppSyntaxRule: FixRule = {
       result.fixes.push("Fixed createApp syntax");
     }
 
+    // Vue.config.keyCodes removed in Vue 3 - use key names in templates (handled by template transform)
+    if (/Vue\.config\.keyCodes\s*=/.test(fixed)) {
+      fixed = fixed.replace(/Vue\.config\.keyCodes\s*=\s*\{[^}]*\}\s*;?\s*\n?/g, "");
+      result.fixed = true;
+      result.fixes.push("Removed Vue.config.keyCodes (use key names in templates, e.g. .enter instead of .13)");
+    }
+
+    // Vue.config.ignoredElements → app.config.compilerOptions.isCustomElement (Vue 3 Custom Elements Interop)
+    // Note: plugins codemod removes Vue.config - this rule handles leftover or if plugins didn't run
+    const ignoredElementsMatch = fixed.match(
+      /Vue\.config\.ignoredElements\s*=\s*(\[[^\]]*\]|\/[^/]+\/[gimuy]*)\s*;?\s*\n?/
+    );
+    if (ignoredElementsMatch) {
+      const value = ignoredElementsMatch[1];
+      let replacement = "";
+      if (value.startsWith("[")) {
+        replacement = `app.config.compilerOptions.isCustomElement = (tag) => ${value}.includes(tag);\n`;
+      } else {
+        replacement = `app.config.compilerOptions.isCustomElement = (tag) => ${value}.test(tag);\n`;
+      }
+      fixed = fixed.replace(ignoredElementsMatch[0], "");
+      const createAppMatch = fixed.match(/const app = createApp\([^)]+\)/);
+      const insertPos =
+        createAppMatch && createAppMatch.index !== undefined
+          ? createAppMatch.index + createAppMatch[0].length
+          : 0;
+      fixed = fixed.slice(0, insertPos) + "\n" + replacement + fixed.slice(insertPos);
+      result.fixed = true;
+      result.fixes.push("Converted Vue.config.ignoredElements to app.config.compilerOptions.isCustomElement");
+    }
+
     // Ensure app.use(router) is present when router is imported (main.js order)
     if (fixed.includes("import router from") && !fixed.includes("app.use(router)")) {
       const appUsePiniaMatch = fixed.match(/app\.use\(createPinia\(\)\)\s*;?\s*\n/);
@@ -129,6 +160,7 @@ export const vue2GlobalApiRule: FixRule = {
     return (filePath.includes("main.js") || filePath.includes("main.ts")) &&
            (content.includes("Vue.filter") || content.includes("Vue.directive") ||
             content.includes("Vue.component") || content.includes("Vue.mixin") ||
+            content.includes("Vue.use(") ||
             content.includes("app.mixin("));
   },
   apply: async (filePath, content, _context: FixContext) => {
@@ -179,6 +211,24 @@ export const vue2GlobalApiRule: FixRule = {
       result.fixed = true;
       result.fixes.push("Converted Vue.mixin() to app.mixin()");
     }
+
+    // Vue.use(plugin) → app.use(plugin) for generic plugins (exclude Vuex, VueRouter - handled elsewhere)
+    fixed = fixed.replace(/Vue\.use\s*\(\s*([^)]+)\s*\)\s*;?\s*\n?/g, (match, arg) => {
+      const trimmed = arg.trim();
+      if (/\bVuex\b/.test(trimmed)) {
+        result.fixed = true;
+        result.fixes.push("Commented out Vue.use(Vuex) - use Pinia instead");
+        return `// ${match.trim()} // Vuex removed - use Pinia\n`;
+      }
+      if (/\bVueRouter\b|\bRouter\b/.test(trimmed) && !/createRouter/.test(trimmed)) {
+        result.fixed = true;
+        result.fixes.push("Commented out Vue.use(VueRouter) - not needed in Vue 3");
+        return `// ${match.trim()} // Vue 3 router does not need Vue.use()\n`;
+      }
+      result.fixed = true;
+      result.fixes.push(`Converted Vue.use(${trimmed}) to app.use()`);
+      return match.replace(/Vue\.use\s*\(/, "app.use(");
+    });
 
     // Remove or comment app.mixin(mixinName) when mixin was transformed to composable or not imported
     const appMixinPattern = /app\.mixin\((\w+)\)\s*;?\s*\n?/g;

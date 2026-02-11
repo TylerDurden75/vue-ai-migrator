@@ -1,8 +1,18 @@
 import { Transform, FileInfo, API } from 'jscodeshift';
 
+/** Vue 2 → Vue 3 directive hook names (Custom Directives breaking) */
+const DIRECTIVE_HOOK_MAP: Record<string, string> = {
+  bind: "beforeMount",
+  inserted: "mounted",
+  update: "updated", // Vue 3: update removed, use updated instead
+  componentUpdated: "updated",
+  unbind: "unmounted",
+};
+
 /**
- * Transforms Vue 2 custom directives to Vue 3 format
- * Vue 3 directive API has some changes in hook names and parameters
+ * Transforms Vue 2 custom directives to Vue 3 format (Composition API / script setup compatible)
+ * Vue 3 directive API: hook renames, vnode.context → binding.instance
+ * Applies to component directives and Vue.directive() definitions.
  */
 export const directivesTransform: Transform = (fileInfo: FileInfo, api: API) => {
   const j = api.jscodeshift;
@@ -28,25 +38,31 @@ export const directivesTransform: Transform = (fileInfo: FileInfo, api: API) => 
             const dirDef = dirProp.value;
             const properties = dirDef.properties || [];
             
-            // Vue 2 hooks: bind, inserted, update, componentUpdated, unbind
-            // Vue 3 hooks: created, beforeMount, mounted, beforeUpdate, updated, beforeUnmount, unmounted
-            
             properties.forEach((hookProp: any) => {
               if (hookProp.key && hookProp.key.name) {
                 const hookName = hookProp.key.name;
-                
-                // Map Vue 2 hooks to Vue 3
-                const hookMap: Record<string, string> = {
-                  'bind': 'beforeMount',      // Called before element is inserted
-                  'inserted': 'mounted',       // Called when element is inserted
-                  'update': 'beforeUpdate',    // Called when VNode updates
-                  'componentUpdated': 'updated', // Called after VNode and children updated
-                  'unbind': 'unmounted',       // Called when element is removed
-                };
-                
-                if (hookMap[hookName]) {
-                  hookProp.key.name = hookMap[hookName];
+                if (DIRECTIVE_HOOK_MAP[hookName]) {
+                  hookProp.key.name = DIRECTIVE_HOOK_MAP[hookName];
                   hasChanges = true;
+                }
+                // Vue 3: vnode.context → binding.instance (component instance access)
+                const hookValue = hookProp.value || hookProp;
+                const body = hookValue.body;
+                if (body) {
+                  j(body)
+                    .find(j.MemberExpression, {
+                      object: { type: "Identifier", name: "vnode" },
+                      property: { type: "Identifier", name: "context" },
+                    })
+                    .replaceWith(() =>
+                      j.memberExpression(
+                        j.identifier("binding"),
+                        j.identifier("instance")
+                      )
+                    )
+                    .forEach(() => {
+                      hasChanges = true;
+                    });
                 }
               }
             });
@@ -56,20 +72,43 @@ export const directivesTransform: Transform = (fileInfo: FileInfo, api: API) => 
     }
   });
 
-  // Transform Vue.directive() global registration
+  // Transform Vue.directive() definitions (hook names + vnode.context)
   root.find(j.CallExpression).forEach((path: any) => {
     const callee = path.value.callee;
-    
+    const args = path.value.arguments || [];
     if (
-      callee.type === 'MemberExpression' &&
-      callee.object.type === 'Identifier' &&
-      callee.object.name === 'Vue' &&
-      callee.property.type === 'Identifier' &&
-      callee.property.name === 'directive'
+      callee.type === "MemberExpression" &&
+      callee.object?.name === "Vue" &&
+      callee.property?.name === "directive" &&
+      args.length >= 2
     ) {
-      // Vue.directive('name', definition) → app.directive('name', definition)
-      // This requires app context - mark for AI processing
-      hasChanges = true;
+      hasChanges = true; // Vue.directive → app.directive (handled by post-fixer)
+      const def = args[1];
+      if (def.type === "ObjectExpression") {
+        (def.properties || []).forEach((hookProp: any) => {
+          if (hookProp.key?.name && DIRECTIVE_HOOK_MAP[hookProp.key.name]) {
+            hookProp.key.name = DIRECTIVE_HOOK_MAP[hookProp.key.name];
+          }
+          const hookValue = hookProp.value || hookProp;
+          const body = hookValue?.body;
+          if (body) {
+            j(body)
+              .find(j.MemberExpression, {
+                object: { type: "Identifier", name: "vnode" },
+                property: { type: "Identifier", name: "context" },
+              })
+              .replaceWith(() =>
+                j.memberExpression(
+                  j.identifier("binding"),
+                  j.identifier("instance")
+                )
+              )
+              .forEach(() => {
+                hasChanges = true;
+              });
+          }
+        });
+      }
     }
   });
 

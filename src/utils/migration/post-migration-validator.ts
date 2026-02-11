@@ -79,6 +79,11 @@ export async function validateMigration(
           result.warnings.push(`File still uses '$listeners': ${path.relative(projectPath, filePath)}`);
           filesWithIssues++;
         }
+
+        if (content.includes('this.$children')) {
+          result.warnings.push(`File still uses 'this.$children' (removed in Vue 3 - use template refs): ${path.relative(projectPath, filePath)}`);
+          filesWithIssues++;
+        }
         
         if (content.includes('slot-scope=')) {
           result.warnings.push(`File still uses 'slot-scope': ${path.relative(projectPath, filePath)}`);

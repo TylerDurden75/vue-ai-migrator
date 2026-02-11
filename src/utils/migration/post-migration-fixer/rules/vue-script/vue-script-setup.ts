@@ -92,18 +92,20 @@ export const removeExportDefaultRule: FixRule = {
 };
 
 /**
- * Fix: Replace this.$emit('event') with emit('event') in script setup.
- * Adds defineEmits if missing (when this.$emit is used).
+ * Fix: Replace this.$emit / $emit with emit() in script setup (Vue 3 Composition API).
+ * - Script: this.$emit('event') → emit('event')
+ * - Template: $emit('event') → emit('event')
+ * - Adds defineEmits if missing (Vue 3 emits option).
  */
 export const scriptSetupThisEmitRule: FixRule = {
   id: "script-setup-this-emit",
-  description: "Replace this.$emit with emit() in script setup",
+  description: "Replace this.$emit and template $emit with emit() in script setup",
   priority: 85,
   shouldApply: (filePath, content) => {
     return (
       filePath.endsWith(".vue") &&
       content.includes("<script setup") &&
-      content.includes("this.$emit")
+      (content.includes("this.$emit") || content.includes("$emit("))
     );
   },
   apply: async (filePath, content, _context: FixContext) => {
@@ -122,20 +124,33 @@ export const scriptSetupThisEmitRule: FixRule = {
     const openTag = scriptSetupMatch[0].slice(0, scriptSetupMatch[0].indexOf(">") + 1);
     let scriptContent = scriptSetupMatch[1];
 
-    const emitPattern = /this\.\$emit\(['"]([^'"]+)['"]/g;
+    // Collect event names from script (this.$emit)
+    const scriptEmitPattern = /this\.\$emit\(['"]([^'"]+)['"]/g;
     const eventNames = new Set<string>();
     let match;
-    while ((match = emitPattern.exec(scriptContent)) !== null) {
+    while ((match = scriptEmitPattern.exec(scriptContent)) !== null) {
       eventNames.add(match[1]);
     }
 
-    if (eventNames.size === 0) {
+    // Collect event names from template ($emit) - Vue 2 style
+    const templateEmitPattern = /\$emit\s*\(\s*['"]([^'"]+)['"]/g;
+    const templateSection =
+      content.indexOf("<script") >= 0 ? content.slice(0, content.indexOf("<script")) : content;
+    while ((match = templateEmitPattern.exec(templateSection)) !== null) {
+      eventNames.add(match[1]);
+    }
+
+    const hasScriptOrTemplateEmits = eventNames.size > 0;
+    const hasTemplateDollarEmit = /\$emit\s*\(/.test(templateSection);
+    const hasScriptThisEmit = scriptContent.includes("this.$emit");
+
+    if (!hasScriptOrTemplateEmits && !hasTemplateDollarEmit && !hasScriptThisEmit) {
       return result;
     }
 
     const hasDefineEmits = /const\s+emit\s*=\s*defineEmits/.test(scriptContent);
 
-    if (!hasDefineEmits) {
+    if (!hasDefineEmits && eventNames.size > 0) {
       const eventsArray = Array.from(eventNames)
         .map((e) => `"${e}"`)
         .join(", ");
@@ -149,17 +164,30 @@ export const scriptSetupThisEmitRule: FixRule = {
       result.fixes.push(`Added defineEmits for events: ${Array.from(eventNames).join(", ")}`);
     }
 
-    scriptContent = scriptContent.replace(
-      /this\.\$emit\s*\(\s*(['"][^'"]+['"])/g,
-      "emit($1"
-    );
-    result.fixed = true;
-    result.fixes.push("Replaced this.$emit with emit()");
+    // Replace this.$emit with emit in script
+    if (hasScriptThisEmit) {
+      scriptContent = scriptContent.replace(
+        /this\.\$emit\s*\(\s*(['"][^'"]+['"])/g,
+        "emit($1"
+      );
+      result.fixed = true;
+      result.fixes.push("Replaced this.$emit with emit()");
+    }
 
-    result.content = content.replace(
+    // Replace $emit with emit in template (Vue 3 script setup - no $ prefix)
+    // Match $emit( but not this.$emit (negative lookbehind)
+    let outputContent = content;
+    if (hasTemplateDollarEmit) {
+      outputContent = outputContent.replace(/(?<![.\w])\$emit\s*\(/g, "emit(");
+      result.fixed = true;
+      result.fixes.push("Replaced template $emit with emit()");
+    }
+
+    outputContent = outputContent.replace(
       /<script\s+setup[^>]*>[\s\S]*?<\/script>/,
       `${openTag}${scriptContent}</script>`
     );
+    result.content = outputContent;
 
     return result;
   }

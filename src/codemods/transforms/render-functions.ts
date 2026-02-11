@@ -1,18 +1,115 @@
 import { Transform, FileInfo, API } from 'jscodeshift';
 
+/** Convert Vue 2 event name to Vue 3 handler prop: click → onClick */
+function toVue3EventProp(name: string): string {
+  const camel = name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  return "on" + camel.charAt(0).toUpperCase() + camel.slice(1);
+}
+
 /**
- * Transform render functions to use resolveComponent for registered components
- * Vue 3: Use resolveComponent() for components registered globally
- *
- * Also handles removal of contextual h from render
- * Vue 2: render(h) { return h('div') }
- * Vue 3: render() { return h('div') } and import { h } from 'vue'
+ * Flatten Vue 2 VNode props to Vue 3 format.
+ * attrs, domProps → spread; on → onClick etc; staticClass+class → class[]; staticStyle+style → style[]
+ */
+function flattenVNodeProps(j: any, propsObj: any): any[] {
+  if (!propsObj || propsObj.type !== "ObjectExpression" || !propsObj.properties) {
+    return [];
+  }
+
+  const props = propsObj.properties as any[];
+  const getProp = (key: string) => props.find((p: any) => (p.key?.name ?? p.key?.value) === key);
+
+  const hasVue2Props =
+    getProp("attrs") || getProp("domProps") || getProp("on") || getProp("staticClass") || getProp("staticStyle");
+  if (!hasVue2Props) return [];
+
+  const newProps: any[] = [];
+  const skipKeys = new Set(["attrs", "domProps", "on", "staticClass", "staticStyle", "class", "style"]);
+
+  for (const prop of props) {
+    const key = prop.key?.name ?? prop.key?.value;
+    if (skipKeys.has(key)) continue;
+
+    if (key === "class" || key === "style") continue; // handled below
+    newProps.push(prop);
+  }
+
+  // class: merge staticClass + class
+  const staticClass = getProp("staticClass");
+  const classProp = getProp("class");
+  if (staticClass || classProp) {
+    const classEls: any[] = [];
+    if (staticClass) classEls.push(staticClass.value);
+    if (classProp) classEls.push(classProp.value);
+    newProps.push(
+      j.property("init", j.identifier("class"), classEls.length === 1 ? classEls[0] : j.arrayExpression(classEls))
+    );
+  }
+
+  // style: merge staticStyle + style
+  const staticStyle = getProp("staticStyle");
+  const styleProp = getProp("style");
+  if (staticStyle || styleProp) {
+    const styleEls: any[] = [];
+    if (staticStyle) styleEls.push(staticStyle.value);
+    if (styleProp) styleEls.push(styleProp.value);
+    newProps.push(
+      j.property("init", j.identifier("style"), styleEls.length === 1 ? styleEls[0] : j.arrayExpression(styleEls))
+    );
+  }
+
+  // attrs → spread
+  const attrs = getProp("attrs");
+  if (attrs?.value?.type === "ObjectExpression" && attrs.value.properties?.length) {
+    attrs.value.properties.forEach((p: any) => newProps.push(p));
+  }
+
+  // domProps → spread
+  const domProps = getProp("domProps");
+  if (domProps?.value?.type === "ObjectExpression" && domProps.value.properties?.length) {
+    domProps.value.properties.forEach((p: any) => newProps.push(p));
+  }
+
+  // on → onClick, onUpdate:modelValue, etc.
+  const on = getProp("on");
+  if (on?.value?.type === "ObjectExpression" && on.value.properties?.length) {
+    on.value.properties.forEach((p: any) => {
+      const eventKey = p.key?.name ?? p.key?.value;
+      const propName = toVue3EventProp(eventKey);
+      const keyNode = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(propName)
+        ? j.identifier(propName)
+        : j.stringLiteral(propName);
+      newProps.push(j.property("init", keyNode, p.value));
+    });
+  }
+
+  return newProps;
+}
+
+/**
+ * Transform render functions for Vue 3 (script setup / Composition API compatible):
+ * - render(h) → render() + import { h } from 'vue'
+ * - h('Component') → h(resolveComponent('Component'))
+ * - Vue 2 VNode props → Vue 3 flat props (attrs, domProps, on, staticClass, staticStyle)
  */
 export const renderFunctionsTransform: Transform = (fileInfo: FileInfo, api: API) => {
   const j = api.jscodeshift;
   const root = j(fileInfo.source);
   let hasChanges = false;
   const imports = new Set<string>();
+
+  // Flatten Vue 2 VNode props (attrs, domProps, on, staticClass, staticStyle) across entire file
+  root.find(j.CallExpression).forEach((callPath: any) => {
+    const callee = callPath.value.callee;
+    if (callee.type !== "Identifier" || callee.name !== "h") return;
+    const args = callPath.value.arguments || [];
+    if (args.length < 2 || args[1].type !== "ObjectExpression") return;
+
+    const flatProps = flattenVNodeProps(j, args[1]);
+    if (flatProps.length > 0) {
+      callPath.value.arguments[1] = j.objectExpression(flatProps);
+      hasChanges = true;
+    }
+  });
 
   // Find render functions
   root.find(j.ObjectMethod).forEach((path: any) => {

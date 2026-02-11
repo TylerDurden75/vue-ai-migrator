@@ -17,6 +17,7 @@ import {
   isVueFile,
   transformVueFileParts,
 } from "../utils/codegen";
+import { convertRenderToTemplate } from "./transforms/render-to-template";
 
 // Available transformations registry
 const AVAILABLE_TRANSFORMS: Record<string, Transform> = {
@@ -126,7 +127,35 @@ export class CodemodRunner {
         const scriptCode = vueParts.script.content;
         let transformedScript = scriptCode;
 
-        // Transform script section
+        // Render-to-template: convert render-only components to script setup + template
+        let renderConverted = false;
+        const hasNoTemplate = !vueParts.template?.content?.trim();
+        const hasRender = /render\s*[:(]/.test(scriptCode) && /\bh\s*\(/.test(scriptCode);
+        if (
+          hasNoTemplate &&
+          hasRender &&
+          transformationsToApply.includes("render-functions")
+        ) {
+          const r2t = convertRenderToTemplate(scriptCode, {
+            enableTypeScript: options.enableTypeScript ?? false
+          });
+          if (r2t.converted) {
+            vueParts.script.content = r2t.script;
+            vueParts.script.setup = true;
+            if (options.enableTypeScript) {
+              vueParts.script.lang = "ts";
+            }
+            vueParts.template = { content: r2t.template };
+            transformedScript = r2t.script;
+            hasModifications = true;
+            renderConverted = true;
+            result.transformationsApplied++;
+            result.issues.push("Converted render function to script setup + template");
+          }
+        }
+
+        // Transform script section (skip if we already converted render-to-template)
+        if (!renderConverted) {
         for (const transformName of transformationsToApply) {
           const transform = AVAILABLE_TRANSFORMS[transformName];
 
@@ -247,6 +276,7 @@ export class CodemodRunner {
             result.needsAI = true;
           }
         }
+        }
 
         // Update script content
         // CRITICAL: Always update vueParts.script.content with transformedScript
@@ -254,10 +284,11 @@ export class CodemodRunner {
         // but we still need to ensure it's properly assigned
         if (
           hasModifications ||
-          transformationsToApply.includes("script-setup")
+          transformationsToApply.includes("script-setup") ||
+          renderConverted
         ) {
-          // If script-setup transform was applied, convert to <script setup lang="ts">
-          if (transformationsToApply.includes("script-setup")) {
+          // If script-setup transform was applied or render was converted, ensure script setup
+          if (transformationsToApply.includes("script-setup") || renderConverted) {
             vueParts.script.setup = true;
             if (options.enableTypeScript) {
               vueParts.script.lang = "ts";
@@ -305,11 +336,11 @@ export class CodemodRunner {
         }
 
         // Reconstruct Vue file
-        // Always reconstruct if script-setup was applied, even if hasModifications is false
-        // because script-setup may return the same code but we still need to update the structure
+        // Always reconstruct if script-setup was applied or render was converted
         if (
           hasModifications ||
-          transformationsToApply.includes("script-setup")
+          transformationsToApply.includes("script-setup") ||
+          renderConverted
         ) {
           currentCode = reconstructVueFile(vueParts);
         }

@@ -36,30 +36,29 @@ describe('Template Transformations', () => {
     });
   });
 
-  describe('v-else-if-key', () => {
-    it('should add key to v-else-if if v-if has key', () => {
-      const template = `<div v-if="condition" :key="0">First</div>
-        <div v-else-if="otherCondition">Second</div>`;
+  describe('v-if-v-else-key-removal', () => {
+    it('should remove keys from v-if/v-else/v-else-if (Vue 3 auto-generates them)', () => {
+      const template = `<div v-if="condition" :key="yes">Yes</div>
+<div v-else key="no">No</div>`;
 
       const result = transformTemplate(template);
 
-      // The transformation tries to add key, but regex might not match all cases
-      // Check if modified or if key was added
-      expect(result.template).toContain('v-else-if');
-      // The transformation may or may not modify depending on regex matching
-      // Just verify the template contains v-else-if (basic check)
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('v-if');
+      expect(result.template).toContain('v-else');
+      expect(result.template).not.toMatch(/:key="yes"/);
+      expect(result.template).not.toMatch(/key="no"/);
     });
 
-    it('should not modify if v-else-if already has key', () => {
-      const template = `
-        <div v-if="condition" :key="0">First</div>
-        <div v-else-if="otherCondition" :key="1">Second</div>
-      `;
+    it('should remove key from v-else-if', () => {
+      const template = `<div v-if="condition" key="a">First</div>
+<div v-else-if="other" :key="b">Second</div>`;
 
       const result = transformTemplate(template);
-      const keyCount = (result.template.match(/:key/g) || []).length;
 
-      expect(keyCount).toBeGreaterThanOrEqual(2);
+      expect(result.modified).toBe(true);
+      expect(result.template).not.toMatch(/:key="b"/);
+      expect(result.template).not.toMatch(/key="a"/);
     });
   });
 
@@ -73,7 +72,7 @@ describe('Template Transformations', () => {
       expect(result.template).toContain('<template v-for="item in items"');
       expect(result.template).toContain('<div v-if="item.visible"');
       expect(
-        result.issues.some((issue) => issue.includes('v-for and v-if precedence changed'))
+        result.issues.some((issue) => issue.includes('v-for and v-if'))
       ).toBe(true);
     });
 
@@ -97,6 +96,16 @@ describe('Template Transformations', () => {
       expect(result.template).toContain('<template v-for="item in items"');
       expect(result.template).toContain('class="item"');
       expect(result.template).toContain(':id="item.id"');
+    });
+
+    it('should handle v-if before v-for on same element', () => {
+      const template = '<div v-if="item.visible" v-for="item in items">{{ item.name }}</div>';
+
+      const result = transformTemplate(template);
+
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('<template v-for="item in items"');
+      expect(result.template).toContain('<div v-if="item.visible"');
     });
   });
 
@@ -148,10 +157,55 @@ describe('Template Transformations', () => {
       expect(result.template).toContain('name="list"');
       expect(result.template).toContain('tag="ul"');
     });
+
+    it('should add tag="span" when transition-group has no tag (Vue 3 default root removed)', () => {
+      const template = `<transition-group name="fade">
+          <div key="1">Item 1</div>
+          <div key="2">Item 2</div>
+        </transition-group>`;
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('tag="span"');
+      expect(result.template).toContain('name="fade"');
+    });
+  });
+
+  describe('Transition Class Change (props)', () => {
+    it('should transform enter-class to enter-from-class', () => {
+      const template = '<transition enter-class="fade-enter" leave-class="fade-leave"><div>content</div></transition>';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('enter-from-class="fade-enter"');
+      expect(result.template).toContain('leave-from-class="fade-leave"');
+      expect(result.template).not.toContain('enter-class=');
+      expect(result.template).not.toContain('leave-class=');
+    });
+
+    it('should transform :enter-class and :leave-class (v-bind)', () => {
+      const template = '<transition :enter-class="enterCls" :leave-class="leaveCls">content</transition>';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain(':enter-from-class="enterCls"');
+      expect(result.template).toContain(':leave-from-class="leaveCls"');
+    });
   });
 
   describe('functional components', () => {
-    it('should remove functional attribute from template', () => {
+    it('should remove functional and convert attrs/listeners (keep props for script setup)', () => {
+      const template = `<template functional>
+  <component :is="\`h\${props.level}\`" v-bind="attrs" v-on="listeners" />
+</template>`;
+
+      const result = transformTemplate(template);
+
+      expect(result.modified).toBe(true);
+      expect(result.template).not.toContain('functional');
+      expect(result.template).toContain('props.level');
+      expect(result.template).toContain('v-bind="$attrs"');
+      expect(result.template).not.toContain('v-on="listeners"');
+    });
+
+    it('should remove functional attribute from simple template', () => {
       const template = '<template functional><div>Content</div></template>';
 
       const result = transformTemplate(template);
@@ -159,7 +213,6 @@ describe('Template Transformations', () => {
       expect(result.modified).toBe(true);
       expect(result.template).not.toContain('functional');
       expect(result.template).toContain('<template>');
-      expect(result.issues.some((issue) => issue.includes('Functional components'))).toBe(true);
     });
 
     it('should remove functional from component tags', () => {
@@ -170,6 +223,45 @@ describe('Template Transformations', () => {
       expect(result.modified).toBe(true);
       expect(result.template).not.toContain('functional');
       expect(result.template).toContain('class="component"');
+    });
+  });
+
+  describe('Custom Elements Interop: is attribute', () => {
+    it('should add vue: prefix for restricted elements (tr, li, etc.)', () => {
+      const template = '<table><tr is="blog-post-row"><td>cell</td></tr></table>';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('is="vue:blog-post-row"');
+      expect(result.template).toContain('<tr');
+    });
+
+    it('should use <component> for non-restricted elements', () => {
+      const template = '<div is="foo" class="x">content</div>';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('<component');
+      expect(result.template).toContain('is="foo"');
+      expect(result.template).toContain('content</component>');
+    });
+
+    it('should not modify <component is="...">', () => {
+      const template = '<component is="dynamic-tab">content</component>';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(false);
+      expect(result.template).toBe(template);
+    });
+  });
+
+  describe('v-bind merge behavior', () => {
+    it('should reorder v-bind before individual attrs to preserve Vue 2 behavior', () => {
+      const template = '<div id="red" v-bind="{ id: \'blue\' }"></div>';
+
+      const result = transformTemplate(template);
+
+      expect(result.modified).toBe(true);
+      expect(result.template).toMatch(/v-bind="\{ id: 'blue' \}"/);
+      expect(result.template).toContain('id="red"');
+      expect(result.template.indexOf('v-bind')).toBeLessThan(result.template.indexOf('id="red"'));
     });
   });
 
@@ -190,7 +282,7 @@ describe('Template Transformations', () => {
     });
   });
 
-  describe('keyboard modifiers', () => {
+  describe('keyboard modifiers (KeyCode Modifiers breaking)', () => {
     it('should transform keycode .112 to .f1', () => {
       const template = '<input @keyup.112="validate" />';
       const result = transformTemplate(template);
@@ -204,6 +296,13 @@ describe('Template Transformations', () => {
       const result = transformTemplate(template);
       expect(result.modified).toBe(true);
       expect(result.template).toContain('keyup.enter');
+    });
+
+    it('should transform keycode .34 to .page-down', () => {
+      const template = '<div @keydown.34="nextPage" />';
+      const result = transformTemplate(template);
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('keydown.page-down');
     });
   });
 

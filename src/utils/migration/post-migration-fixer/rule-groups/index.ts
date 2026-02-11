@@ -7,7 +7,8 @@ import type { FixRule } from "../types";
 
 // Core & SFC
 import { scriptSetupTagSpaceRule, removeExportDefaultRule, scriptSetupThisEmitRule, scriptSetupFormattingRule } from "../rules/vue-script/vue-script-setup";
-import { scriptStyleInsideTemplateRule } from "../rules/vue-script/vue-structure-fixes";
+import { vModelEmitRule, vModelPropsRule, vModelRemoveModelOptionRule } from "../rules/vue-script/v-model-fixes";
+import { scriptStyleInsideTemplateRule, functionalOptionRemovalRule } from "../rules/vue-script/vue-structure-fixes";
 
 // Router
 import {
@@ -77,6 +78,7 @@ import {
   fixStoreMemberMismatchRule,
   storeRefsFromIndexStoreRule,
   thisStoreNameToUseStoreRule,
+  childrenRemovedRule,
   thisBarToGetCurrentInstanceRule,
   removeDuplicateStoreGetCurrentInstanceRule,
   indexStoreDuplicateRule,
@@ -98,6 +100,8 @@ import {
   correctWrongStoreImportsRule,
   addMissingStoreImportsRule,
   vueSetRule,
+  vueGlobalApiTreeshakeRule,
+  asyncComponentOptionsRule,
   dataImportConflictRule,
 } from "../rules/import/import-fixes";
 
@@ -107,6 +111,12 @@ import { computedValueRule, vueComputedExtraParenRule, malformedComputedRule, co
 // Template
 import {
   routerViewTransitionRule,
+  transitionAsRootRule,
+  functionalComponentRule,
+  nativeModifierRemovalRule,
+  vBindMergeOrderRule,
+  vForVIfPrecedenceRule,
+  keyAttributesRule,
   componentVariableShadowingRule,
   webpackPublicAliasRule,
   templateAdjacentMustacheSpacingRule,
@@ -145,6 +155,7 @@ import { vueStoreVuexToPiniaRule } from "../rules/store/vue-store-vuex";
 export const coreRules: FixRule[] = [
   scriptSetupTagSpaceRule,
   removeExportDefaultRule,
+  functionalOptionRemovalRule,
   createAppSyntaxRule,
   scriptStyleInsideTemplateRule,
   routerVueUseRemovalRule,
@@ -194,7 +205,12 @@ export const storeRules: FixRule[] = [
   storeReturnCurrentUserRule,
   removeVuexImportsRule,
   vueSetRule,
+  vueGlobalApiTreeshakeRule,
+  asyncComponentOptionsRule,
   removeVueCompilerMacrosRule,
+  vModelEmitRule,
+  vModelPropsRule,
+  vModelRemoveModelOptionRule,
   scriptSetupThisEmitRule,
   vueStoreVuexToPiniaRule,
   fixStoreMemberMismatchRule,
@@ -228,6 +244,7 @@ export const computedAndScriptSetupRules: FixRule[] = [
   removeDuplicateStoreGetCurrentInstanceRule,
   removeErroneousRefForSkippedVarsRule,
   fixCorruptedArrowFunctionRule,
+  childrenRemovedRule,
   thisBarToGetCurrentInstanceRule,
   secureRouterPushRule,
   thisStoreToIndexStoreRule,
@@ -248,6 +265,12 @@ export const computedAndScriptSetupRules: FixRule[] = [
 /** Template fixes */
 export const templateRules: FixRule[] = [
   routerViewTransitionRule,
+  transitionAsRootRule,
+  functionalComponentRule,
+  nativeModifierRemovalRule,
+  vBindMergeOrderRule,
+  vForVIfPrecedenceRule,
+  keyAttributesRule,
   componentVariableShadowingRule,
   missingComponentImportsRule,
   webpackPublicAliasRule,

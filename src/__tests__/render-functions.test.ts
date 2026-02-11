@@ -137,4 +137,80 @@ describe('Render Functions Transformation', () => {
     expect(result.code).toContain("h('div')");
     expect(result.code).not.toContain('resolveComponent');
   });
+
+  it('should flatten Vue 2 VNode props to Vue 3 format', async () => {
+    const code = `import { h } from 'vue';
+export default {
+  render() {
+    return h('button', {
+      staticClass: 'button',
+      class: { 'is-outlined': isOutlined },
+      attrs: { id: 'submit' },
+      domProps: { innerHTML: '' },
+      on: { click: submitForm },
+      key: 'submit-button'
+    });
+  }
+};`;
+
+    const result = await runner.transform('test.js', code, {
+      transformations: ['render-functions'],
+    });
+
+    expect(result.modified).toBe(true);
+    expect(result.code).toContain("class:");
+    expect(result.code).not.toContain("staticClass:");
+    expect(result.code).not.toContain("attrs:");
+    expect(result.code).not.toContain("domProps:");
+    expect(result.code).not.toContain("on:");
+    expect(result.code).toContain("onClick:");
+    expect(result.code).toContain("id:");
+  });
+
+  it('should merge staticClass and class into class array', async () => {
+    const code = `export default {
+  render(h) {
+    return h('div', { staticClass: 'foo', class: { bar: true } });
+  }
+};`;
+
+    const result = await runner.transform('test.js', code, {
+      transformations: ['render-functions'],
+    });
+
+    expect(result.modified).toBe(true);
+    expect(result.code).toMatch(/class:\s*\[/);
+    expect(result.code).not.toContain("staticClass");
+  });
+
+  it('should convert render-only .vue to script setup + template', async () => {
+    const code = `<script>
+export default {
+  props: ['text'],
+  render(h) {
+    return h('button', {
+      class: 'button',
+      attrs: { id: 'submit' },
+      on: { click: () => this.$emit('submit') }
+    }, this.text);
+  }
+}
+</script>`;
+
+    const result = await runner.transform('Button.vue', code, {
+      transformations: ['render-functions'],
+    });
+
+    expect(result.modified).toBe(true);
+    expect(result.code).toContain('<script setup>');
+    expect(result.code).toContain('defineProps');
+    expect(result.code).toContain("defineEmits(['submit'])");
+    expect(result.code).toContain('<template>');
+    expect(result.code).toContain('<button');
+    expect(result.code).toContain('class="button"');
+    expect(result.code).toContain('id="submit"');
+    expect(result.code).toContain('@click="emit(\'submit\')"');
+    expect(result.code).toContain('{{ props.text }}');
+    expect(result.code).not.toContain('render(');
+  });
 });

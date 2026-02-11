@@ -904,3 +904,137 @@ export const vueSetRule: FixRule = {
     return result;
   }
 };
+
+/** Vue 2 global APIs → Vue 3 named exports (treeshaking). Applies to .js, .ts, .vue */
+const VUE_GLOBAL_API_MAP: Array<{ pattern: RegExp; replacement: string; importName: string }> = [
+  { pattern: /\bVue\.nextTick\s*\(/g, replacement: "nextTick(", importName: "nextTick" },
+  { pattern: /\bVue\.observable\s*\(/g, replacement: "reactive(", importName: "reactive" },
+  { pattern: /\bVue\.version\b/g, replacement: "version", importName: "version" },
+  { pattern: /\bVue\.compile\s*\(/g, replacement: "compile(", importName: "compile" },
+];
+
+/**
+ * Fix: Vue.nextTick, Vue.observable, Vue.version, Vue.compile → named imports (Global API Treeshaking)
+ * Vue 2 global APIs are no longer on Vue object - use named exports for tree-shaking.
+ */
+export const vueGlobalApiTreeshakeRule: FixRule = {
+  id: "vue-global-api-treeshake",
+  description: "Replace Vue.nextTick, Vue.observable, Vue.version, Vue.compile with named imports",
+  priority: 90,
+  shouldApply: (_filePath, content) => {
+    return (
+      content.includes("Vue.nextTick") ||
+      content.includes("Vue.observable") ||
+      content.includes("Vue.version") ||
+      content.includes("Vue.compile")
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const isVue = filePath.endsWith(".vue");
+    let code = content;
+    let codeStart = 0;
+    let codeEnd = content.length;
+
+    if (isVue) {
+      const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+      if (!scriptMatch) return result;
+      code = scriptMatch[1];
+      codeStart = content.indexOf(scriptMatch[0]) + scriptMatch[0].indexOf(scriptMatch[1]);
+      codeEnd = codeStart + code.length;
+    }
+
+    const importNamesToAdd = new Set<string>();
+    let transformed = code;
+
+    for (const { pattern, replacement, importName } of VUE_GLOBAL_API_MAP) {
+      if (new RegExp(pattern.source, pattern.flags).test(code)) {
+        transformed = transformed.replace(new RegExp(pattern.source, pattern.flags), replacement);
+        importNamesToAdd.add(importName);
+      }
+    }
+
+    if (importNamesToAdd.size === 0) return result;
+
+    const vueNamedImport = /import\s*\{([^}]*)\}\s*from\s*['"]vue['"]\s*;?/;
+    const existingMatch = transformed.match(vueNamedImport);
+
+    if (existingMatch) {
+      const existing = existingMatch[1].trim().split(/\s*,\s*/).filter(Boolean);
+      const toAdd = [...importNamesToAdd].filter((n) => !existing.some((e) => e.split(/\s+as\s+/)[0].trim() === n));
+      if (toAdd.length > 0) {
+        const combined = [...existing, ...toAdd].join(", ");
+        transformed = transformed.replace(vueNamedImport, `import { ${combined} } from 'vue';`);
+      }
+    } else {
+      const firstImportMatch = transformed.match(/(import\s+[^;]+;[\s\n]*)+/);
+      const insertPos = firstImportMatch ? firstImportMatch[0].length : 0;
+      transformed =
+        transformed.slice(0, insertPos) +
+        `import { ${[...importNamesToAdd].join(", ")} } from 'vue';\n` +
+        transformed.slice(insertPos);
+    }
+
+    if (transformed !== code) {
+      result.fixed = true;
+      result.fixes.push(`Replaced Vue global APIs with named imports: ${[...importNamesToAdd].join(", ")}`);
+      result.content = isVue
+        ? content.slice(0, codeStart) + transformed + content.slice(codeEnd)
+        : transformed;
+    }
+    return result;
+  }
+};
+
+/**
+ * Fix: defineAsyncComponent Vue 3 options - component→loader, error→errorComponent, loading→loadingComponent
+ */
+export const asyncComponentOptionsRule: FixRule = {
+  id: "async-component-options",
+  description: "Fix defineAsyncComponent options: component→loader, error→errorComponent, loading→loadingComponent",
+  priority: 70,
+  shouldApply: (filePath, content) => {
+    return (
+      (filePath.endsWith(".vue") || filePath.endsWith(".js") || filePath.endsWith(".ts")) &&
+      content.includes("defineAsyncComponent") &&
+      (/component\s*:\s*/.test(content) || /\berror\s*:\s*\w+/.test(content) || /\bloading\s*:\s*\w+/.test(content))
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+
+    let fixed = content;
+    let changed = false;
+
+    if (/\bcomponent\s*:/.test(fixed) && /defineAsyncComponent/.test(fixed)) {
+      fixed = fixed.replace(/(defineAsyncComponent\s*\(\s*\{[^}]*?)\bcomponent\s*:/g, "$1loader:");
+      changed = true;
+    }
+    if (/\berror\s*:\s*\w+/.test(fixed) && /defineAsyncComponent/.test(fixed) && !fixed.includes("errorComponent")) {
+      fixed = fixed.replace(
+        /(defineAsyncComponent\s*\(\s*\{[^}]*?)\berror\s*:/g,
+        "$1errorComponent:"
+      );
+      changed = true;
+    }
+    if (/\bloading\s*:\s*\w+/.test(fixed) && /defineAsyncComponent/.test(fixed) && !fixed.includes("loadingComponent")) {
+      fixed = fixed.replace(
+        /(defineAsyncComponent\s*\(\s*\{[^}]*?)\bloading\s*:/g,
+        "$1loadingComponent:"
+      );
+      changed = true;
+    }
+
+    if (changed) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Fixed defineAsyncComponent options for Vue 3");
+    }
+    return result;
+  }
+};

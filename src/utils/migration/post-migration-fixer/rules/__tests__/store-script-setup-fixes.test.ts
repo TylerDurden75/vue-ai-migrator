@@ -13,7 +13,8 @@ import {
   thisStoreNameToUseStoreRule,
   thisStoreToIndexStoreRule,
   returnThisInScriptSetupRule,
-  thisBarToGetCurrentInstanceRule
+  childrenRemovedRule,
+  thisBarToGetCurrentInstanceRule,
 } from "../store/store-script-setup-fixes";
 import * as path from "path";
 
@@ -767,6 +768,50 @@ this.$progress.start();
   it("does NOT replace this.$router, this.$route, this.$store (handled by other rules)", async () => {
     expect(thisBarToGetCurrentInstanceRule.shouldApply("test.vue", "<script>this.$router.push('/')</script>")).toBe(false);
     expect(thisBarToGetCurrentInstanceRule.shouldApply("test.vue", "<script>this.$store.dispatch('x')</script>")).toBe(false);
+  });
+
+  it("does NOT replace this.$children (removed in Vue 3, handled by childrenRemovedRule)", async () => {
+    expect(thisBarToGetCurrentInstanceRule.shouldApply("test.vue", "<script>this.$children</script>")).toBe(false);
+  });
+});
+
+describe("childrenRemovedRule ($children removed in Vue 3)", () => {
+  it("replaces this.$children with placeholder in .vue", async () => {
+    const content = `<script setup>
+mounted(() => {
+  console.log(this.$children);
+});
+</script>`;
+    const result = await childrenRemovedRule.apply("App.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "",
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain("this.$children");
+    expect(result.content).toContain("console.warn");
+    expect(result.content).toContain("$children was removed");
+    expect(result.content).toContain("template refs");
+    expect(result.issues.length).toBeGreaterThan(0);
+  });
+
+  it("replaces this.$children in .js file", async () => {
+    const content = `export default {
+  mounted() {
+    const first = this.$children[0];
+  }
+}`;
+    const result = await childrenRemovedRule.apply("component.js", content, {
+      enableTypeScript: false,
+      isVueFile: false,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain("this.$children");
+  });
+
+  it("shouldApply when content has this.$children", () => {
+    expect(childrenRemovedRule.shouldApply("App.vue", "this.$children")).toBe(true);
+    expect(childrenRemovedRule.shouldApply("App.vue", "this.$router")).toBe(false);
   });
 });
 

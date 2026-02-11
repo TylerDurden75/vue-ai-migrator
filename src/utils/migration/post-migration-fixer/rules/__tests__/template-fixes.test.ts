@@ -5,6 +5,12 @@
 import * as path from "path";
 import {
   routerViewTransitionRule,
+  transitionAsRootRule,
+  functionalComponentRule,
+  nativeModifierRemovalRule,
+  vBindMergeOrderRule,
+  vForVIfPrecedenceRule,
+  keyAttributesRule,
   componentVariableShadowingRule,
   missingComponentImportsRule,
   missingFilterImportsRule,
@@ -42,6 +48,88 @@ describe("routerViewTransitionRule", () => {
     expect(routerViewTransitionRule.shouldApply("App.vue", content)).toBe(
       false
     );
+  });
+});
+
+describe("transitionAsRootRule (Transition as Root breaking)", () => {
+  it("adds v-if and converts to script setup with defineProps", async () => {
+    const content = `<template>
+  <transition>
+    <div class="modal"><slot/></div>
+  </transition>
+</template>
+<script>
+export default {
+  name: 'Modal'
+}
+</script>`;
+    const result = await transitionAsRootRule.apply("Modal.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('v-if="show"');
+    expect(result.content).toContain("<script setup>");
+    expect(result.content).toContain("defineProps(['show'])");
+    expect(result.content).toContain('class="modal"');
+    expect(result.content).toMatch(/<div[^>]*v-if="show"/);
+    expect(result.issues.some((i) => i.includes("v-if to :show"))).toBe(true);
+  });
+
+  it("adds show to defineProps when already using script setup", async () => {
+    const content = `<template>
+  <transition><div class="modal">content</div></transition>
+</template>
+<script setup>
+defineProps(['title'])
+</script>`;
+    const result = await transitionAsRootRule.apply("Modal.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("defineProps(['title', 'show'])");
+  });
+
+  it("does not apply when child already has v-if=show", async () => {
+    const content = `<template>
+  <transition>
+    <div v-if="show" class="modal">content</div>
+  </transition>
+</template>`;
+    expect(transitionAsRootRule.shouldApply("Modal.vue", content)).toBe(false);
+  });
+
+  it("converts Options API props to script setup defineProps", async () => {
+    const content = `<template>
+  <transition><div class="modal">content</div></transition>
+</template>
+<script>
+export default {
+  props: ['title']
+}
+</script>`;
+    const result = await transitionAsRootRule.apply("Modal.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("<script setup>");
+    expect(result.content).toMatch(/defineProps\(\s*\[\s*['"]title['"],\s*['"]show['"]\s*\]\s*\)/);
+  });
+
+  it("adds script setup block when component has no script (template-only)", async () => {
+    const content = `<template>
+  <transition><div class="modal">content</div></transition>
+</template>`;
+    const result = await transitionAsRootRule.apply("Modal.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("<script setup>");
+    expect(result.content).toContain("defineProps(['show'])");
+    expect(result.content).toContain('v-if="show"');
   });
 });
 
@@ -527,6 +615,142 @@ const item = ref({ amount: 12.5 });
 
     expect(result.fixed).toBe(false);
     expect(result.content).not.toContain("const 0 =");
+  });
+});
+
+describe("functionalComponentRule", () => {
+  it("should convert attrs/listeners in functional template, keep props", async () => {
+    const content = `<template functional>
+  <component :is="\`h\${props.level}\`" v-bind="attrs" v-on="listeners" />
+</template>`;
+
+    const result = await functionalComponentRule.apply("DynamicHeading.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("props.level");
+    expect(result.content).toContain('v-bind="$attrs"');
+    expect(result.content).not.toContain('v-on="listeners"');
+    expect(result.content).not.toContain("functional");
+  });
+});
+
+describe("nativeModifierRemovalRule", () => {
+  it("should remove .native modifier from v-on", async () => {
+    const content = `<template>
+  <MyComponent v-on:close="handleClose" v-on:click.native="handleClick" />
+</template>`;
+
+    const result = await nativeModifierRemovalRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('v-on:click="handleClick"');
+    expect(result.content).not.toContain(".native");
+  });
+
+  it("should remove .native from @ shorthand", async () => {
+    const content = '<template><MyComponent @click.native="handler" /></template>';
+
+    const result = await nativeModifierRemovalRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('@click="handler"');
+  });
+});
+
+describe("vBindMergeOrderRule", () => {
+  it("should put v-bind before individual attrs", async () => {
+    const content = `<template>
+  <div id="red" class="foo" v-bind="attrs"></div>
+</template>`;
+
+    const result = await vBindMergeOrderRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    const vBindPos = result.content.indexOf('v-bind="attrs"');
+    const idPos = result.content.indexOf('id="red"');
+    expect(vBindPos).toBeLessThan(idPos);
+  });
+});
+
+describe("vForVIfPrecedenceRule", () => {
+  it("should wrap v-for and v-if on same element in template", async () => {
+    const content = `<template>
+  <div v-for="item in items" v-if="item.visible">{{ item.name }}</div>
+</template>`;
+
+    const result = await vForVIfPrecedenceRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('<template v-for="item in items"');
+    expect(result.content).toContain('<div v-if="item.visible"');
+    expect(result.content).not.toMatch(/v-for.*v-if.*v-for/);
+  });
+
+  it("should handle v-if before v-for", async () => {
+    const content = `<template>
+  <span v-if="x" v-for="x in list">x</span>
+</template>`;
+
+    const result = await vForVIfPrecedenceRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('<template v-for="x in list"');
+    expect(result.content).toContain('<span v-if="x"');
+  });
+});
+
+describe("keyAttributesRule", () => {
+  it("should remove key from v-if/v-else branches", async () => {
+    const content = `<template>
+  <div v-if="condition" :key="yes">Yes</div>
+  <div v-else key="no">No</div>
+</template>`;
+
+    const result = await keyAttributesRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toMatch(/:key="yes"/);
+    expect(result.content).not.toMatch(/key="no"/);
+    expect(result.content).toContain("v-if");
+    expect(result.content).toContain("v-else");
+  });
+
+  it("should move key from template v-for children to template", async () => {
+    const content = `<template>
+  <template v-for="item in items">
+    <div :key="item.id">{{ item.name }}</div>
+  </template>
+</template>`;
+
+    const result = await keyAttributesRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toMatch(/<template\s+v-for="item in items"\s+:key="item\.id"/);
+    expect(result.content).not.toContain("<div :key=");
   });
 });
 

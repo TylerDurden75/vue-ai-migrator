@@ -91,6 +91,53 @@ const handleClick = () => { this.$emit('submit', 1); };
       expect(result.content).toContain("emit('submit', 1)");
       expect(result.content).not.toContain("this.$emit");
     });
+
+    it("should replace template $emit with emit() and add defineEmits", async () => {
+      const content = `<template>
+  <div>
+    <p>{{ text }}</p>
+    <button v-on:click="$emit('accepted')">OK</button>
+  </div>
+</template>
+<script setup>
+defineProps(['text']);
+</script>`;
+
+      const result = await scriptSetupThisEmitRule.apply(
+        "src/components/Confirm.vue",
+        content,
+        { enableTypeScript: false, isVueFile: true, scriptContent: "" }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("emit('accepted')");
+      expect(result.content).not.toContain("$emit(");
+      expect(result.content).toContain("const emit = defineEmits([\"accepted\"]);");
+    });
+
+    it("should handle both template $emit and script this.$emit", async () => {
+      const content = `<template>
+  <button @click="$emit('click', $event)">Click</button>
+</template>
+<script setup>
+const handleSubmit = () => { this.$emit('submit'); };
+</script>`;
+
+      const result = await scriptSetupThisEmitRule.apply(
+        "src/components/Button.vue",
+        content,
+        { enableTypeScript: false, isVueFile: true, scriptContent: "" }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toMatch(/emit\s*\(\s*["']click["']\s*,\s*\$event\s*\)/);
+      expect(result.content).toContain("emit('submit')");
+      expect(result.content).not.toContain("$emit(");
+      expect(result.content).not.toContain("this.$emit");
+      expect(result.content).toContain("defineEmits(");
+      expect(result.content).toContain("click");
+      expect(result.content).toContain("submit");
+    });
   });
 
   describe("scriptSetupFormattingRule", () => {

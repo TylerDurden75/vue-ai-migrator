@@ -11,6 +11,8 @@ import {
   correctWrongStoreImportsRule,
   addMissingStoreImportsRule,
   vueSetRule,
+  vueGlobalApiTreeshakeRule,
+  asyncComponentOptionsRule,
   dataImportConflictRule
 } from "../import/import-fixes";
 
@@ -571,6 +573,29 @@ const users = fetchUsers();
   });
 });
 
+describe("asyncComponentOptionsRule", () => {
+  it("should rename component to loader, error to errorComponent, loading to loadingComponent", async () => {
+    const content = `import { defineAsyncComponent } from 'vue';
+const AsyncModal = defineAsyncComponent({
+  component: () => import('./Modal.vue'),
+  delay: 200,
+  error: ErrorComp,
+  loading: LoadingComp
+});`;
+
+    const result = await asyncComponentOptionsRule.apply("components.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("loader:");
+    expect(result.content).toContain("errorComponent:");
+    expect(result.content).toContain("loadingComponent:");
+    expect(result.content).not.toContain("component:");
+  });
+});
+
 describe("vueSetRule", () => {
   it("should replace Vue.set with direct assignment", async () => {
     const content = `Vue.set(obj, 'key', value)`;
@@ -603,5 +628,77 @@ describe("vueSetRule", () => {
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("delete obj['key']");
     expect(result.content).not.toContain("Vue.delete");
+  });
+});
+
+describe("vueGlobalApiTreeshakeRule", () => {
+  it("should replace Vue.nextTick with named import in .js file", async () => {
+    const content = `import Vue from 'vue';
+Vue.nextTick(() => {
+  // DOM update
+});`;
+    const result = await vueGlobalApiTreeshakeRule.apply("utils.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("import { nextTick } from 'vue'");
+    expect(result.content).toContain("nextTick(() => {");
+    expect(result.content).not.toContain("Vue.nextTick");
+  });
+
+  it("should replace Vue.observable with reactive", async () => {
+    const content = `import Vue from 'vue';
+const state = Vue.observable({ count: 0 });`;
+    const result = await vueGlobalApiTreeshakeRule.apply("store.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("import { reactive } from 'vue'");
+    expect(result.content).toContain("reactive({ count: 0 })");
+    expect(result.content).not.toContain("Vue.observable");
+  });
+
+  it("should replace Vue.version with named import", async () => {
+    const content = `console.log('Vue', Vue.version);`;
+    const result = await vueGlobalApiTreeshakeRule.apply("debug.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("import { version } from 'vue'");
+    expect(result.content).toContain("console.log('Vue', version)");
+  });
+
+  it("should merge with existing vue named imports", async () => {
+    const content = `import { ref } from 'vue';
+Vue.nextTick(() => {});`;
+    const result = await vueGlobalApiTreeshakeRule.apply("component.ts", content, {
+      enableTypeScript: true,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toMatch(/import\s*\{\s*(?:ref,\s*nextTick|nextTick,\s*ref)\s*\}\s*from\s*['"]vue['"]/);
+    expect(result.content).toContain("nextTick(() => {})");
+  });
+
+  it("should transform Vue.nextTick in .vue script", async () => {
+    const content = `<template><div/></template>
+<script>
+import Vue from 'vue';
+Vue.nextTick(() => {});
+</script>`;
+    const result = await vueGlobalApiTreeshakeRule.apply("App.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("nextTick(() => {})");
+    expect(result.content).toContain("<template>");
+  });
+
+  it("should not apply when no Vue global API usage", () => {
+    expect(vueGlobalApiTreeshakeRule.shouldApply("test.js", "const x = 1")).toBe(false);
   });
 });

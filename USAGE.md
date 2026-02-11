@@ -39,9 +39,9 @@ vue-ai-migrator migrate ./my-vue2-project
 
 **What you get:**
 - ✅ Automatic AST-based transformations (~83% coverage)
+- ✅ **Composition API + `<script setup>`**: Components are migrated to Vue 3 Composition API with `<script setup>` format (template → script → style)
 - ✅ Vuex → Pinia migration
 - ✅ Router 3 → Router 4 migration
-- ✅ Composition API conversion
 - ✅ Template transformations
 - ✅ Post-migration fixes
 - ✅ TypeScript support (with `--typescript`)

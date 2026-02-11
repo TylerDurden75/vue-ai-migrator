@@ -4,10 +4,30 @@
 
 import {
   scriptStyleInsideTemplateRule,
+  functionalOptionRemovalRule,
   duplicateSymbolDeclarationRule,
   scriptSetupUndeclaredVarsRule,
   loadingRefRule,
 } from "../vue-script/vue-structure-fixes";
+
+describe("functionalOptionRemovalRule", () => {
+  it("should remove functional: true from component options", async () => {
+    const content = `export default {
+  functional: true,
+  props: ['level'],
+  render(h, { props }) { return h('h' + props.level); }
+}`;
+
+    const result = await functionalOptionRemovalRule.apply("DynamicHeading.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain("functional:");
+    expect(result.content).toContain("props: ['level']");
+  });
+});
 
 describe("scriptStyleInsideTemplateRule", () => {
   it("should move script and style from inside template to correct position", async () => {

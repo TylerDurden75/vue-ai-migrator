@@ -146,6 +146,10 @@ function detectVue2Patterns(content: string): string[] {
     patterns.push('Usage of $listeners (replaced by $attrs in Vue 3)');
   }
 
+  if (content.includes('this.$children')) {
+    patterns.push('Usage of this.$children (removed in Vue 3 - use template refs)');
+  }
+
   if (content.includes('beforeDestroy') || content.includes('destroyed')) {
     patterns.push('Vue 2 lifecycle hooks (beforeDestroy/destroyed)');
   }

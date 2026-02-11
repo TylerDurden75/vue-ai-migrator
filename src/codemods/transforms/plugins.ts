@@ -215,7 +215,7 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
     });
   }
 
-  // Remove Vue.config.* statements (Vue 2 specific)
+  // Transform or remove Vue.config.* statements (Vue 2 specific)
   root.find(j.MemberExpression).forEach((path: any) => {
     if (
       path.value.object &&
@@ -225,7 +225,58 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
       path.value.property.type === "Identifier" &&
       path.value.property.name === "config"
     ) {
-      // Find the parent statement (e.g., Vue.config.productionTip = false)
+      // Vue.config.ignoredElements → app.config.compilerOptions.isCustomElement (Vue 3 Custom Elements Interop)
+      const configAccess = path.parent?.value;
+      if (
+        configAccess?.type === "MemberExpression" &&
+        configAccess.property?.type === "Identifier" &&
+        configAccess.property.name === "ignoredElements"
+      ) {
+        const assignment = path.parent?.parent?.value;
+        if (assignment?.type === "AssignmentExpression" && assignment.right) {
+          let checkerExpr: any;
+          if (assignment.right.type === "ArrayExpression") {
+            checkerExpr = j.arrowFunctionExpression(
+              [j.identifier("tag")],
+              j.callExpression(
+                j.memberExpression(assignment.right, j.identifier("includes")),
+                [j.identifier("tag")]
+              )
+            );
+          } else {
+            checkerExpr = j.arrowFunctionExpression(
+              [j.identifier("tag")],
+              j.callExpression(
+                j.memberExpression(assignment.right, j.identifier("test")),
+                [j.identifier("tag")]
+              )
+            );
+          }
+          const appConfig = j.memberExpression(
+            j.memberExpression(j.identifier("app"), j.identifier("config")),
+            j.identifier("compilerOptions")
+          );
+          const assignExpr = j.assignmentExpression(
+            "=",
+            j.memberExpression(appConfig, j.identifier("isCustomElement")),
+            checkerExpr
+          );
+          const program = root.get().node.program;
+          const createAppIdx = program.body.findIndex(
+            (s: any) =>
+              s.type === "VariableDeclaration" &&
+              s.declarations?.[0]?.init?.callee?.name === "createApp"
+          );
+          if (createAppIdx >= 0) {
+            j(path.parent.parent.parent).remove();
+            program.body.splice(createAppIdx + 1, 0, j.expressionStatement(assignExpr));
+            hasChanges = true;
+          }
+          return;
+        }
+      }
+
+      // Remove other Vue.config.* (productionTip, etc.)
       let currentPath: any = path;
       while (currentPath && currentPath.parent) {
         const parentValue = currentPath.parent.value;
@@ -234,13 +285,11 @@ export const pluginsTransform: Transform = (fileInfo: FileInfo, api: API) => {
           (parentValue.type === "ExpressionStatement" ||
             parentValue.type === "AssignmentExpression")
         ) {
-          // Remove the entire statement
           if (parentValue.type === "ExpressionStatement") {
             j(currentPath.parent).remove();
             hasChanges = true;
             break;
           } else if (parentValue.type === "AssignmentExpression") {
-            // Find the statement containing this assignment
             let assignmentPath = currentPath.parent;
             while (assignmentPath && assignmentPath.parent) {
               if (assignmentPath.parent.value?.type === "ExpressionStatement") {

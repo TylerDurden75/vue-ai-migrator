@@ -7,6 +7,36 @@ import * as fs from "fs";
 import type { FixRule, FixContext, FixRuleResult } from "../../types";
 import { getCachedRegex } from "../../utils/regex-cache";
 
+/** Extract root template block (handles nested <template>) */
+function extractRootTemplateBlock(
+  content: string
+): { full: string; attrs: string; inner: string } | null {
+  const openMatch = content.match(/<template([^>]*)>/i);
+  if (!openMatch) return null;
+  const startIdx = openMatch.index! + openMatch[0].length;
+  let depth = 1;
+  let i = startIdx;
+  const len = content.length;
+  while (i < len && depth > 0) {
+    const open = content.indexOf("<template", i);
+    const close = content.indexOf("</template>", i);
+    if (close === -1) return null;
+    if (open !== -1 && open < close) {
+      depth++;
+      i = open + 9;
+    } else {
+      depth--;
+      if (depth === 0) {
+        const inner = content.slice(startIdx, close);
+        const full = content.slice(openMatch.index!, close + 11);
+        return { full, attrs: openMatch[1], inner };
+      }
+      i = close + 11;
+    }
+  }
+  return null;
+}
+
 /**
  * Fix: Vue Router 4 - <router-view> can no longer be used directly inside <transition>.
  * Use slot props: <router-view v-slot="{ Component }"><transition><component :is="Component" /></transition></router-view>
@@ -56,6 +86,142 @@ export const routerViewTransitionRule: FixRule = {
 };
 
 /**
+ * Fix: Transition as Root (Vue 3 breaking) - <transition> as component root no longer triggers on external toggle.
+ * Migration: add show prop + v-if="show" on child. Parent must change v-if="x" to :show="x".
+ * Generic: handles Options API, script setup, and template-only components. Output is always script setup.
+ */
+export const transitionAsRootRule: FixRule = {
+  id: "transition-as-root",
+  description: "Fix transition as root - add show prop + v-if on child for Vue 3",
+  priority: 59,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    const templateMatch = content.match(/<template[^>]*>([\s\S]*?)<\/template>/);
+    if (!templateMatch) return false;
+    const inner = templateMatch[1].trim();
+    if (!/^\s*<transition(\s|>)/i.test(inner)) return false;
+    if (/\bv-if=["']show["']/i.test(inner)) return false;
+    return true;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
+    const scriptMatch = content.match(/<script([^>]*)>([\s\S]*?)(<\/script>)/);
+    if (!templateMatch) return result;
+
+    const [, templateOpen, templateInner, templateClose] = templateMatch;
+    const trimmed = templateInner.trim();
+
+    const transitionChildRegex = /(<transition\s*)([^>]*)(>)\s*<(slot|[\w-]+)(\s|>)/i;
+    const childMatch = trimmed.match(transitionChildRegex);
+    if (!childMatch) return result;
+
+    const [, , , , childTag] = childMatch;
+    let fixedTemplate = templateInner;
+
+    if (childTag.toLowerCase() === "slot") {
+      fixedTemplate = templateInner.replace(
+        /(<transition\s*[^>]*>)\s*(<slot\s*[^>]*>[\s\S]*?<\/slot>)\s*(<\/transition>)/i,
+        "$1<div v-if=\"show\">$2</div>$3"
+      );
+    } else {
+      const escapedTag = childTag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      fixedTemplate = templateInner.replace(
+        new RegExp(
+          `(<transition\\s*[^>]*>)\\s*(<${escapedTag})(\\s[^>]*)?(>)`,
+          "i"
+        ),
+        (_m: string, transTag: string, childOpen: string, attrs: string | undefined, close: string) => {
+          const vIf = ' v-if="show"';
+          const attrsStr = attrs ? `${attrs}${vIf}` : vIf;
+          return `${transTag}${childOpen}${attrsStr}${close}`;
+        }
+      );
+    }
+
+    if (fixedTemplate === templateInner) return result;
+
+    let fixedContent = content.replace(
+      /<template[^>]*>[\s\S]*?<\/template>/,
+      `${templateOpen}${fixedTemplate}${templateClose}`
+    );
+
+    // Prefer script setup (vue-ai-migrator target). Add/update defineProps.
+    if (scriptMatch) {
+      const [, scriptAttrs, scriptInner, scriptClose] = scriptMatch;
+      let newScript = scriptInner;
+      const isScriptSetup = scriptAttrs.includes("setup");
+
+      if (isScriptSetup || scriptInner.includes("defineProps")) {
+        const arrayMatch = scriptInner.match(/defineProps\s*\(\s*\[([^\]]*)\]\s*\)/);
+        const objParamsMatch = scriptInner.match(/defineProps\s*\(\s*\{([^}]*)}\s*\)/);
+        if (arrayMatch && !/['"]show['"]/.test(arrayMatch[1])) {
+          const props = arrayMatch[1].trim();
+          const newProps = props ? `${props}, 'show'` : "'show'";
+          newScript = scriptInner.replace(
+            /defineProps\s*\(\s*\[([^\]]*)\]\s*\)/,
+            `defineProps([${newProps}])`
+          );
+        } else if (objParamsMatch && !/show\s*[:?]/.test(objParamsMatch[1])) {
+          const inner = objParamsMatch[1];
+          const sep = inner.trim().endsWith(",") || !inner.trim() ? "" : ", ";
+          newScript = scriptInner.replace(
+            /defineProps\s*\(\s*\{([^}]*)}\s*\)/,
+            `defineProps({${inner}${sep}show: Boolean})`
+          );
+        } else if (!/defineProps/.test(scriptInner) && !/['"]show['"]|show\s*[:?]/.test(scriptInner)) {
+          newScript = "defineProps(['show']);\n" + scriptInner.trim();
+        }
+      } else if (/export\s+default\s*\{/.test(scriptInner)) {
+        // Convert to script setup (vue-ai-migrator target) with defineProps
+        const propsArrayMatch = scriptInner.match(/props:\s*\[\s*([^\]]*)\]/);
+        const propsObjMatch = scriptInner.match(/props:\s*\{\s*([^}]*)\}/);
+        let propsList = "'show'";
+        if (propsArrayMatch && !/['"]show['"]/.test(propsArrayMatch[1])) {
+          const existing = propsArrayMatch[1].trim();
+          propsList = existing ? `${existing}, 'show'` : propsList;
+        } else if (propsObjMatch && !/show\s*:/.test(propsObjMatch[1])) {
+          const keys = propsObjMatch[1].match(/(\w+)\s*:/g);
+          if (keys) {
+            const names = keys.map((k) => `'${k.replace(/:$/, "")}'`);
+            propsList = [...names, "'show'"].join(", ");
+          }
+        }
+        newScript = `defineProps([${propsList}]);\n`;
+      }
+
+      if (newScript !== scriptInner) {
+        const convertingFromOptionsApi = !scriptAttrs.includes("setup") && /export\s+default\s*\{/.test(scriptInner);
+        const attrs = convertingFromOptionsApi
+          ? " setup" + (scriptAttrs.trim() ? " " + scriptAttrs.trim() : "")
+          : scriptAttrs;
+        fixedContent = fixedContent.replace(
+          /<script[^>]*>[\s\S]*?<\/script>/,
+          `<script${attrs}>${newScript}${scriptClose}`
+        );
+      }
+    } else {
+      // No script block: add script setup (Vue 2 → 3 Composition API / script setup target)
+      const scriptSetupBlock = "\n<script setup>\ndefineProps(['show']);\n</script>\n";
+      fixedContent = content.replace(
+        /<template[^>]*>[\s\S]*?<\/template>/,
+        `${templateOpen}${fixedTemplate}${templateClose}${scriptSetupBlock}`
+      );
+    }
+
+    result.content = fixedContent;
+    result.fixed = true;
+    result.fixes.push(
+      "Transition as root: added show prop + v-if on child. Update parent: v-if=\"x\" → :show=\"x\""
+    );
+    result.issues.push(
+      "Parent usages must change v-if to :show (e.g. <Modal v-if=\"visible\"> → <Modal :show=\"visible\">)"
+    );
+    return result;
+  },
+};
+
+/**
  * Fix: Variable shadowing component - when const X = computed(...) shadows imported component X.
  * Use PascalCase <X> in template for the component so Vue resolves to the component, not the variable.
  * Pattern: <comment v-for="id in comment.kids"> where comment is a variable → <Comment v-for=...>
@@ -63,7 +229,7 @@ export const routerViewTransitionRule: FixRule = {
 export const componentVariableShadowingRule: FixRule = {
   id: "component-variable-shadowing",
   description: "Fix variable shadowing component - use PascalCase for component in template",
-  priority: 59,
+  priority: 58,
   shouldApply: (filePath, content) => {
     if (!filePath.endsWith(".vue") || !content.includes("<script setup")) return false;
     const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
@@ -632,6 +798,270 @@ export const templateCurrencyNonNumericRule: FixRule = {
       result.fixed = true;
       result.fixes.push("Removed currency() from non-numeric template expressions");
     }
+    return result;
+  }
+};
+
+/**
+ * Fix: Functional components (Vue 3 breaking)
+ * - Remove functional attribute, keep props (compatible with defineProps), attrs→$attrs, remove v-on="listeners"
+ */
+export const functionalComponentRule: FixRule = {
+  id: "functional-component",
+  description: "Convert functional SFC: attrs→$attrs, remove listeners (props kept for script setup)",
+  priority: 57,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      (content.includes("functional") ||
+        content.includes('v-bind="attrs"') ||
+        content.includes("v-on=\"listeners\""))
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+
+    const block = extractRootTemplateBlock(content);
+    if (!block) return result;
+
+    const { full: fullBlock, inner: template } = block;
+    let fixed = template;
+
+    const needsConversion =
+      block.attrs.includes("functional") ||
+      fixed.includes('v-bind="attrs"') ||
+      fixed.includes('v-on="listeners"');
+    if (needsConversion) {
+      fixed = fixed.replace(/\battrs\./g, "$attrs.");
+      fixed = fixed.replace(/(^|[^\w$])attrs\b/g, "$1$attrs");
+      fixed = fixed.replace(/\bv-bind\s*=\s*["']attrs["']/gi, 'v-bind="$attrs"');
+      fixed = fixed.replace(/\s+v-on\s*=\s*["']listeners["']/gi, "");
+      fixed = fixed.replace(/\s+v-on\s*=\s*["']data\.listeners["']/gi, "");
+      fixed = fixed.replace(/\s+v-bind\s*=\s*["']data\.attrs["']/gi, ' v-bind="$attrs"');
+      result.fixes.push("Functional: attrs→$attrs, listeners removed (props kept for script setup)");
+    }
+
+    const fullBlockNew = fullBlock
+      .replace(/\s+functional\b/i, "")
+      .replace(template, fixed);
+    if (fullBlockNew !== fullBlock) {
+      result.content = content.replace(fullBlock, fullBlockNew);
+      result.fixed = true;
+    }
+
+    return result;
+  }
+};
+
+/**
+ * Fix: Remove .native modifier (removed in Vue 3)
+ * Vue 3: listeners not in emits go to root element. Document emitted events with emits option.
+ */
+export const nativeModifierRemovalRule: FixRule = {
+  id: "native-modifier-removal",
+  description: "Remove .native modifier from v-on (removed in Vue 3)",
+  priority: 56,
+  shouldApply: (filePath, content) => {
+    return filePath.endsWith(".vue") && /\.native(?=\s|>|"|'|=)/.test(content);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+
+    const fixed = content.replace(/\.native(?=\s|>|"|'|=)/g, "");
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Removed .native modifier - add emits option to child components if needed");
+    }
+
+    return result;
+  }
+};
+
+/**
+ * Fix: v-bind merge behavior (Vue 3)
+ * Vue 2: individual attrs always overwrote v-bind="object". Vue 3: order matters (last wins).
+ * To preserve Vue 2 behavior: put v-bind before individual attributes.
+ */
+export const vBindMergeOrderRule: FixRule = {
+  id: "v-bind-merge-order",
+  description: "Reorder v-bind before individual attrs to preserve Vue 2 merge behavior",
+  priority: 53,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    return /[^\s>]\s+v-bind\s*=\s*["']/.test(content);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+
+    const block = extractRootTemplateBlock(content);
+    if (!block) return result;
+
+    const { full: fullBlock, inner: template } = block;
+    let fixed = template;
+
+    const vBindRegex = /<(\w+)([^>]*)\s+v-bind\s*=\s*(["'])([\s\S]*?)\3([^>]*)>/gi;
+    fixed = fixed.replace(vBindRegex, (match, tag, before, q, vBindExpr, after) => {
+      if (!before.trim()) return match;
+      result.fixes.push("Reordered v-bind before individual attrs (Vue 3 merge)");
+      return `<${tag} v-bind=${q}${vBindExpr}${q}${before}${after}>`;
+    });
+
+    if (fixed !== template) {
+      result.content = content.replace(fullBlock, fullBlock.replace(template, fixed));
+      result.fixed = true;
+    }
+
+    return result;
+  }
+};
+
+/**
+ * Fix: v-for and v-if on same element (Vue 3 precedence breaking change)
+ * Vue 2: v-for had precedence. Vue 3: v-if has precedence (breaks behavior).
+ * Wrap in <template v-for> with v-if on inner element.
+ */
+export const vForVIfPrecedenceRule: FixRule = {
+  id: "v-for-v-if-precedence",
+  description: "Wrap v-for and v-if on same element in template (Vue 3 precedence)",
+  priority: 54,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    return (
+      /v-for\s*=[^>]*v-if\s*=/.test(content) ||
+      /v-if\s*=[^>]*v-for\s*=/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+
+    const block = extractRootTemplateBlock(content);
+    if (!block) return result;
+
+    const { full: fullBlock, inner: template } = block;
+    let fixed = template;
+
+    const wrapInTemplate = (match: string, tag: string, attrs: string, vForExpr: string, vIfExpr: string) => {
+      const keyMatch = attrs.match(/(?::key|key)\s*=\s*["']([^"']+)["']/);
+      const keyAttr = keyMatch ? ` :key="${keyMatch[1]}"` : "";
+      const cleanAttrs = attrs
+        .replace(/\s*(?::key|key)\s*=\s*["'][^"']+["']/, "")
+        .replace(/\s*v-for\s*=\s*["'][^"']+["']/, "")
+        .replace(/\s*v-if\s*=\s*["'][^"']+["']/, "")
+        .trim();
+      result.fixes.push("Wrapped v-for+v-if on same element in template");
+      return `<template v-for="${vForExpr}"${keyAttr}><${tag}${cleanAttrs ? " " + cleanAttrs : ""} v-if="${vIfExpr}">`;
+    };
+
+    const vForVIfRegex = /<(\w+)([^>]*)\s+v-for\s*=\s*["']([^"']+)["']([^>]*)\s+v-if\s*=\s*["']([^"']+)["']([^>]*)>/gi;
+    fixed = fixed.replace(vForVIfRegex, (m, tag, a1, vFor, a2, vIf, a3) =>
+      wrapInTemplate(m, tag, a1 + a2 + a3, vFor, vIf)
+    );
+
+    const vIfVForRegex = /<(\w+)([^>]*)\s+v-if\s*=\s*["']([^"']+)["']([^>]*)\s+v-for\s*=\s*["']([^"']+)["']([^>]*)>/gi;
+    fixed = fixed.replace(vIfVForRegex, (m, tag, a1, vIf, a2, vFor, a3) =>
+      wrapInTemplate(m, tag, a1 + a2 + a3, vFor, vIf)
+    );
+
+    if (fixed !== template) {
+      result.content = content.replace(fullBlock, fullBlock.replace(template, fixed));
+      result.fixed = true;
+    }
+
+    return result;
+  }
+};
+
+/**
+ * Fix: Vue 3 key attribute breaking changes
+ * - Remove keys from v-if/v-else/v-else-if (Vue 3 auto-generates them)
+ * - Move key from template v-for children onto the <template> tag
+ */
+export const keyAttributesRule: FixRule = {
+  id: "key-attributes",
+  description: "Fix key attributes for Vue 3 (remove from v-if/v-else/v-else-if, move to template v-for)",
+  priority: 55,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    const templateMatch = content.match(/<template[^>]*>([\s\S]*?)<\/template>/);
+    if (!templateMatch) return false;
+    const template = templateMatch[1];
+    return (
+      (/(?:v-if|v-else-if|v-else)[^>]*(?::key|key)\s*=|(?::key|key)\s*=[^>]*(?:v-if|v-else-if|v-else)/.test(template)) ||
+      (/<template\s+v-for[^>]*>[\s\S]*?<[^>]+\s+:key\s*=/.test(content))
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+
+    // Extract root template block (handles nested <template> tags)
+    const block = extractRootTemplateBlock(content);
+    if (!block) return result;
+
+    const { full: fullBlock, inner: template } = block;
+    let fixed = template;
+
+    // 1. Remove key from v-if/v-else/v-else-if branches
+    const conditionalWithKey = /<(div|span|\w+)([^>]*)\b(v-(?:if|else-if|else)(?:\s+[^>]*)?)([^>]*)>/gi;
+    fixed = fixed.replace(conditionalWithKey, (match) => {
+      if (!/(?::key|key)\s*=\s*["']/.test(match)) return match;
+      const cleaned = match
+        .replace(/\s*(?::key|key)\s*=\s*["'][^"']+["']/g, "")
+        .replace(/\s+/g, " ")
+        .replace(/\s>/, ">");
+      if (cleaned !== match) {
+        result.fixes.push("Removed key from v-if/v-else/v-else-if branch");
+        return cleaned;
+      }
+      return match;
+    });
+
+    // 2. Move key from template v-for children to <template> tag (handles nested template)
+    const templateVForKeyRegex =
+      /<template\s+v-for\s*=\s*["']([^"']+)["']([^>]*)>([\s\S]*?)<\/template>/gi;
+    fixed = fixed.replace(templateVForKeyRegex, (fullMatch, vForExpr, templateAttrs, innerContent) => {
+      if (templateAttrs.includes(":key") || templateAttrs.includes("key")) return fullMatch;
+      const keyOnChild = innerContent.match(/(?:<[^>]+\s)(?::key|key)\s*=\s*["']([^"']+)["']/);
+      if (!keyOnChild) return fullMatch;
+      const keyValue = keyOnChild[1];
+      const innerWithoutKeys = innerContent.replace(
+        /\s*(?::key|key)\s*=\s*["'][^"']+["']/g,
+        ""
+      );
+      result.fixes.push("Moved key from template v-for children onto <template>");
+      return `<template v-for="${vForExpr}" :key="${keyValue}"${templateAttrs}>${innerWithoutKeys}</template>`;
+    });
+
+    if (fixed !== template) {
+      result.content = content.replace(fullBlock, fullBlock.replace(template, fixed));
+      result.fixed = true;
+    }
+
     return result;
   }
 };

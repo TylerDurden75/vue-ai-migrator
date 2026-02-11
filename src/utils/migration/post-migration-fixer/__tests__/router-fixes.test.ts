@@ -6,6 +6,26 @@ import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, catchAllR
 
 describe("Router Fixes Rules", () => {
   describe("createAppSyntaxRule", () => {
+    it("should convert Vue.config.ignoredElements to app.config.compilerOptions.isCustomElement", async () => {
+      const content = `import { createApp } from "vue";
+import App from "./App.vue";
+
+Vue.config.ignoredElements = ['plastic-button'];
+const app = createApp(App);
+app.mount("#app");`;
+
+      const result = await createAppSyntaxRule.apply(
+        "src/main.js",
+        content,
+        { enableTypeScript: false, isVueFile: false, scriptContent: content }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("app.config.compilerOptions.isCustomElement");
+      expect(result.content).toContain("plastic-button");
+      expect(result.content).not.toContain("Vue.config.ignoredElements");
+    });
+
     it("should fix createApp syntax", async () => {
       const content = `const app = createApp(App).use(router).use(pinia).mount('#app');`;
 
@@ -80,6 +100,78 @@ app.mount("#app");`;
       expect(result.content).not.toContain("Vue.directive");
       expect(result.content).not.toContain("Vue.component");
       expect(result.content).toMatch(/const app = createApp\(App\)[\s\S]*app\.directive/);
+    });
+
+    it("should convert Vue.use(plugin) to app.use(plugin) for generic plugins", async () => {
+      const content = `import { createApp } from "vue";
+import App from "./App.vue";
+import VueI18n from "vue-i18n";
+
+Vue.use(VueI18n);
+const app = createApp(App);
+app.mount("#app");`;
+
+      const result = await vue2GlobalApiRule.apply(
+        "src/main.ts",
+        content,
+        {
+          enableTypeScript: false,
+          isVueFile: false,
+          scriptContent: content
+        }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("app.use(VueI18n)");
+      expect(result.content).not.toContain("Vue.use(VueI18n)");
+    });
+
+    it("should comment out Vue.use(Vuex) - use Pinia instead", async () => {
+      const content = `import { createApp } from "vue";
+import Vuex from "vuex";
+import App from "./App.vue";
+
+Vue.use(Vuex);
+const app = createApp(App);
+app.mount("#app");`;
+
+      const result = await vue2GlobalApiRule.apply(
+        "src/main.ts",
+        content,
+        {
+          enableTypeScript: false,
+          isVueFile: false,
+          scriptContent: content
+        }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("// Vue.use(Vuex)");
+      expect(result.content).toContain("Vuex removed - use Pinia");
+    });
+
+    it("should comment out Vue.use(VueRouter) - not needed in Vue 3", async () => {
+      const content = `import { createApp } from "vue";
+import VueRouter from "vue-router";
+import App from "./App.vue";
+
+Vue.use(VueRouter);
+const app = createApp(App);
+app.mount("#app");`;
+
+      const result = await vue2GlobalApiRule.apply(
+        "src/main.ts",
+        content,
+        {
+          enableTypeScript: false,
+          isVueFile: false,
+          scriptContent: content
+        }
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("// Vue.use(VueRouter)");
+      expect(result.content).toContain("Vue 3 router does not need Vue.use()");
     });
   });
 
