@@ -10,6 +10,7 @@ import {
   storeDispatchModuleActionRule,
   fixMalformedStoreDispatchRule,
   fixStoreMemberMismatchRule,
+  thisStoreNameToUseStoreRule,
   thisStoreToIndexStoreRule,
   returnThisInScriptSetupRule,
   thisBarToGetCurrentInstanceRule
@@ -607,6 +608,85 @@ const handleSearch = () => {
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("userStore.setFilter({ key: \"search\", value: \"x\" })");
     expect(result.content).not.toContain("indexStore.user /");
+  });
+});
+
+describe("thisStoreNameToUseStoreRule (generic)", () => {
+  it("should replace this.$userStore with userStore when useUserStore already exists", async () => {
+    const content = `<script setup>
+import { useUserStore } from "@/store/modules/user";
+const userStore = useUserStore();
+const handleSearch = () => {
+  this.$userStore.setFilter({ key: "search", value: searchQuery.value });
+};
+onMounted(() => {
+  this.$userStore.fetchUsers();
+});
+</script>`;
+    const result = await thisStoreNameToUseStoreRule.apply("Users.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("userStore.setFilter");
+    expect(result.content).toContain("userStore.fetchUsers()");
+    expect(result.content).not.toContain("this.$userStore");
+  });
+
+  it("should add useUserStore when missing and replace this.$userStore", async () => {
+    const content = `<script setup>
+const handleSearch = () => {
+  this.$userStore.setFilter({ key: "search", value: "x" });
+};
+</script>`;
+    const result = await thisStoreNameToUseStoreRule.apply("Users.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("import { useUserStore } from '@/store/modules/user'");
+    expect(result.content).toContain("const userStore = useUserStore()");
+    expect(result.content).toContain("userStore.setFilter");
+    expect(result.content).not.toContain("this.$userStore");
+  });
+
+  it("should replace $userStore in template with userStore", async () => {
+    const content = `<template><div>{{ $userStore.currentUser }}</div></template>
+<script setup>
+const x = () => this.$userStore.fetchUsers();
+</script>`;
+    const result = await thisStoreNameToUseStoreRule.apply("Users.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("{{ userStore.currentUser }}");
+    expect(result.content).not.toContain("$userStore");
+  });
+
+  it("should handle multiple stores (userStore, productStore) generically", async () => {
+    const content = `<script setup>
+this.$userStore.load();
+this.$productStore.load();
+</script>`;
+    const result = await thisStoreNameToUseStoreRule.apply("Cart.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("import { useUserStore } from '@/store/modules/user'");
+    expect(result.content).toContain("import { useProductStore } from '@/store/modules/product'");
+    expect(result.content).toContain("userStore.load()");
+    expect(result.content).toContain("productStore.load()");
+  });
+
+  it("should not apply when no this.$xxxStore", () => {
+    expect(thisStoreNameToUseStoreRule.shouldApply("test.vue", "<script>const x = 1</script>")).toBe(false);
+    expect(thisStoreNameToUseStoreRule.shouldApply("test.vue", "<script>this.$store.dispatch('x')</script>")).toBe(false);
   });
 });
 

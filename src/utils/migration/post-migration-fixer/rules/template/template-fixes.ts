@@ -440,7 +440,7 @@ export const hostWrongArgRule: FixRule = {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const templateMatch = content.match(/(<template>)([\s\S]*?)(<\/template>)/);
     if (!templateMatch) return result;
-    let template = templateMatch[2];
+    const template = templateMatch[2];
     const fixed = template.replace(new RegExp(`host\\s*\\(\\s*([^)]*\\.(?:${NON_URL_PROPS}))\\s*\\)`, "g"), "$1");
     if (fixed !== template) {
       result.content = content.replace(templateMatch[0], templateMatch[1] + fixed + templateMatch[3]);

@@ -403,7 +403,7 @@ export const createRouterConflictRule: FixRule = {
       issues: []
     };
 
-    let fixed = content
+    const fixed = content
       .replace(
         /import\s*\{\s*createRouter\s*,\s*createWebHistory\s*\}\s*from\s*['"]vue-router['"]/,
         "import { createRouter as createVueRouter, createWebHistory } from 'vue-router'"

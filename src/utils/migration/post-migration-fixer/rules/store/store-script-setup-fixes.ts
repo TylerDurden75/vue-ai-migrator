@@ -526,6 +526,98 @@ function moduleToStore(module: string): { storeVar: string; storeName: string; i
   return { storeVar, storeName, importPath };
 }
 
+/** Derive useXxxStore and import path from storeVar (userStore → useUserStore, @/store/modules/user). Generic. */
+function storeVarToUseStore(storeVar: string): { storeName: string; importPath: string } {
+  if (storeVar === "indexStore") {
+    return { storeName: "useIndexStore", importPath: "@/store/index" };
+  }
+  const module = storeVar.replace(/Store$/, "").toLowerCase();
+  const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
+  const importPath = `@/store/modules/${module}`;
+  return { storeName, importPath };
+}
+
+/**
+ * Fix: this.$xxxStore → xxxStore (use useXxxStore() when not already present).
+ * In Pinia, stores are accessed via useXxxStore(), not globalProperties.$xxxStore.
+ * Generic: handles any this.$userStore, this.$cartStore, this.$productStore, etc.
+ */
+export const thisStoreNameToUseStoreRule: FixRule = {
+  id: "this-store-name-to-use-store",
+  description: "Replace this.$xxxStore with useXxxStore() (Pinia has no global $xxxStore)",
+  priority: 63,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      content.includes("<script") &&
+      /this\.\$\w+Store\b/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+
+    let scriptContent = scriptMatch[2];
+    const storeVars = new Set<string>();
+    const re = /this\.\$(\w+Store)\b/g;
+    let m;
+    while ((m = re.exec(scriptContent)) !== null) {
+      storeVars.add(m[1]);
+    }
+    if (storeVars.size === 0) return result;
+
+    const storesToAdd = new Map<string, { storeName: string; importPath: string }>();
+    for (const storeVar of storeVars) {
+      const hasUseStore = new RegExp(`const\\s+${storeVar}\\s*=\\s*use\\w+Store\\s*\\(`).test(scriptContent);
+      if (!hasUseStore) {
+        const { storeName, importPath } = storeVarToUseStore(storeVar);
+        storesToAdd.set(storeVar, { storeName, importPath });
+      }
+      scriptContent = scriptContent.replace(new RegExp(`this\\.\\$${storeVar}\\b`, "g"), storeVar);
+    }
+
+    if (storesToAdd.size > 0) {
+      const afterImports = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/)?.[0]?.length ?? 0;
+      for (const [storeVar, { storeName, importPath }] of storesToAdd) {
+        const hasImport = scriptContent.includes(`from "${importPath}"`) || scriptContent.includes(`from '${importPath}'`);
+        if (!hasImport) {
+          scriptContent =
+            scriptContent.slice(0, afterImports) +
+            `import { ${storeName} } from '${importPath}';\n` +
+            scriptContent.slice(afterImports);
+        }
+        const hasInit = new RegExp(`const\\s+${storeVar}\\s*=\\s*${storeName}\\s*\\(`).test(scriptContent);
+        if (!hasInit) {
+          const impEnd = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/)?.[0]?.length ?? 0;
+          scriptContent =
+            scriptContent.slice(0, impEnd) +
+            `const ${storeVar} = ${storeName}();\n` +
+            scriptContent.slice(impEnd);
+        }
+      }
+    }
+
+    let fullContent = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+
+    const templateMatch = fullContent.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
+    if (templateMatch) {
+      let templateContent = templateMatch[2];
+      for (const storeVar of storeVars) {
+        templateContent = templateContent.replace(new RegExp(`\\$${storeVar}\\b`, "g"), storeVar);
+      }
+      if (templateContent !== templateMatch[2]) {
+        fullContent = fullContent.replace(templateMatch[0], templateMatch[1] + templateContent + templateMatch[3]);
+      }
+    }
+
+    result.content = fullContent;
+    result.fixed = true;
+    result.fixes.push(`Replaced this.$${[...storeVars].join(", this.$")} with useXxxStore()`);
+    return result;
+  },
+};
+
 /**
  * Fix: storeVar.dispatch('module/action') → moduleStore.action() (Pinia)
  * Prevents storeDispatchToDirectRule from producing invalid indexStore.module/action() (division).
@@ -621,7 +713,7 @@ export const fixMalformedStoreDispatchRule: FixRule = {
     const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
     if (!scriptMatch) return result;
 
-    let scriptContent = scriptMatch[1];
+    const scriptContent = scriptMatch[1];
     const storesToAdd = new Map<string, { storeVar: string; storeName: string; importPath: string }>();
 
     const ensureStore = (module: string) => {

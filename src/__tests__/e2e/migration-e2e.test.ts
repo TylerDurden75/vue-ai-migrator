@@ -7,6 +7,7 @@
  */
 
 import * as fs from "fs/promises";
+import * as os from "os";
 import * as path from "path";
 import { execSync } from "child_process";
 import { migrate } from "../../core/migrator";
@@ -46,7 +47,7 @@ describe("E2E: Full migration flow", () => {
 
   beforeEach(async () => {
     tempDir = path.join(
-      require("os").tmpdir(),
+      os.tmpdir(),
       `vue-migrator-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}`
     );
     await copyDir(FIXTURE_PATH, tempDir);

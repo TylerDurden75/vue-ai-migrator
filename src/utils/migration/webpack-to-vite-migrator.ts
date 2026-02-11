@@ -44,7 +44,6 @@ export async function migrateWebpackToVite(
 
     // Extract info from webpack base config (alias, etc.)
   const buildDir = path.join(projectPath, "build");
-  let aliasPath = "src";
   let hasStylus = false;
   let hasFirebase = false;
 

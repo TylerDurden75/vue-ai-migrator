@@ -281,7 +281,7 @@ export const fixCorruptedArrowFunctionRule: FixRule = {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
     if (!scriptMatch) return result;
-    let script = scriptMatch[1];
+    const script = scriptMatch[1];
     const fixed = script.replace(/(\w+)\.value\s*=\s*>\s*/g, "$1 => ");
     if (fixed !== script) {
       result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], fixed));
