@@ -7,11 +7,13 @@ import {
   secureRouterPushRule,
   routerPushTypeCheckRule,
   replaceThisRouterRouteRule,
+  storeDispatchModuleActionRule,
+  fixMalformedStoreDispatchRule,
   fixStoreMemberMismatchRule,
   thisStoreToIndexStoreRule,
   returnThisInScriptSetupRule,
   thisBarToGetCurrentInstanceRule
-} from "../store-script-setup-fixes";
+} from "../store/store-script-setup-fixes";
 import * as path from "path";
 
 jest.mock("../../utils/store-analysis-cache", () => ({
@@ -530,6 +532,81 @@ const fetchProduct = () => indexStore.fetchProduct(props.id);
     expect(result.content).toContain("productStore.fetchProduct");
     expect(result.content).not.toContain("indexStore.fetchProduct");
     expect(result.content).toMatch(/productStore\.(allProducts|currentProduct)/);
+  });
+});
+
+describe("storeDispatchModuleActionRule", () => {
+  it("should replace indexStore.dispatch('user/fetchUsers') with userStore.fetchUsers()", async () => {
+    const content = `<script setup>
+import { useIndexStore } from "@/store/index";
+const indexStore = useIndexStore();
+onMounted(() => {
+  indexStore.dispatch('user/fetchUsers');
+});
+</script>`;
+    const result = await storeDispatchModuleActionRule.apply("Users.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("userStore.fetchUsers()");
+    expect(result.content).toContain("useUserStore");
+    expect(result.content).not.toContain("indexStore.dispatch");
+  });
+
+  it("should replace storeVar.dispatch('module/action', args) with moduleStore.action(args)", async () => {
+    const content = `<script setup>
+const indexStore = useIndexStore();
+indexStore.dispatch('user/setFilter', { key: 'role', value: 'admin' });
+</script>`;
+    const result = await storeDispatchModuleActionRule.apply("Users.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("userStore.setFilter({ key: 'role', value: 'admin' })");
+  });
+});
+
+describe("fixMalformedStoreDispatchRule", () => {
+  it("should fix indexStore.user / fetchUsers() to userStore.fetchUsers()", async () => {
+    const content = `<script setup>
+import { useIndexStore } from "@/store/index";
+import { useUserStore } from "@/store/modules/user";
+const indexStore = useIndexStore();
+const userStore = useUserStore();
+onMounted(() => {
+  indexStore.user / fetchUsers();
+});
+</script>`;
+    const result = await fixMalformedStoreDispatchRule.apply("Users.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("userStore.fetchUsers()");
+    expect(result.content).not.toContain("indexStore.user /");
+  });
+
+  it("should fix indexStore.user / setFilter({...}) to userStore.setFilter({...})", async () => {
+    const content = `<script setup>
+const indexStore = useIndexStore();
+const handleSearch = () => {
+  indexStore.user /
+    setFilter({ key: "search", value: "x" });
+};
+</script>`;
+    const result = await fixMalformedStoreDispatchRule.apply("Users.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("userStore.setFilter({ key: \"search\", value: \"x\" })");
+    expect(result.content).not.toContain("indexStore.user /");
   });
 });
 

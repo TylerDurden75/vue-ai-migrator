@@ -3,7 +3,7 @@
  * Vue 3 removed instance event API - use mitt, tiny-emitter, or provide/inject
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
 
 /**
  * Detect event bus usage ($on, $off, $once) and add migration suggestion.

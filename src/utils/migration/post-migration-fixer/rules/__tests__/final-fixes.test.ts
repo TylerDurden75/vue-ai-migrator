@@ -6,7 +6,7 @@ import {
   wrongStorePropertyRule,
   nullChecksLengthRule,
   detailViewStoreRule
-} from "../final-fixes";
+} from "../final/final-fixes";
 
 describe("wrongStorePropertyRule", () => {
   it("should fix wrong store property access", async () => {

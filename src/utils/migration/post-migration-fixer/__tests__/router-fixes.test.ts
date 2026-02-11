@@ -2,7 +2,7 @@
  * Unit tests for router fixes rules
  */
 
-import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, catchAllRouteRule, routerDefineAsyncComponentUnwrapRule } from "../rules/router-fixes";
+import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, catchAllRouteRule, routerDefineAsyncComponentUnwrapRule } from "../rules/router/router-fixes";
 
 describe("Router Fixes Rules", () => {
   describe("createAppSyntaxRule", () => {

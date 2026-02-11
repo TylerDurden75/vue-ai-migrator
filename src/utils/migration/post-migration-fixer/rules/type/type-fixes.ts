@@ -2,8 +2,8 @@
  * Rules for fixing TypeScript type issues
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
-import { getCachedRegex } from "../utils/regex-cache";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getCachedRegex } from "../../utils/regex-cache";
 
 /**
  * Fix: Wrong destructuring in params - { key: any, value } renames key to "any".

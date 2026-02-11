@@ -2,8 +2,8 @@
  * Rules for fixing computed properties issues
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
-import { getCachedRegex } from "../utils/regex-cache";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getCachedRegex } from "../../utils/regex-cache";
 
 /**
  * Fix: Add .value to computed properties in <script setup>

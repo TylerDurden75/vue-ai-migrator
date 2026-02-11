@@ -2,7 +2,7 @@
  * Tests for env-fixes rules (process.env → import.meta.env)
  */
 
-import { processEnvToImportMetaRule } from "../env-fixes";
+import { processEnvToImportMetaRule } from "../env/env-fixes";
 
 describe("processEnvToImportMetaRule", () => {
   it("replaces process.env.NODE_ENV === 'production' with import.meta.env.PROD", async () => {

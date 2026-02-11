@@ -3,7 +3,7 @@
  * Tests correctWrongStoreImportsRule and addMissingStoreImportsRule
  */
 
-import { correctWrongStoreImportsRule, addMissingStoreImportsRule } from "../rules/import-fixes";
+import { correctWrongStoreImportsRule, addMissingStoreImportsRule } from "../rules/import/import-fixes";
 import * as storeAnalyzer from "../utils/store-analyzer";
 import { clearStoreAnalysisCache } from "../utils/store-analysis-cache";
 

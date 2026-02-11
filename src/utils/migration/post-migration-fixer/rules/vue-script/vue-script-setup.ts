@@ -2,7 +2,7 @@
  * Rules for fixing <script setup> specific issues
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
 
 /**
  * Fix: Malformed script setup tag (missing space): <scriptsetup → <script setup

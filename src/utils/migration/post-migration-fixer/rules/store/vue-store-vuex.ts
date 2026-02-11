@@ -2,8 +2,8 @@
  * Rules for replacing Vuex this.$store.getters / this.$store.dispatch with Pinia in .vue files
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
-import { getStoreMethodMap } from "../utils/store-analysis-cache";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getStoreMethodMap } from "../../utils/store-analysis-cache";
 
 function moduleToStore(module: string): { storeVar: string; storeName: string; importPath: string } {
   if (module === "index") {

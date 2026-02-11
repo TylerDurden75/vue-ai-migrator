@@ -7,7 +7,7 @@ import {
   vueComputedExtraParenRule,
   malformedComputedRule,
   computedSyntaxRule
-} from "../computed-fixes";
+} from "../computed/computed-fixes";
 
 describe("computedValueRule", () => {
   it("should add .value to computed properties when accessing length", async () => {

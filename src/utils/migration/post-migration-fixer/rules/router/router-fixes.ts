@@ -4,9 +4,9 @@
 
 import * as fsSync from "fs";
 import * as path from "path";
-import type { FixRule, FixContext, FixRuleResult } from "../types";
-import { getCachedRegex } from "../utils/regex-cache";
-import { getStoreMethodMap } from "../utils/store-analysis-cache";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getCachedRegex } from "../../utils/regex-cache";
+import { getStoreMethodMap } from "../../utils/store-analysis-cache";
 
 function moduleToStore(module: string): { storeVar: string; storeName: string; importPath: string } {
   if (module === "index") {

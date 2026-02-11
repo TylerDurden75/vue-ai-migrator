@@ -2,9 +2,9 @@
  * Rules for fixing import issues
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
-import { getCachedRegex } from "../utils/regex-cache";
-import { getStoreMethodMap } from "../utils/store-analysis-cache";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getCachedRegex } from "../../utils/regex-cache";
+import { getStoreMethodMap } from "../../utils/store-analysis-cache";
 
 const VUE_IMPORT_CANDIDATES: Array<{ pattern: RegExp; name: string }> = [
   { pattern: /\bref\s*\(/, name: "ref" },

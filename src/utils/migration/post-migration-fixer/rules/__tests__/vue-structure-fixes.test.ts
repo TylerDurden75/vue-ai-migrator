@@ -7,7 +7,7 @@ import {
   duplicateSymbolDeclarationRule,
   scriptSetupUndeclaredVarsRule,
   loadingRefRule,
-} from "../vue-structure-fixes";
+} from "../vue-script/vue-structure-fixes";
 
 describe("scriptStyleInsideTemplateRule", () => {
   it("should move script and style from inside template to correct position", async () => {

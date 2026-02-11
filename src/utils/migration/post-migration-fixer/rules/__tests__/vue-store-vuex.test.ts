@@ -2,7 +2,7 @@
  * Tests for vue-store-vuex rule (this.$store.getters / dispatch → Pinia)
  */
 
-import { vueStoreVuexToPiniaRule } from "../vue-store-vuex";
+import { vueStoreVuexToPiniaRule } from "../store/vue-store-vuex";
 
 describe("vueStoreVuexToPiniaRule", () => {
   it("should replace this.$store.getters['module/getter'] and dispatch('module/action')", async () => {

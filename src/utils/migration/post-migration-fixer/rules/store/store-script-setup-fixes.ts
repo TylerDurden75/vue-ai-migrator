@@ -2,9 +2,9 @@
  * Rules for fixing store-related issues in <script setup> components
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
-import { getCachedRegex } from "../utils/regex-cache";
-import { getStoreMethodMap } from "../utils/store-analysis-cache";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getCachedRegex } from "../../utils/regex-cache";
+import { getStoreMethodMap } from "../../utils/store-analysis-cache";
 
 /** Detect store variable from const X = useYStore(). Prefer indexStore, store, mainStore. */
 export function getStoreVarFromScript(scriptContent: string): string | null {
@@ -344,7 +344,11 @@ export const storeThemeBindingRule: FixRule = {
       if (new RegExp(`const\\s+${templateName}\\s*=`).test(scriptContent)) continue;
       const setterParam = _context.enableTypeScript ? "(v: string)" : "(v)";
       const insertBlock = `const ${templateName} = computed({\n  get: () => ${storeVar}.${getter},\n  set: ${setterParam} => ${storeVar}.${setter}(v),\n});\n\n`;
-      let insertPos = scriptContent.indexOf(`const ${storeVar}`);
+      const storeVarRe = new RegExp(`const\\s+${storeVar}\\s*=\\s*\\w+\\([^)]*\\)[^\\n]*\\n`);
+      const storeVarMatch = scriptContent.match(storeVarRe);
+      let insertPos = storeVarMatch
+        ? scriptContent.indexOf(storeVarMatch[0]) + storeVarMatch[0].length
+        : -1;
       if (insertPos === -1) insertPos = scriptContent.search(/\n(?!\s*\/\/)/);
       if (insertPos >= 0) {
         if (!/import\s*\{[^}]*\bcomputed\b/.test(scriptContent)) {
@@ -508,6 +512,156 @@ export const routerPushTypeCheckRule: FixRule = {
       result.fixes.push(...fixes);
     }
 
+    return result;
+  }
+};
+
+function moduleToStore(module: string): { storeVar: string; storeName: string; importPath: string } {
+  if (module === "index") {
+    return { storeVar: "indexStore", storeName: "useIndexStore", importPath: "@/store/index" };
+  }
+  const storeVar = `${module}Store`;
+  const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
+  const importPath = `@/store/modules/${module}`;
+  return { storeVar, storeName, importPath };
+}
+
+/**
+ * Fix: storeVar.dispatch('module/action') → moduleStore.action() (Pinia)
+ * Prevents storeDispatchToDirectRule from producing invalid indexStore.module/action() (division).
+ * Generic: handles any storeVar and module/action pattern.
+ */
+export const storeDispatchModuleActionRule: FixRule = {
+  id: "store-dispatch-module-action",
+  description: "Replace storeVar.dispatch('module/action') with moduleStore.action() in components",
+  priority: 88,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      content.includes("<script setup") &&
+      /\.dispatch\s*\(\s*['"][^'"]+\/[^'"]+['"]/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+    if (!scriptMatch) return result;
+
+    let scriptContent = scriptMatch[1];
+    const storesToAdd = new Map<string, { storeVar: string; storeName: string; importPath: string }>();
+
+    const ensureStore = (module: string) => {
+      const { storeVar, storeName, importPath } = moduleToStore(module);
+      if (!storesToAdd.has(storeVar)) storesToAdd.set(storeVar, { storeVar, storeName, importPath });
+    };
+
+    // storeVar.dispatch('module/action') or storeVar.dispatch('module/action', args)
+    const dispatchRe = /(\w+)\.dispatch\s*\(\s*['"]([^'"]+)\/([^'"]+)['"]\s*(?:,\s*([^)]+))?\s*\)/g;
+    let m;
+    const replacements: Array<{ start: number; end: number; replacement: string }> = [];
+    while ((m = dispatchRe.exec(scriptContent)) !== null) {
+      const module = m[2];
+      const action = m[3];
+      const args = m[4]?.trim() ?? "";
+      ensureStore(module);
+      const { storeVar } = moduleToStore(module);
+      const replacement = args ? `${storeVar}.${action}(${args})` : `${storeVar}.${action}()`;
+      replacements.push({ start: m.index, end: m.index + m[0].length, replacement });
+    }
+
+    for (const { start, end, replacement } of replacements.sort((a, b) => b.start - a.start)) {
+      scriptContent = scriptContent.slice(0, start) + replacement + scriptContent.slice(end);
+    }
+
+    if (replacements.length === 0) return result;
+
+    for (const { storeVar, storeName, importPath } of storesToAdd.values()) {
+      const hasImport = scriptContent.includes(`from "${importPath}"`) || scriptContent.includes(`from '${importPath}'`);
+      if (!hasImport) {
+        const lastImport = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+        const insertAfter = lastImport ? lastImport[0].length : 0;
+        scriptContent =
+          scriptContent.slice(0, insertAfter) +
+          `import { ${storeName} } from '${importPath}';\n` +
+          scriptContent.slice(insertAfter);
+      }
+      const hasInit = new RegExp(`const\\s+${storeVar}\\s*=\\s*${storeName}\\s*\\(\\s*\\)`).test(scriptContent);
+      if (!hasInit) {
+        const afterImports = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/)?.[0]?.length ?? 0;
+        scriptContent =
+          scriptContent.slice(0, afterImports) +
+          `const ${storeVar} = ${storeName}();\n` +
+          scriptContent.slice(afterImports);
+      }
+    }
+
+    result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], scriptContent));
+    result.fixed = true;
+    result.fixes.push("Replaced storeVar.dispatch('module/action') with moduleStore.action()");
+    return result;
+  }
+};
+
+/**
+ * Fix: Malformed storeVar.module / action() → moduleStore.action() (repair broken storeDispatchToDirectRule output)
+ */
+export const fixMalformedStoreDispatchRule: FixRule = {
+  id: "fix-malformed-store-dispatch",
+  description: "Fix storeVar.module / action() (division) to moduleStore.action()",
+  priority: 86,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      content.includes("<script setup") &&
+      /\w+Store\.\w+\s*\/\s*\w+\s*\(/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+    if (!scriptMatch) return result;
+
+    let scriptContent = scriptMatch[1];
+    const storesToAdd = new Map<string, { storeVar: string; storeName: string; importPath: string }>();
+
+    const ensureStore = (module: string) => {
+      const { storeVar, storeName, importPath } = moduleToStore(module);
+      if (!storesToAdd.has(storeVar)) storesToAdd.set(storeVar, { storeVar, storeName, importPath });
+    };
+
+    // storeVar.module / action() or storeVar.module / action(args)
+    const malformedRe = /(\w+Store)\.(\w+)\s*\/\s*(\w+)\s*\(([^)]*)\)/g;
+    let fixed = scriptContent;
+    let m;
+    while ((m = malformedRe.exec(scriptContent)) !== null) {
+      const module = m[2];
+      const action = m[3];
+      const args = m[4].trim();
+      ensureStore(module);
+      const { storeVar } = moduleToStore(module);
+      const replacement = args ? `${storeVar}.${action}(${args})` : `${storeVar}.${action}()`;
+      fixed = fixed.replace(m[0], replacement);
+    }
+
+    if (fixed === scriptContent) return result;
+
+    for (const { storeVar, storeName, importPath } of storesToAdd.values()) {
+      const hasImport = fixed.includes(`from "${importPath}"`) || fixed.includes(`from '${importPath}'`);
+      if (!hasImport) {
+        const lastImport = fixed.match(/(import\s+[^;]+;[\s\n]*)+/);
+        const insertAfter = lastImport ? lastImport[0].length : 0;
+        fixed = fixed.slice(0, insertAfter) + `import { ${storeName} } from '${importPath}';\n` + fixed.slice(insertAfter);
+      }
+      const hasInit = new RegExp(`const\\s+${storeVar}\\s*=\\s*${storeName}\\s*\\(\\s*\\)`).test(fixed);
+      if (!hasInit) {
+        const afterImports = fixed.match(/(import\s+[^;]+;[\s\n]*)+/)?.[0]?.length ?? 0;
+        fixed = fixed.slice(0, afterImports) + `const ${storeVar} = ${storeName}();\n` + fixed.slice(afterImports);
+      }
+    }
+
+    result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], fixed));
+    result.fixed = true;
+    result.fixes.push("Fixed malformed storeVar.module / action() to moduleStore.action()");
     return result;
   }
 };
@@ -843,9 +997,15 @@ export const storeRefsFromIndexStoreRule: FixRule = {
 /** Vue 2 global properties handled by other rules - do not convert to getCurrentInstance */
 const RESERVED_GLOBAL_PROPS = new Set(["router", "route", "store"]);
 
+/** Pinia store names (userStore, appStore, etc.) - use useXStore(), not getCurrentInstance */
+function isStoreGlobalProp(prop: string): boolean {
+  return prop.endsWith("Store");
+}
+
 /**
  * Fix: this.$xxx → getCurrentInstance()?.appContext.config.globalProperties.$xxx in script setup.
  * Generic: applies to any global plugin ($bar, $progress, $toast, etc.) - varName = xxx without $.
+ * Excludes: router, route, store (handled elsewhere) and *Store (Pinia - use useXStore()).
  */
 export const thisBarToGetCurrentInstanceRule: FixRule = {
   id: "this-bar-to-get-current-instance",
@@ -854,7 +1014,13 @@ export const thisBarToGetCurrentInstanceRule: FixRule = {
   shouldApply: (filePath, content) => {
     if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
     const match = content.match(/this\.\$(\w+)/g);
-    return match?.some((m) => !RESERVED_GLOBAL_PROPS.has(m.replace("this.$", ""))) ?? false;
+    return (
+      match?.some(
+        (m) =>
+          !RESERVED_GLOBAL_PROPS.has(m.replace("this.$", "")) &&
+          !isStoreGlobalProp(m.replace("this.$", ""))
+      ) ?? false
+    );
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
@@ -865,7 +1031,12 @@ export const thisBarToGetCurrentInstanceRule: FixRule = {
     let m;
     const re = /this\.\$(\w+)/g;
     while ((m = re.exec(scriptContent)) !== null) {
-      if (!RESERVED_GLOBAL_PROPS.has(m[1])) props.add(m[1]);
+      if (
+        !RESERVED_GLOBAL_PROPS.has(m[1]) &&
+        !isStoreGlobalProp(m[1])
+      ) {
+        props.add(m[1]);
+      }
     }
     if (props.size === 0) return result;
 
@@ -898,6 +1069,42 @@ export const thisBarToGetCurrentInstanceRule: FixRule = {
     result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
     result.fixed = true;
     result.fixes.push(`Replaced this.$${[...props].join(", this.$")} with getCurrentInstance`);
+    return result;
+  },
+};
+
+/**
+ * Fix: Remove duplicate store declaration when both getCurrentInstance and useXStore exist.
+ * Pattern: const storeVar = getCurrentInstance()?.appContext...$storeVar + const storeVar = useXStore()
+ * → keep only useXStore.
+ */
+export const removeDuplicateStoreGetCurrentInstanceRule: FixRule = {
+  id: "remove-duplicate-store-get-current-instance",
+  description: "Remove getCurrentInstance store decl when useXStore already exists",
+  priority: 66,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("getCurrentInstance")) return false;
+    return /const\s+(\w+Store)\s*=\s*getCurrentInstance\(\)\?\.appContext\.config\.globalProperties\.\$\1/.test(content)
+      && /\buse\w+Store\s*\(\s*\)/.test(content);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!scriptMatch) return result;
+    let script = scriptMatch[1];
+    const re = /const\s+(\w+Store)\s*=\s*getCurrentInstance\(\)\?\.appContext\.config\.globalProperties\.\$\1\s*;?\s*\n?/g;
+    const before = script;
+    script = script.replace(re, (match, storeVar) => {
+      if (new RegExp(`const\\s+${storeVar}\\s*=\\s*use\\w+Store\\s*\\(`, "g").test(before)) {
+        return "";
+      }
+      return match;
+    });
+    if (script !== before) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], script));
+      result.fixed = true;
+      result.fixes.push("Removed duplicate getCurrentInstance store declarations");
+    }
     return result;
   },
 };

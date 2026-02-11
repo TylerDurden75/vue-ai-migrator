@@ -2,7 +2,7 @@
  * Rules for process.env / browser compatibility (process is not defined in Vite client bundle)
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
 
 /** Server-only file patterns - do not replace process in these */
 const SERVER_ONLY_PATTERNS = [

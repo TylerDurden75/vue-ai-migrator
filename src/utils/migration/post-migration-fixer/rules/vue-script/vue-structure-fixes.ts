@@ -2,7 +2,7 @@
  * Rules for fixing malformed Vue SFC structure (script/style inside template, duplicate symbols)
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
 
 /**
  * Extract root template block (handles nested <template v-if>)
@@ -107,6 +107,7 @@ const SKIP_UNDECLARED = new Set([
   "duration", "height", "color", "failedColor", "increase", "decrease", "finish",
   "pause", "hide", "fail", "set", "get", "start", "nextTick", "defineExpose",
   "value", // common property access (percent.value = 0) - avoid false positive
+  "v",    // v-model, v-if, v-for param - avoid false positive from directive names
 ]);
 
 /**
@@ -202,7 +203,7 @@ export const loadingRefRule: FixRule = {
     if (!scriptMatch || !templateMatch) return false;
     const script = scriptMatch[1];
     const template = templateMatch[1];
-    const assignRe = /(?:^|[^\w.])(\w+)\s*=/g;
+    const assignRe = /(?:^|[^\w.])(\w+)\s*=\s*(?!>)/g;
     let m;
     while ((m = assignRe.exec(script)) !== null) {
       const varName = m[1];
@@ -222,7 +223,7 @@ export const loadingRefRule: FixRule = {
     let script = scriptMatch[1];
     const template = templateMatch[1];
     const toFix = new Set<string>();
-    const assignRe = /(?:^|[^\w.])(\w+)\s*=/g;
+    const assignRe = /(?:^|[^\w.])(\w+)\s*=\s*(?!>)/g;
     let m;
     while ((m = assignRe.exec(script)) !== null) {
       const varName = m[1];
@@ -235,7 +236,11 @@ export const loadingRefRule: FixRule = {
     for (const varName of toFix) {
       const initialValue = inferRefInitialValue(varName);
       const decl = `const ${varName} = ref(${initialValue})`;
-      script = script.replace(new RegExp(`\\b${varName}\\s*=\\s*`, "g"), `${varName}.value = `);
+      // Replace "varName = " but NOT: "varName =>" (arrow param), "const/let/var varName =" (declaration)
+      script = script.replace(
+        new RegExp(`(?<!const |let |var )\\b${varName}\\s*=\\s*(?!>)`, "g"),
+        `${varName}.value = `
+      );
       if (!/ref\b/.test(script)) {
         const vueImport = script.match(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/);
         if (vueImport && !/ref\b/.test(vueImport[1])) {
@@ -256,6 +261,68 @@ export const loadingRefRule: FixRule = {
     }
     if (result.fixed) {
       result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], script));
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: Corrupted arrow function syntax from loadingRefRule - varName.value = > → varName =>
+ * Pattern: set: v.value = > or const fn = product.value = > (should be =>)
+ */
+export const fixCorruptedArrowFunctionRule: FixRule = {
+  id: "fix-corrupted-arrow-function",
+  description: "Fix varName.value = > to varName => (corrupted by loadingRefRule)",
+  priority: 67,
+  shouldApply: (filePath, content) => {
+    return filePath.endsWith(".vue") && /\.value\s*=\s*>\s*/.test(content);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!scriptMatch) return result;
+    let script = scriptMatch[1];
+    const fixed = script.replace(/(\w+)\.value\s*=\s*>\s*/g, "$1 => ");
+    if (fixed !== script) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], fixed));
+      result.fixed = true;
+      result.fixes.push("Fixed corrupted arrow function syntax (varName.value = > → varName =>)");
+    }
+    return result;
+  },
+};
+
+/** Var names that are from Vue directives (v-model, v-if) - never real refs */
+const DIRECTIVE_LIKE_VARS = new Set(["v"]);
+
+/**
+ * Fix: Remove erroneous ref declarations for directive-like vars (e.g. v from v-model).
+ * Pattern: const v = ref(null) when v is only from directive names, not a real variable.
+ */
+export const removeErroneousRefForSkippedVarsRule: FixRule = {
+  id: "remove-erroneous-ref-for-skipped-vars",
+  description: "Remove const v = ref(null) when v is from v-model/v-if (not a real var)",
+  priority: 66,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    for (const skip of DIRECTIVE_LIKE_VARS) {
+      if (new RegExp(`const\\s+${skip}\\s*=\\s*ref\\(`).test(content)) return true;
+    }
+    return false;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!scriptMatch) return result;
+    let script = scriptMatch[1];
+    for (const skip of DIRECTIVE_LIKE_VARS) {
+      const re = new RegExp(`const\\s+${skip}\\s*=\\s*ref\\([^)]+\\)\\s*;?\\s*\\n?`, "g");
+      script = script.replace(re, "");
+    }
+    if (script !== scriptMatch[1]) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], script));
+      result.fixed = true;
+      result.fixes.push("Removed erroneous ref for directive-like identifier");
     }
     return result;
   },

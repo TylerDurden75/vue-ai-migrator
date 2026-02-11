@@ -14,7 +14,7 @@ import {
   piniaStoreCrossStoreDepsRule,
   storeAddMissingAuthMethodsRule,
   storeComputedRefMissingValueRule,
-} from "../store-fixes";
+} from "../store/store-fixes";
 import type { FixContext } from "../../types";
 
 jest.mock("../../utils/store-analysis-cache");
@@ -418,6 +418,70 @@ export default defineStore("index", () => {
     expect(result.content).toContain("const userStore = useUserStore();");
     expect(result.content).not.toContain('getters["user/');
     expect(result.content).not.toContain('dispatch("user/');
+  });
+
+  it("should apply when store uses async () => setup (Pinia async store)", async () => {
+    const content = `import { defineStore } from "pinia";
+import { ref, computed } from "vue";
+
+export const useIndexStore = defineStore("index", async () => {
+  const loading = ref(false);
+  const currentUser = computed(() => getters["user/currentUser"]);
+  async function fetchCurrentUser() {
+    await dispatch("user/fetchCurrentUser");
+  }
+  return { loading, currentUser, fetchCurrentUser };
+});`;
+
+    const result = await storeVuexGettersDispatchRule.apply(
+      "src/store/index.js",
+      content,
+      { enableTypeScript: false, isVueFile: false }
+    );
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("userStore.currentUser");
+    expect(result.content).toContain("userStore.fetchCurrentUser()");
+    expect(result.content).toContain("const userStore = useUserStore();");
+    expect(result.content).not.toContain('getters["user/');
+    expect(result.content).not.toContain('dispatch("user/');
+  });
+});
+
+describe("storeRemoveUnnecessaryAsyncRule", () => {
+  it("should remove async from defineStore when await is only in nested async functions", async () => {
+    const { storeRemoveUnnecessaryAsyncRule } = await import("../store/store-fixes");
+    const content = `import { defineStore } from "pinia";
+import { ref } from "vue";
+
+export const useIndexStore = defineStore("index", async () => {
+  const loading = ref(false);
+  async function fetchCurrentUser() {
+    await userStore.fetchCurrentUser();
+  }
+  return { loading, fetchCurrentUser };
+});`;
+
+    const result = await storeRemoveUnnecessaryAsyncRule.apply(
+      "src/store/index.js",
+      content,
+      { enableTypeScript: false, isVueFile: false }
+    );
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('defineStore("index", () => {');
+    expect(result.content).not.toContain("async () =>");
+  });
+
+  it("should not apply when store has no async on setup", async () => {
+    const { storeRemoveUnnecessaryAsyncRule } = await import("../store/store-fixes");
+    const content = `export const useIndexStore = defineStore("index", () => ({ items: [] }));`;
+    const result = await storeRemoveUnnecessaryAsyncRule.apply(
+      "src/store/index.js",
+      content,
+      { enableTypeScript: false, isVueFile: false }
+    );
+    expect(result.fixed).toBe(false);
   });
 });
 

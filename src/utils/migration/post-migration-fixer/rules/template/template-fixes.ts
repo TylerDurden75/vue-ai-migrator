@@ -4,8 +4,8 @@
 
 import * as path from "path";
 import * as fs from "fs";
-import type { FixRule, FixContext, FixRuleResult } from "../types";
-import { getCachedRegex } from "../utils/regex-cache";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getCachedRegex } from "../../utils/regex-cache";
 
 /**
  * Fix: Vue Router 4 - <router-view> can no longer be used directly inside <transition>.

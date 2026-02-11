@@ -5,7 +5,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { glob } from "glob";
-import type { FixRule, FixContext, FixRuleResult } from "../types";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
 
 /** Find the index of the closing brace that matches the opening brace at startIdx */
 function findMatchingBrace(content: string, startIdx: number): number {
@@ -455,7 +455,10 @@ export const storeVuexGettersDispatchRule: FixRule = {
       issues: []
     };
 
-    const defineStoreMatch = content.match(/defineStore\s*\(\s*["'][^"']+["']\s*,\s*\(\s*\)\s*=>\s*\{/);
+    // Match both sync () => and async () => (Pinia setup stores)
+    const defineStoreMatch = content.match(
+      /defineStore\s*\(\s*["'][^"']+["']\s*,\s*(?:async\s+)?\(\s*\)\s*=>\s*\{/
+    );
     if (!defineStoreMatch) {
       return result;
     }
@@ -516,6 +519,45 @@ export const storeVuexGettersDispatchRule: FixRule = {
       result.fixes.push("Converted Vuex getters/dispatch to Pinia store refs and added cross-store deps");
     }
 
+    return result;
+  }
+};
+
+/**
+ * Fix: Remove unnecessary async from defineStore setup.
+ * When async is used, Pinia exposes the store only after the setup promise resolves,
+ * causing "X is not a function" when components call store methods immediately.
+ * Remove async when await is only inside nested async functions (common migration case).
+ */
+export const storeRemoveUnnecessaryAsyncRule: FixRule = {
+  id: "store-remove-unnecessary-async",
+  description: "Remove async from defineStore when await is only inside nested async functions",
+  priority: 88,
+  dependencies: ["store-vuex-getters-dispatch"],
+  shouldApply: (filePath, content) => {
+    return (
+      (filePath.includes("/store/") || filePath.includes("store.ts") || filePath.includes("store.js")) &&
+      /defineStore\s*\(\s*["'][^"']+["']\s*,\s*async\s+\(\s*\)\s*=>\s*\{/.test(content) &&
+      // Only remove when await is inside nested async functions (body contains "async function")
+      /async\s+function\s+\w+/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+    const fixed = content.replace(
+      /(defineStore\s*\(\s*["'][^"']+["']\s*,\s*)async\s+(\(\s*\)\s*=>\s*\{)/g,
+      "$1$2"
+    );
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Removed unnecessary async from defineStore setup (await only in nested async functions)");
+    }
     return result;
   }
 };

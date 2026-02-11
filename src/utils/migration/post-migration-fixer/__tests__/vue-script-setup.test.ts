@@ -2,7 +2,7 @@
  * Unit tests for Vue script setup fixes rules
  */
 
-import { removeExportDefaultRule, scriptSetupThisEmitRule, scriptSetupFormattingRule } from "../rules/vue-script-setup";
+import { removeExportDefaultRule, scriptSetupThisEmitRule, scriptSetupFormattingRule } from "../rules/vue-script/vue-script-setup";
 
 describe("Vue Script Setup Fixes Rules", () => {
   describe("removeExportDefaultRule", () => {

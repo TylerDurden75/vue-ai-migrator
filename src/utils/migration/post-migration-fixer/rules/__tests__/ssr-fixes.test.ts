@@ -11,7 +11,7 @@ import {
   onBeforeUnmountAddLetDeclarationRule,
   onBeforeUnmountOptionalChainingRule,
   watchListPropsGuardRule,
-} from "../ssr-fixes";
+} from "../ssr/ssr-fixes";
 
 describe("ssr-fixes", () => {
   describe("ssrContextToInjectRule", () => {
@@ -109,6 +109,16 @@ export default import.meta.env.SSR
       expect(result.fixed).toBe(true);
       expect(result.content).toContain("store.FETCH_ITEMS({ ids: item.kids })");
       expect(result.content).not.toContain('store.dispatch("FETCH_ITEMS"');
+    });
+
+    it("does NOT replace storeVar.dispatch('module/action') - handled by storeDispatchModuleActionRule", async () => {
+      const content = `indexStore.dispatch('user/fetchUsers');`;
+      const result = await storeDispatchToDirectRule.apply("Users.vue", content, {
+        enableTypeScript: false,
+        isVueFile: true,
+      });
+      expect(result.fixed).toBe(false);
+      expect(result.content).toContain("indexStore.dispatch");
     });
   });
 

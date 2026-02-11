@@ -12,7 +12,7 @@ import {
   addMissingStoreImportsRule,
   vueSetRule,
   dataImportConflictRule
-} from "../import-fixes";
+} from "../import/import-fixes";
 
 // Mock store-analysis-cache
 jest.mock("../../utils/store-analysis-cache", () => ({

@@ -2,7 +2,7 @@
  * Unit tests for computed fixes rules
  */
 
-import { computedValueRule, malformedComputedRule, computedSyntaxRule } from "../rules/computed-fixes";
+import { computedValueRule, malformedComputedRule, computedSyntaxRule } from "../rules/computed/computed-fixes";
 
 describe("Computed Fixes Rules", () => {
   describe("computedValueRule", () => {

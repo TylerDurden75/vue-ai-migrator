@@ -2,8 +2,8 @@
  * Rules for final aggressive fixes (runs last)
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
-import { getCachedRegex } from "../utils/regex-cache";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getCachedRegex } from "../../utils/regex-cache";
 
 /**
  * Fix: Detect and fix wrong store property access (generic)

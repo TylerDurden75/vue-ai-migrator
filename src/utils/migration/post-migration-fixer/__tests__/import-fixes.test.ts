@@ -2,7 +2,7 @@
  * Unit tests for import fixes rules
  */
 
-import { removeVuexImportsRule, mergeDuplicateImportsRule } from "../rules/import-fixes";
+import { removeVuexImportsRule, mergeDuplicateImportsRule } from "../rules/import/import-fixes";
 
 describe("Import Fixes Rules", () => {
   describe("removeVuexImportsRule", () => {

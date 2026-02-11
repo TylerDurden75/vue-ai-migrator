@@ -2,7 +2,7 @@
  * Rules for SSR-specific fixes (router, asyncData, server)
  */
 
-import type { FixRule, FixContext, FixRuleResult } from "../types";
+import type { FixRule, FixContext, FixRuleResult } from "../../types";
 
 /**
  * Fix: Remove Vue.use(Router) - Vue 3 router doesn't need it
@@ -423,7 +423,16 @@ export const storeDispatchToDirectRule: FixRule = {
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
-    const fixed = content
+    let fixed = content;
+
+    // Skip module/action format - handled by storeDispatchModuleActionRule (e.g. indexStore.dispatch('user/fetchUsers'))
+    // Replacing would produce invalid indexStore.user/fetchUsers() (division, not method call)
+    const moduleActionRe = /(\w+)\.dispatch\s*\(\s*['"]([^'"]+)\/([^'"]+)['"]\s*(?:,\s*([^)]+))?\s*\)/g;
+    if (moduleActionRe.test(content)) {
+      return result; // Let storeDispatchModuleActionRule handle it
+    }
+
+    fixed = fixed
       .replace(
         /(\w+)\.dispatch\s*\(\s*['"]([^'"]+)['"]\s*,\s*([^)]+)\)/g,
         "$1.$2($3)"
