@@ -14,7 +14,7 @@ _AST-based transformations + AI integration for reliable migrations_
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D16.0.0-green?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 
-[Documentation](./USAGE.md) • [API Keys](./API_KEYS.md) • [Changelog](./CHANGELOG.md) • [Roadmap](./docs/ROADMAP.md)
+[Documentation](./USAGE.md) • [Migration Guide](./docs/MIGRATION_GUIDE.md) • [API Keys](./API_KEYS.md) • [Changelog](./CHANGELOG.md) • [Roadmap](./docs/ROADMAP.md)
 
 </div>
 
@@ -29,7 +29,8 @@ Automatic Vue 2 → Vue 3 migration combining:
 - **Migration Rules** for Vue 2 → Vue 3 patterns
 - **🤖 Optional AI Agent** (LLM) for complex cases - Enable with `--ai` flag
 
-> 📖 **Full usage** → [USAGE.md](./USAGE.md) — installation, commands, configuration, and examples.
+> 📖 **Full usage** → [USAGE.md](./USAGE.md) — installation, commands, configuration, and examples.  
+> 📘 **Migration strategy** → [Migration Guide](./docs/MIGRATION_GUIDE.md) — Vue 2.7, compat build, recommended workflow.
 
 > ✅ **Successfully tested** on [vue-hackernews-2.0](https://github.com/vuejs/vue-hackernews-2.0) — full migration, build and runtime verified (Vuex, slots, SSR).
 
@@ -1107,6 +1108,8 @@ vue-ai-migrator rollback ./my-vue2-project --file src/components/MyComponent.vue
 ## 📚 Documentation
 
 - **[Usage Guide](./USAGE.md)** — Complete usage instructions and examples
+- **[Migration Guide](./docs/MIGRATION_GUIDE.md)** — Vue 2.7 support, compat build vs full migration, workflow
+- **[Troubleshooting](./docs/TROUBLESHOOTING.md)** — Common errors and solutions
 - **[API Keys](./API_KEYS.md)** — Configure AI provider API keys
 - **[Roadmap](./docs/ROADMAP.md)** — Future development plans
 - **[Changelog](./CHANGELOG.md)** — Version history and changes

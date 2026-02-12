@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2025-02-XX
+
+### Added
+
+- **docs/MIGRATION_GUIDE.md**: Vue 2.7 support, compat build vs full migration, recommended workflow — linked from README and USAGE
+- **Documentation index**: Centralized doc navigation in README and docs/README.md
+
+### Fixed
+
+- **vue-script-setup**: `prefer-const` and remove unused variable (lint)
+
+---
+
 ## [0.6.4] - 2025-02-XX
 
 ### Added

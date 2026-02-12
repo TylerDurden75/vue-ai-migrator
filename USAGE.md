@@ -1,5 +1,7 @@
 # Usage Guide - vue-ai-migrator
 
+> 📘 **Migration strategy** — Vue 2.7 support, compat build vs full migration: see [Migration Guide](./docs/MIGRATION_GUIDE.md).
+
 ## 📦 Installation
 
 ### Global Installation (recommended for CLI)
@@ -46,9 +48,11 @@ vue-ai-migrator migrate ./my-vue2-project
 - ✅ Post-migration fixes
 - ✅ TypeScript support (with `--typescript`)
 
-**Perfect for:** Most Vue 2 projects with standard patterns.
+**Perfect for:** Most Vue 2 projects with standard patterns (Vue 2.6 and 2.7).
 
 **Validated on:** [vue-hackernews-2.0](https://github.com/vuejs/vue-hackernews-2.0) — full migration, build and runtime verified.
+
+**Note:** vue-ai-migrator performs **full migration** to native Vue 3 (no compat layer). For gradual migration with `@vue/compat`, see [Migration Guide](./docs/MIGRATION_GUIDE.md).
 
 ### 🤖 AI Mode (Optional) - For Complex Cases
 
@@ -499,6 +503,6 @@ If migration fails, the report contains the details. You can:
 
 ## 📚 Resources
 
-- [Vue 3 Migration Guide Documentation](https://v3-migration.vuejs.org/)
+- **[Migration Guide](./docs/MIGRATION_GUIDE.md)** — Vue 2.7, compat build, workflow
+- [Vue 3 Migration Guide](https://v3-migration.vuejs.org/)
 - [Vue 3 Composition API](https://vuejs.org/guide/extras/composition-api-faq.html)
-- [Migration Examples](./EXAMPLES.md)
