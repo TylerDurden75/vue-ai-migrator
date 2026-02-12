@@ -362,6 +362,36 @@ const users = userStore.allUsers;
     expect(result.fixed).toBe(false);
   });
 
+  it("should NOT add import for store that does not exist in project", async () => {
+    // Project has only user store - no invoice/cart/blog/etc.
+    const mockStoreMap = new Map<string, string>([
+      ["getUser", "user"],
+      ["allUsers", "user"]
+    ]);
+
+    (storeAnalyzer.analyzePiniaStores as jest.Mock).mockResolvedValue(mockStoreMap);
+
+    // Code references invoiceStore but project has no invoice module
+    const content = `<script setup lang="ts">
+const total = invoiceStore.getTotal();
+</script>`;
+
+    const result = await addMissingStoreImportsRule.apply(
+      "test.vue",
+      content,
+      {
+        enableTypeScript: true,
+        projectRoot: mockProjectRoot,
+        isVueFile: true,
+        scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] || ""
+      }
+    );
+
+    // Should NOT add useInvoiceStore - module does not exist
+    expect(result.content).not.toContain("useInvoiceStore");
+    expect(result.content).not.toContain("import { useInvoiceStore }");
+  });
+
   it("should handle multiple missing stores", async () => {
     const mockStoreMap = new Map<string, string>([
       ["getUser", "user"],

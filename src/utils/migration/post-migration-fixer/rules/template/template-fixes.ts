@@ -1095,6 +1095,7 @@ export const functionalComponentRule: FixRule = {
       filePath.endsWith(".vue") &&
       (content.includes("functional") ||
         content.includes('v-bind="attrs"') ||
+        content.includes('v-bind="props"') ||
         content.includes("v-on=\"listeners\""))
     );
   },
@@ -1115,15 +1116,22 @@ export const functionalComponentRule: FixRule = {
     const needsConversion =
       block.attrs.includes("functional") ||
       fixed.includes('v-bind="attrs"') ||
-      fixed.includes('v-on="listeners"');
+      fixed.includes('v-on="listeners"') ||
+      fixed.includes('v-bind="props"');
     if (needsConversion) {
+      // props → $props (Vue 3 functional SFC migration)
+      fixed = fixed.replace(/\bprops\./g, "$props.");
+      fixed = fixed.replace(/(^|[^\w$])props\b(?!\s*[:=])/g, "$1$props");
+      fixed = fixed.replace(/\bv-bind\s*=\s*["']props["']/gi, 'v-bind="$props"');
+      fixed = fixed.replace(/\s+v-bind\s*=\s*["']data\.props["']/gi, ' v-bind="$props"');
+      // attrs → $attrs
       fixed = fixed.replace(/\battrs\./g, "$attrs.");
       fixed = fixed.replace(/(^|[^\w$])attrs\b/g, "$1$attrs");
       fixed = fixed.replace(/\bv-bind\s*=\s*["']attrs["']/gi, 'v-bind="$attrs"');
       fixed = fixed.replace(/\s+v-on\s*=\s*["']listeners["']/gi, "");
       fixed = fixed.replace(/\s+v-on\s*=\s*["']data\.listeners["']/gi, "");
       fixed = fixed.replace(/\s+v-bind\s*=\s*["']data\.attrs["']/gi, ' v-bind="$attrs"');
-      result.fixes.push("Functional: attrs→$attrs, listeners removed (props kept for script setup)");
+      result.fixes.push("Functional: props→$props, attrs→$attrs, listeners removed");
     }
 
     const fullBlockNew = fullBlock

@@ -67,7 +67,7 @@ Automatic Vue 2 → Vue 3 migration combining:
 - **Parallel processing**: Process multiple files simultaneously for better performance
 - **Smart caching**: Avoids reprocessing unchanged files
 - **Robust error handling**: Comprehensive error handling with retry mechanisms
-- **Well tested**: 605+ unit tests covering all modules and transformations
+- **Well tested**: 620+ unit tests covering all modules and transformations
 - **Classification system**: Automatic complexity classification (Simple/Medium/Complex)
 - **Test generation**: Automatic Vitest test generation for migrated components
 - **Enhanced reporting**: Detailed reports with classification and recommendations
@@ -707,11 +707,12 @@ module.exports = {
 
 - ✅ **Options API → Composition API**: Complete transformation using AST manipulation
   - `data()` → `ref()`/`reactive()`
-  - `computed` → `computed()`
+  - `computed` → `computed()` (including writable computed with get/set)
   - `methods` → functions
   - `props` → `defineProps()`
   - `emits` → `defineEmits()`
   - `watch` → `watch()`
+  - `provide`/`inject` → `provide()`/`inject()` (Composition API)
   - Lifecycle hooks → `onMounted()`, `onUpdated()`, etc.
   - `$listeners` → `$attrs`
 - ✅ **Script Setup Conversion**: Automatic conversion to `<script setup lang="ts">` format
@@ -727,11 +728,15 @@ module.exports = {
   - See [Vuex → Pinia Example](#vuex--pinia-migration) below
 - ✅ **Filters removal**: Automatic filter detection and removal from script
 - ✅ **Event API changes**: `$on`/`$off`/`$once` detection and marking for AI
-- ✅ **v-model changes**: Props/emits transformation (value → modelValue, input → update:modelValue)
+- ✅ **v-model changes**: Props/emits transformation (value → modelValue, input → update:modelValue); v-model proxy (computed get/set + emit) supported
 - ✅ **Mixins**: Detection and transformation of mixins
 - ✅ **Plugins**: Vue.use() → app.use() transformation
-- ✅ **Directives**: Custom directive hooks transformation (bind → beforeMount, etc.)
-- ✅ **Provide/Inject**: Detection and suggestions for Vue 3 improvements
+- ✅ **Directives**: Full custom directive support
+  - Hook renames: bind→beforeMount, inserted→mounted, update/componentUpdated→updated, unbind→unmounted
+  - `vnode.context` → `binding.instance`
+  - `Vue.directive()` → `app.directive()` (global API)
+  - Warning when `binding.expression` is used (removed in Vue 3; use `binding.value`)
+- ✅ **Provide/Inject**: Full transformation to `provide()`/`inject()` (Composition API, including default factory)
 - ✅ **Async Components**: `() => import('./Comp.vue')` → `defineAsyncComponent(() => import('./Comp.vue'))`
   - Handles both arrow functions and object component definitions
 - ✅ **Render Functions**: Vue 3 Render Function API (Composition API / script setup compatible)
@@ -742,11 +747,13 @@ module.exports = {
 
 ### Template Transformations
 
-- ✅ **Scoped slots**: `slot-scope` → `v-slot` syntax
-- ✅ **Named slots**: `slot="name"` → `v-slot:name`
+- ✅ **Scoped slots**: `slot-scope` → `v-slot` syntax, `this.$scopedSlots` → `useSlots()`
+- ✅ **Named slots**: `slot="name"` → `v-slot:name` (any attribute order)
 - ✅ **Filters in templates**: `{{ value | filter }}` → `{{ filter(value) }}`
 - ✅ **$listeners**: `$listeners` → `$attrs` in templates
-- ✅ **Functional components**: Removal of `functional` attribute
+- ✅ **Functional components**: Full transformation
+  - Removal of `functional` attribute and `{ functional: true }`
+  - `props` → `$props`, `attrs` → `$attrs`, removal of `listeners`
 - ✅ **v-for template key**: Moves `key` from inner element to `<template>` in `v-for`
   - Example: `<template v-for="..."><div :key="id">` → `<template v-for="..." :key="id"><div>`
 - ✅ **v-else-if key**: Automatically adds `key` to `v-else-if` when `v-if` has one
@@ -1256,7 +1263,11 @@ If your store uses separate files for `actions`, `mutations`, or `getters` impor
 
 #### Functional components
 
-SFCs using `functional` or `{ functional: true }` are not automatically converted to standard SFCs. Manual conversion is required.
+SFCs using `functional` or `{ functional: true }` are automatically transformed: props→$props, attrs→$attrs, listeners removed. Define props in script setup via `defineProps()` as usual.
+
+#### Slots: nested same-tag with slot attribute
+
+When using `slot="name"` on an element that contains nested elements with the same tag (e.g. `<div slot="header"><div>inner</div></div>`), the regex-based transform may incorrectly match the inner closing tag. **Workaround**: Prefer `<template v-slot:name>...</template>` syntax, or manually convert affected slots before migration.
 
 #### "Cannot find module '../parser/tsx'" or dependency conflicts
 

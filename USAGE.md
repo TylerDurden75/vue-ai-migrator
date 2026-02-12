@@ -499,7 +499,7 @@ If migration fails, the report contains the details. You can:
 ### Known Limitations
 
 - **Vuex split structure**: If your store uses separate `actions.js`, `mutations.js`, or `getters.js` files imported by `store/index.js`, manual merge may be required before migration.
-- **Functional components**: SFCs with `functional` or `{ functional: true }` are not auto-converted; manual conversion is needed.
+- **Functional components**: SFCs with `functional` or `{ functional: true }` are automatically transformed (props→$props, attrs→$attrs, listeners removed).
 
 ## 📚 Resources
 

@@ -806,7 +806,7 @@ const item = ref({ amount: 12.5 });
 });
 
 describe("functionalComponentRule", () => {
-  it("should convert attrs/listeners in functional template, keep props", async () => {
+  it("should convert props/attrs/listeners in functional template to Vue 3", async () => {
     const content = `<template functional>
   <component :is="\`h\${props.level}\`" v-bind="attrs" v-on="listeners" />
 </template>`;
@@ -817,7 +817,7 @@ describe("functionalComponentRule", () => {
     });
 
     expect(result.fixed).toBe(true);
-    expect(result.content).toContain("props.level");
+    expect(result.content).toContain("$props.level");
     expect(result.content).toContain('v-bind="$attrs"');
     expect(result.content).not.toContain('v-on="listeners"');
     expect(result.content).not.toContain("functional");

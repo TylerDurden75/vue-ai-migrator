@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] - 2025-02-12
+
+### Added
+
+- **provide/inject Composition API**: Full transformation from Options API to `<script setup>` pattern
+  - `inject: ['theme', 'locale']` → `const theme = inject('theme'); const locale = inject('locale')`
+  - `inject: { local: 'remoteKey' }` and `inject: { local: { from: 'key', default: val } }` → `inject('key', val)`
+  - **Default factory**: `inject: { theme: { from: 'theme', default: () => 'light' } }` → `inject('theme', () => 'light', true)`
+  - `provide: { theme: 'dark' }` → `provide('theme', 'dark')`
+  - `provide() { return { theme: this.theme } }` → `provide('theme', theme)` (reactive ref from data)
+  - `this.injectedKey` → direct `injectedKey` in transformed code
+- **Computed getter/setter**: Writable computed `computed: { fullName: { get(), set(v) } }` → `computed({ get: () => ..., set: (v) => ... })`
+- **Functional components**: `props` → `$props` in addition to `attrs` → `$attrs`, `v-bind="props"` → `v-bind="$props"`
+- **Directives**: Improved `binding.expression` warning — suggests `binding.value` (evaluated result) as primary replacement
+- **bindingExpressionDirectiveRule**: Post-migration warning when `binding.expression` is used (removed in Vue 3)
+- **v-model proxy pattern**: `this.$emit` in computed setters → `emit()` (computed get/set with modelValue/update:modelValue)
+- **Test**: v-model proxy (computed get/set with emit) transformation
+
+### Changed
+
+- **README**: Documented full directive coverage, provide/inject, writable computed; added nested slots limitation
+- **ROADMAP**: Marked provide/inject, computed get/set, directives, functional components as complete
+- **Test count**: 620 unit tests
+
+---
+
 ## [0.6.5] - 2025-02-XX
 
 ### Added

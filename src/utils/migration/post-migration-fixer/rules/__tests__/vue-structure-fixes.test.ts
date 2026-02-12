@@ -6,9 +6,11 @@ import {
   orphanContentAfterStyleRule,
   scriptStyleInsideTemplateRule,
   functionalOptionRemovalRule,
+  bindingExpressionDirectiveRule,
   duplicateSymbolDeclarationRule,
   scriptSetupUndeclaredVarsRule,
   loadingRefRule,
+  scopedSlotsToSlotsRule,
 } from "../vue-script/vue-structure-fixes";
 
 describe("orphanContentAfterStyleRule", () => {
@@ -52,6 +54,26 @@ defineProps(["item"]);
   it("does not apply when content after </style> is just whitespace", async () => {
     const content = `<template><div>ok</div></template><style>.x{}</style>\n\n`;
     expect(orphanContentAfterStyleRule.shouldApply("Test.vue", content)).toBe(false);
+  });
+});
+
+describe("bindingExpressionDirectiveRule", () => {
+  it("should add issue when binding.expression is used in directive", async () => {
+    const content = `Vue.directive('focus', {
+  mounted(el, binding) {
+    if (binding.expression) el.focus();
+  }
+});`;
+    expect(bindingExpressionDirectiveRule.shouldApply("directives.js", content)).toBe(true);
+    const result = await bindingExpressionDirectiveRule.apply("directives.js", content, {
+      enableTypeScript: false,
+      isVueFile: false,
+    });
+    expect(result.issues.some((i) => i.includes("binding.value"))).toBe(true);
+  });
+  it("should not apply when binding.expression is absent", () => {
+    const content = `Vue.directive('focus', { mounted(el, binding) { el.focus(); } });`;
+    expect(bindingExpressionDirectiveRule.shouldApply("directives.js", content)).toBe(false);
   });
 });
 
@@ -318,5 +340,52 @@ const fetch = () => { isLoading = true; api().then(() => { isLoading = false; })
     expect(result.content).toContain("const isLoading = ref(false)");
     expect(result.content).toContain("isLoading.value = true");
     expect(result.content).toContain("isLoading.value = false");
+  });
+});
+
+describe("scopedSlotsToSlotsRule", () => {
+  it("replaces this.$scopedSlots.xxx(props) with slots?.xxx?.(props) preserving args", async () => {
+    const content = `<script setup>
+import { h } from 'vue';
+export default {
+  render() {
+    return this.$scopedSlots.default({ item: this.item });
+  }
+}
+</script>`;
+
+    const result = await scopedSlotsToSlotsRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("slots?.default?.({ item: this.item })");
+    expect(result.content).toContain("const slots = useSlots()");
+    expect(result.content).toContain("useSlots");
+    expect(result.content).not.toContain("$scopedSlots");
+  });
+
+  it("replaces this.$scopedSlots.header with slots.header?.()", async () => {
+    const content = `<script setup>
+import { h } from 'vue';
+render() { return h('div', this.$scopedSlots.header); }
+</script>`;
+
+    const result = await scopedSlotsToSlotsRule.apply("Test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("slots?.header?.()");
+    expect(result.content).toContain("const slots = useSlots()");
+    expect(result.content).not.toContain("$scopedSlots");
+  });
+
+  it("does not apply when $scopedSlots is absent", async () => {
+    const content = `<script>export default { render() { return slots?.default?.(); } }</script>`;
+
+    expect(scopedSlotsToSlotsRule.shouldApply("Test.vue", content)).toBe(false);
   });
 });

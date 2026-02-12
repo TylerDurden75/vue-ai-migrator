@@ -157,6 +157,35 @@ export const functionalOptionRemovalRule: FixRule = {
 };
 
 /**
+ * Warn: binding.expression was removed in Vue 3 custom directive API.
+ * Used in v-directive="expr" - Vue 3 no longer passes the expression string.
+ * Consider using binding.arg or evaluating the expression at usage site.
+ */
+export const bindingExpressionDirectiveRule: FixRule = {
+  id: "binding-expression-directive-warn",
+  description: "Warn when binding.expression is used (removed in Vue 3 directives)",
+  priority: 50,
+  shouldApply: (filePath, content) => {
+    if (!/\.(vue|js|ts)$/.test(filePath)) return false;
+    return /\bbinding\.expression\b/.test(content);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: [],
+    };
+    if (/\bbinding\.expression\b/.test(content)) {
+      result.issues.push(
+        "binding.expression was removed in Vue 3; use binding.value (evaluated result) or pass the expression explicitly"
+      );
+    }
+    return result;
+  },
+};
+
+/**
  * Fix: Script and style blocks nested inside template - move to correct position
  * Malformed: <template><div>...<script>...</script><style>...</style></div></template>
  */
@@ -716,6 +745,88 @@ export const refInLifecycleCallRule: FixRule = {
       result.fixed = true;
       result.fixes.push("Pass ref.value in lifecycle hook calls");
     }
+    return result;
+  },
+};
+
+/**
+ * Fix: Vue 3 slots unification - Composition API uses useSlots(), not this.$scopedSlots
+ * Migration: this.$scopedSlots.xxx → slots?.xxx?.() with const slots = useSlots()
+ * Slots are now functions: slots.default({ msg: 'Hello' }) for scoped slots
+ * See: https://v3-migration.vuejs.org/breaking-changes/slots-unification
+ */
+export const scopedSlotsToSlotsRule: FixRule = {
+  id: "scoped-slots-to-slots",
+  description: "Replace this.$scopedSlots with useSlots() (Composition API target)",
+  priority: 82,
+  shouldApply: (_filePath, content) => content.includes("$scopedSlots"),
+  apply: async (_filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+
+    let scriptContent = scriptMatch[2];
+    let modified = false;
+
+    // this.$scopedSlots.xxx(args) → slots?.xxx?.(args) - preserve slot props for scoped slots
+    scriptContent = scriptContent.replace(
+      /this\.\$scopedSlots\??\.(\w+)\s*\(([\s\S]*?)\)/g,
+      (_, slotName, args) => {
+        modified = true;
+        return `slots?.${slotName}?.(${args})`;
+      }
+    );
+    // this.$scopedSlots?.xxx (property) → slots?.xxx?.()
+    scriptContent = scriptContent.replace(
+      /this\.\$scopedSlots\?\.(\w+)(?!\s*\()/g,
+      (_, slotName) => {
+        modified = true;
+        return `slots?.${slotName}?.()`;
+      }
+    );
+    // this.$scopedSlots.xxx (property) → slots.xxx?.()
+    scriptContent = scriptContent.replace(
+      /this\.\$scopedSlots\.(\w+)(?!\s*\()/g,
+      (_, slotName) => {
+        modified = true;
+        return `slots?.${slotName}?.()`;
+      }
+    );
+
+    if (!modified) return result;
+
+    // Add useSlots import if missing
+    const vueImportRegex = /import\s*\{([^}]*)\}\s*from\s*['"]vue['"]\s*;?/;
+    const vueImportMatch = scriptContent.match(vueImportRegex);
+    if (vueImportMatch && !/\buseSlots\b/.test(vueImportMatch[1])) {
+      const names = vueImportMatch[1].trim().split(/\s*,\s*/).filter(Boolean);
+      names.push("useSlots");
+      scriptContent = scriptContent.replace(
+        vueImportRegex,
+        `import { ${[...new Set(names)].join(", ")} } from 'vue';`
+      );
+    } else if (!vueImportMatch) {
+      const firstImportMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+      const insertPos = firstImportMatch ? firstImportMatch[0].length : 0;
+      scriptContent =
+        scriptContent.slice(0, insertPos) +
+        `import { useSlots } from 'vue';\n` +
+        scriptContent.slice(insertPos);
+    }
+
+    // Add const slots = useSlots() if missing
+    if (!/\bconst\s+slots\s*=\s*useSlots\s*\(\)/.test(scriptContent)) {
+      const afterImportsMatch = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+      const insertPos = afterImportsMatch ? afterImportsMatch[0].length : 0;
+      scriptContent =
+        scriptContent.slice(0, insertPos) +
+        `\nconst slots = useSlots();\n` +
+        scriptContent.slice(insertPos);
+    }
+
+    result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+    result.fixed = true;
+    result.fixes.push("Replaced $scopedSlots with useSlots() (Composition API)");
     return result;
   },
 };

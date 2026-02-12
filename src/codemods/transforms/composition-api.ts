@@ -41,6 +41,7 @@ export const compositionApiTransform: Transform = (
   const propNames = new Set<string>(); // Props → props.xxx
   const propInterfaces: string[] = []; // Generated TypeScript interfaces for props
   const emittedEvents = new Set<string>(); // Events emitted via this.$emit
+  const injectNames = new Set<string>(); // Injected keys → direct variable (this.x → x)
 
   // Find Vue component - check both export default and regular objects
   root.find(j.ExportDefaultDeclaration).forEach((path: any) => {
@@ -106,6 +107,21 @@ export const compositionApiTransform: Transform = (
           }
         }
 
+        // Transform inject (early - injected values may be used in data/computed)
+        const injectProp = findProperty(properties, "inject");
+        if (injectProp && injectProp.value) {
+          const injectStatements = transformInjectAST(
+            j,
+            injectProp.value,
+            imports,
+            injectNames,
+          );
+          if (injectStatements.length > 0) {
+            statements.push(...injectStatements);
+            hasChanges = true;
+          }
+        }
+
         // Transform data() to ref/reactive using AST
         const dataProp = findProperty(properties, "data");
         // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
@@ -141,6 +157,7 @@ export const compositionApiTransform: Transform = (
             computedProperties,
             computedReturnTypes,
             enableTypeScript,
+            emittedEvents,
           );
           if (computedStatements.length > 0) {
             statements.push(...computedStatements);
@@ -209,6 +226,24 @@ export const compositionApiTransform: Transform = (
           );
           if (watchStatements.length > 0) {
             statements.push(...watchStatements);
+            hasChanges = true;
+          }
+        }
+
+        // Transform provide (after data - provide can use refs)
+        const provideProp = findProperty(properties, "provide");
+        const provideValue =
+          provideProp?.value ??
+          ((provideProp as any)?.params !== undefined ? provideProp : null);
+        if (provideProp && provideValue) {
+          const provideStatements = transformProvideAST(
+            j,
+            provideValue,
+            imports,
+            dataProperties,
+          );
+          if (provideStatements.length > 0) {
+            statements.push(...provideStatements);
             hasChanges = true;
           }
         }
@@ -377,7 +412,24 @@ export const compositionApiTransform: Transform = (
           computedProperties,
           methodNames,
           propNames,
+          injectNames,
         );
+
+        // Transform this.$emit('event', ...) → emit('event', ...) for script setup
+        root.find(j.CallExpression).forEach((path: any) => {
+          const callee = path.value.callee;
+          if (
+            callee.type === "MemberExpression" &&
+            callee.object?.type === "ThisExpression" &&
+            callee.property?.type === "Identifier" &&
+            callee.property.name === "$emit"
+          ) {
+            j(path).replaceWith(
+              j.callExpression(j.identifier("emit"), path.value.arguments || []),
+            );
+            hasChanges = true;
+          }
+        });
 
         hasChanges = true;
       } else if (componentFound) {
@@ -1277,6 +1329,7 @@ function transformComputedAST(
   computedProperties?: Set<string>,
   computedReturnTypes?: Map<string, string>,
   enableTypeScript: boolean = false,
+  emittedEvents?: Set<string>,
 ): any[] {
   const statements: any[] = [];
 
@@ -1305,6 +1358,92 @@ function transformComputedAST(
     // Handle both ObjectProperty (has 'value') and ObjectMethod (function is the prop itself)
     const compValue =
       compProp.value || (compProp.type === "ObjectMethod" ? compProp : null);
+
+    // Writable computed: { get(), set(v) } → computed({ get: () => ..., set: (v) => ... })
+    if (
+      compProp &&
+      compValue &&
+      compValue.type === "ObjectExpression" &&
+      compValue.properties
+    ) {
+      const getProp = compValue.properties.find(
+        (p: any) => p.key?.name === "get" || p.key?.value === "get",
+      );
+      const setProp = compValue.properties.find(
+        (p: any) => p.key?.name === "set" || p.key?.value === "set",
+      );
+      if (getProp || setProp) {
+        const compName =
+          compProp.key?.name ?? compProp.key?.value ?? "computed";
+        computedProperties?.add(compName);
+        const computedOpts: any[] = [];
+        if (getProp) {
+          const getVal = getProp.value || getProp;
+          const getBody =
+            getVal.body?.type === "BlockStatement"
+              ? (() => {
+                  const ret = getVal.body.body.find(
+                    (s: any) => s?.type === "ReturnStatement",
+                  );
+                  return ret?.argument
+                    ? j.arrowFunctionExpression([], ret.argument)
+                    : j.arrowFunctionExpression([], getVal.body);
+                })()
+              : j.arrowFunctionExpression([], getVal.body || getVal);
+          computedOpts.push(
+            j.objectProperty(j.identifier("get"), getBody),
+          );
+        }
+        if (setProp) {
+          const setVal = setProp.value || setProp;
+          let setBody = setVal.body;
+          // Detect this.$emit in setter for v-model proxy pattern
+          if (emittedEvents && setBody) {
+            j(setBody)
+              .find(j.CallExpression)
+              .forEach((p: any) => {
+                const callee = p.value.callee;
+                if (
+                  callee?.type === "MemberExpression" &&
+                  callee.object?.type === "ThisExpression" &&
+                  callee.property?.name === "$emit" &&
+                  p.value.arguments?.[0]?.value
+                ) {
+                  emittedEvents.add(String(p.value.arguments[0].value));
+                }
+              });
+          }
+          const setParams = setVal.params?.length
+            ? setVal.params
+            : [j.identifier("v")];
+          if (setBody?.type !== "BlockStatement") {
+            setBody = j.blockStatement([
+              j.expressionStatement(setBody || j.identifier("undefined")),
+            ]);
+          }
+          computedOpts.push(
+            j.objectProperty(
+              j.identifier("set"),
+              j.arrowFunctionExpression(setParams, setBody),
+            ),
+          );
+        }
+        if (computedOpts.length > 0) {
+          statements.push(
+            j.variableDeclaration("const", [
+              j.variableDeclarator(
+                j.identifier(compName),
+                j.callExpression(j.identifier("computed"), [
+                  j.objectExpression(computedOpts),
+                ]),
+              ),
+            ]),
+          );
+          imports.add("computed");
+        }
+        return;
+      }
+    }
 
     if (
       compProp &&
@@ -1362,6 +1501,157 @@ function transformComputedAST(
     }
   });
 
+  return statements;
+}
+
+/**
+ * Transform Options API inject to Composition API inject()
+ * - inject: ['key'] → const key = inject('key')
+ * - inject: { local: 'remoteKey' } → const local = inject('remoteKey')
+ * - inject: { local: { from: 'key', default: val } } → const local = inject('key', val)
+ * - inject: { local: { from: 'key', default: () => x } } → inject('key', () => x, true) (factory)
+ */
+function transformInjectAST(
+  j: any,
+  injectValue: any,
+  imports: Set<string>,
+  injectNames: Set<string>,
+): any[] {
+  const statements: any[] = [];
+  if (!injectValue) return statements;
+
+  if (injectValue.type === "ArrayExpression" && injectValue.elements) {
+    injectValue.elements.forEach((el: any) => {
+      const key = el?.value ?? el?.name;
+      if (key) {
+        const varName = typeof key === "string" ? key : String(key);
+        injectNames.add(varName);
+        statements.push(
+          j.variableDeclaration("const", [
+            j.variableDeclarator(
+              j.identifier(varName),
+              j.callExpression(j.identifier("inject"), [j.literal(key)]),
+            ),
+          ]),
+        );
+      }
+    });
+    if (statements.length > 0) imports.add("inject");
+  } else if (
+    injectValue.type === "ObjectExpression" &&
+    injectValue.properties
+  ) {
+    injectValue.properties.forEach((prop: any) => {
+      const localName = prop.key?.name ?? prop.key?.value;
+      if (!localName) return;
+      const val = prop.value;
+      let keyStr = localName;
+      let defaultArg: any = null;
+      if (val?.type === "ObjectExpression" && val.properties) {
+        const fromProp = val.properties.find(
+          (p: any) => p.key?.name === "from" || p.key?.value === "from",
+        );
+        const defaultProp = val.properties.find(
+          (p: any) => p.key?.name === "default" || p.key?.value === "default",
+        );
+        if (fromProp?.value?.value) keyStr = fromProp.value.value;
+        if (fromProp?.value?.name) keyStr = fromProp.value.name;
+        if (defaultProp?.value) defaultArg = defaultProp.value;
+      } else if (val?.type === "StringLiteral" || val?.type === "Literal") {
+        keyStr = val.value;
+      } else if (val?.type === "Identifier") {
+        keyStr = val.name;
+      }
+      injectNames.add(localName);
+      const injectArgs: any[] = [j.literal(keyStr)];
+      if (defaultArg) {
+        injectArgs.push(defaultArg);
+        // Vue 3: inject(key, factory, true) when default is a function
+        if (
+          defaultArg.type === "ArrowFunctionExpression" ||
+          defaultArg.type === "FunctionExpression"
+        ) {
+          injectArgs.push(j.booleanLiteral(true));
+        }
+      }
+      statements.push(
+        j.variableDeclaration("const", [
+          j.variableDeclarator(
+            j.identifier(localName),
+            j.callExpression(j.identifier("inject"), injectArgs),
+          ),
+        ]),
+      );
+    });
+    if (statements.length > 0) imports.add("inject");
+  }
+  return statements;
+}
+
+/**
+ * Transform Options API provide to Composition API provide()
+ * - provide: { key: value } → provide('key', value) for each
+ * - provide() { return { key: this.ref } } → provide('key', ref) - this.ref → ref
+ */
+function transformProvideAST(
+  j: any,
+  provideValue: any,
+  imports: Set<string>,
+  dataProperties?: Set<string>,
+): any[] {
+  const statements: any[] = [];
+  if (!provideValue) return statements;
+
+  if (provideValue.type === "ObjectExpression" && provideValue.properties) {
+    provideValue.properties.forEach((prop: any) => {
+      const key = prop.key?.name ?? prop.key?.value;
+      if (!key) return;
+      const value = prop.value;
+      statements.push(
+        j.expressionStatement(
+          j.callExpression(j.identifier("provide"), [
+            j.literal(key),
+            value ? j.clone(value) : j.identifier("undefined"),
+          ]),
+        ),
+      );
+    });
+    if (statements.length > 0) imports.add("provide");
+  } else if (
+    provideValue.type === "FunctionExpression" ||
+    provideValue.type === "ArrowFunctionExpression" ||
+    (provideValue.type === "ObjectMethod" && provideValue.body)
+  ) {
+    const body = provideValue.body;
+    if (body?.type === "BlockStatement" && body.body) {
+      const returnStmt = body.body.find(
+        (s: any) => s?.type === "ReturnStatement",
+      );
+      if (returnStmt?.argument?.type === "ObjectExpression") {
+        (returnStmt.argument.properties || []).forEach((prop: any) => {
+          const key = prop.key?.name ?? prop.key?.value;
+          if (!key) return;
+          let value = prop.value;
+          if (
+            value?.type === "MemberExpression" &&
+            value.object?.type === "ThisExpression"
+          ) {
+            const propName = value.property?.name;
+            value = j.identifier(propName || "undefined");
+          }
+          statements.push(
+            j.expressionStatement(
+              j.callExpression(j.identifier("provide"), [
+                j.literal(key),
+                value ? j.clone(value) : j.identifier("undefined"),
+              ]),
+            ),
+          );
+        });
+        if (statements.length > 0) imports.add("provide");
+      }
+    }
+  }
   return statements;
 }
 
@@ -1855,6 +2145,7 @@ function transformThisReferences(
   computedProperties: Set<string>,
   methodNames: Set<string>,
   propNames: Set<string>,
+  injectNames?: Set<string>,
 ): void {
   root.find(j.MemberExpression).forEach((path: any) => {
     const node = path.value;
@@ -1874,7 +2165,9 @@ function transformThisReferences(
       }
 
       // Transform based on what type of property it is
-      if (propNames.has(propertyName)) {
+      if (injectNames?.has(propertyName)) {
+        j(path).replaceWith(j.identifier(propertyName));
+      } else if (propNames.has(propertyName)) {
         // Props: this.propName → props.propName
         const newExpression = j.memberExpression(
           j.identifier("props"),

@@ -27,7 +27,25 @@ export function transformTemplate(template: string): TemplateTransformResult {
 
   let transformed = template;
 
-  // Transform scoped slots: slot-scope → v-slot
+  // Transform named scoped slots FIRST (before simple slot-scope) to avoid losing slot name
+  // slot="name" slot-scope OR slot-scope slot="name" → v-slot:name
+  const namedSlotScopeOrder1 =
+    /<template\s+slot\s*=\s*["']([^"']+)["']\s+slot-scope\s*=\s*["']([^"']+)["']/gi;
+  const namedSlotScopeOrder2 =
+    /<template\s+slot-scope\s*=\s*["']([^"']+)["']\s+slot\s*=\s*["']([^"']+)["']/gi;
+  if (namedSlotScopeOrder1.test(transformed) || namedSlotScopeOrder2.test(transformed)) {
+    transformed = transformed.replace(
+      /<template\s+slot\s*=\s*["']([^"']+)["']\s+slot-scope\s*=\s*["']([^"']+)["']/gi,
+      '<template v-slot:$1="$2"'
+    );
+    transformed = transformed.replace(
+      /<template\s+slot-scope\s*=\s*["']([^"']+)["']\s+slot\s*=\s*["']([^"']+)["']/gi,
+      '<template v-slot:$2="$1"'
+    );
+    result.modified = true;
+  }
+
+  // Transform simple scoped slots: slot-scope → v-slot (only when slot name not present)
   // Old: <template slot-scope="props">
   // New: <template v-slot="props">
   const slotScopeRegex = /<template\s+slot-scope\s*=\s*["']([^"']+)["']/gi;
@@ -35,19 +53,6 @@ export function transformTemplate(template: string): TemplateTransformResult {
     transformed = transformed.replace(
       /<template\s+slot-scope\s*=\s*["']([^"']+)["']/gi,
       '<template v-slot="$1"'
-    );
-    result.modified = true;
-  }
-
-  // Transform named scoped slots: slot="name" slot-scope → v-slot:name
-  // Old: <template slot="name" slot-scope="props">
-  // New: <template v-slot:name="props">
-  const namedSlotScopeRegex =
-    /<template\s+slot\s*=\s*["']([^"']+)["']\s+slot-scope\s*=\s*["']([^"']+)["']/gi;
-  if (namedSlotScopeRegex.test(transformed)) {
-    transformed = transformed.replace(
-      /<template\s+slot\s*=\s*["']([^"']+)["']\s+slot-scope\s*=\s*["']([^"']+)["']/gi,
-      '<template v-slot:$1="$2"'
     );
     result.modified = true;
   }
@@ -376,18 +381,24 @@ export function transformTemplate(template: string): TemplateTransformResult {
   }
 
   // Transform functional components (Vue 3 breaking: functional removed)
-  // SFC: keep props (compatible with defineProps in script setup), attrs→$attrs, remove v-on="listeners"
+  // SFC: props→$props, attrs→$attrs, remove v-on="listeners"
   if (transformed.includes('functional')) {
     const beforeFunctional = transformed;
     transformed = transformed.replace(/<template\s+functional([^>]*)>([\s\S]*?)<\/template>/gi, (_, attrs, inner) => {
       let content = inner;
+      // props → $props (Vue 3: functional SFC migration)
+      content = content.replace(/\bprops\./g, '$props.');
+      content = content.replace(/(^|[^\w$])props\b(?!\s*[:=])/g, '$1$props');
+      content = content.replace(/\bv-bind\s*=\s*["']props["']/gi, 'v-bind="$props"');
+      // attrs → $attrs
       content = content.replace(/\battrs\./g, '$attrs.');
       content = content.replace(/(^|[^\w$])attrs\b/g, '$1$attrs');
       content = content.replace(/\bv-bind\s*=\s*["']attrs["']/gi, 'v-bind="$attrs"');
       content = content.replace(/\s+v-on\s*=\s*["']listeners["']/gi, '');
       content = content.replace(/\s+v-on\s*=\s*["']data\.listeners["']/gi, '');
       content = content.replace(/\s+v-bind\s*=\s*["']data\.attrs["']/gi, ' v-bind="$attrs"');
-      result.issues.push('Functional component: attrs→$attrs, listeners removed (props kept for script setup)');
+      content = content.replace(/\s+v-bind\s*=\s*["']data\.props["']/gi, ' v-bind="$props"');
+      result.issues.push('Functional component: props→$props, attrs→$attrs, listeners removed');
       return `<template${attrs}>${content}</template>`;
     });
     transformed = transformed.replace(/<template\s+functional([^>]*)>/gi, '<template$1>');

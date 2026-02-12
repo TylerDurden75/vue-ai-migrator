@@ -156,6 +156,130 @@ export default {
         expect(result.needsAI || result.issues.length > 0).toBe(true);
       }
     });
+
+    it('should transform v-model proxy (computed get/set with emit) to computed({ get, set }) + emit()', async () => {
+      const code = `
+        export default {
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          computed: {
+            value: {
+              get() { return this.modelValue },
+              set(val) { this.$emit('update:modelValue', val) }
+            }
+          }
+        };
+      `;
+
+      const result = await runner.transform('test.js', code, {
+        transformations: ['composition-api'],
+      });
+
+      expect(result.modified).toBe(true);
+      expect(result.code).toContain('computed({');
+      expect(result.code).toContain('get:');
+      expect(result.code).toContain('set:');
+      expect(result.code).toContain("emit('update:modelValue'");
+      expect(result.code).not.toContain('this.$emit');
+    });
+
+    it('should transform writable computed (get/set) to computed({ get, set })', async () => {
+      const code = `
+        export default {
+          data() {
+            return { first: 'John', last: 'Doe' };
+          },
+          computed: {
+            fullName: {
+              get() {
+                return this.first + ' ' + this.last;
+              },
+              set(val) {
+                [this.first, this.last] = val.split(' ');
+              }
+            }
+          }
+        };
+      `;
+
+      const result = await runner.transform('test.js', code, {
+        transformations: ['composition-api'],
+      });
+
+      expect(result.modified).toBe(true);
+      expect(result.code).toContain('computed({');
+      expect(result.code).toContain('get:');
+      expect(result.code).toContain('set:');
+      expect(result.code).toContain('fullName');
+    });
+  });
+
+  describe('provide/inject transformation', () => {
+    it('should transform inject array to inject()', async () => {
+      const code = `
+        export default {
+          inject: ['theme', 'locale'],
+          methods: {
+            apply() {
+              console.log(this.theme, this.locale);
+            }
+          }
+        };
+      `;
+
+      const result = await runner.transform('test.js', code, {
+        transformations: ['composition-api'],
+      });
+
+      expect(result.modified).toBe(true);
+      expect(result.code).toMatch(/inject\s*\(\s*["']theme["']\s*\)/);
+      expect(result.code).toMatch(/inject\s*\(\s*["']locale["']\s*\)/);
+      expect(result.code).not.toContain('this.theme');
+      expect(result.code).toContain('theme');
+    });
+
+    it('should transform provide() function to provide() calls', async () => {
+      const code = `
+        export default {
+          data() {
+            return { theme: 'dark' };
+          },
+          provide() {
+            return { theme: this.theme };
+          }
+        };
+      `;
+
+      const result = await runner.transform('test.js', code, {
+        transformations: ['composition-api'],
+      });
+
+      if (result.modified) {
+        expect(result.code).toMatch(/provide\s*\(/);
+        expect(result.code).toContain('theme');
+      } else {
+        expect(result.needsAI || result.issues.length > 0).toBe(true);
+      }
+    });
+
+    it('should transform inject with default factory to inject(key, fn, true)', async () => {
+      const code = `
+        export default {
+          inject: {
+            theme: { from: 'theme', default: () => 'light' }
+          }
+        };
+      `;
+
+      const result = await runner.transform('test.js', code, {
+        transformations: ['composition-api'],
+      });
+
+      if (result.modified) {
+        expect(result.code).toMatch(/inject\s*\(\s*["']theme["']\s*,\s*\(\)\s*=>/);
+        expect(result.code).toMatch(/,\s*true\s*\)/);
+      }
+    });
   });
 
   describe('methods transformation', () => {

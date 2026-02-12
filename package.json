@@ -1,6 +1,6 @@
 {
   "name": "vue-ai-migrator",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "description": "Automatic Vue 2 → Vue 3 migration - Free mode by default (AST only), optional AI assistance",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

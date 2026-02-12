@@ -39,18 +39,23 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 
 ### Composition API Transformation Improvements
 
-- [ ] Complete `data()` → `ref()`/`reactive()` transformation
-- [ ] Complete `computed` → `computed()` transformation
-- [ ] Complete `methods` → functions transformation
-- [ ] Complete `watch` → `watch()` transformation
-- [ ] Complete lifecycle hooks transformation
+- [x] `data()` → `ref()`/`reactive()` transformation (composition-api.ts)
+- [x] `computed` → `computed()` transformation
+- [x] `methods` → functions transformation
+- [x] `watch` → `watch()` transformation
+- [x] Lifecycle hooks → `onMounted()`, etc. transformation
 - [x] Handle `this.ident` in script setup → plain `ident` (storeScriptSetupRule)
+- [x] provide/inject Options API → provide()/inject() Composition API
+- [x] Computed getter/setter (writable computed) → computed({ get, set })
+- [x] v-model proxy: this.$emit in computed setters → emit() (modelValue/update:modelValue pattern)
+- [ ] Edge cases: improve coverage for remaining complex patterns
 
 ### Template Improvements
 
-- [ ] Complete complex slots transformation
-- [ ] Advanced custom directives handling
-- [ ] Functional components transformation
+- [x] Slots: $scopedSlots → useSlots() (script), slot-scope/slot order (template)
+- [x] Functional components: props→$props, attrs→$attrs, listeners removed
+- [x] Custom directives: hooks, vnode.context→binding.instance, Vue.directive→app.directive, binding.expression warning
+- [ ] Nested same-tag slots: `<div slot="x"><div>inner</div></div>` — known limitation (see README)
 
 ### Post-Migration Fixer
 
@@ -63,7 +68,8 @@ Build a Vue 2 → Vue 3 migration tool that is **assisted, reliable, explainable
 - [x] Import path fix: `@/store/index` (not `@/store/modules/index`) for index store
 - [x] missingVueImportsRule: add lifecycle hooks (onMounted, onUnmounted, etc.) and reactive when used but not imported
 - [x] E2E test: full migration flow (fixtures/vue2-minimal → migrate → fix → build)
-- [ ] Fix remaining edge cases as reported by tests (computed filtered, store imports when no blog store in project)
+- [x] Store imports: do not add imports for non-existent store modules (existingModules check)
+- [x] Computed filtered: storeComputedRefMissingValueRule, storeComputedResultRule
 
 ### Performance
 

@@ -191,7 +191,7 @@ describe('Template Transformations', () => {
   });
 
   describe('functional components', () => {
-    it('should remove functional and convert attrs/listeners (keep props for script setup)', () => {
+    it('should remove functional and convert props/attrs/listeners to Vue 3', () => {
       const template = `<template functional>
   <component :is="\`h\${props.level}\`" v-bind="attrs" v-on="listeners" />
 </template>`;
@@ -200,7 +200,7 @@ describe('Template Transformations', () => {
 
       expect(result.modified).toBe(true);
       expect(result.template).not.toContain('functional');
-      expect(result.template).toContain('props.level');
+      expect(result.template).toContain('$props.level');
       expect(result.template).toContain('v-bind="$attrs"');
       expect(result.template).not.toContain('v-on="listeners"');
     });
@@ -347,6 +347,17 @@ describe('Template Transformations', () => {
       expect(result.template).toContain('<div>Header content</div>');
       expect(result.template).toContain('</template>');
       expect(result.template).not.toContain('slot="header"');
+    });
+
+    it('should transform slot-scope before slot (reverse attribute order)', () => {
+      const template = '<template slot-scope="props" slot="item">{{ props.data }}</template>';
+
+      const result = transformTemplate(template);
+
+      expect(result.modified).toBe(true);
+      expect(result.template).toContain('v-slot:item="props"');
+      expect(result.template).not.toContain('slot-scope');
+      expect(result.template).not.toContain('slot="item"');
     });
 
     it('should transform filters in templates', () => {

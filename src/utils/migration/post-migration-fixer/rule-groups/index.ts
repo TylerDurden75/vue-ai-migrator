@@ -22,6 +22,8 @@ import {
   scriptStyleInsideTemplateRule,
   orphanContentAfterStyleRule,
   functionalOptionRemovalRule,
+  bindingExpressionDirectiveRule,
+  scopedSlotsToSlotsRule,
 } from "../rules/vue-script/vue-structure-fixes";
 
 // Router
@@ -222,9 +224,11 @@ export const coreRules: FixRule[] = [
   removeExportDefaultRule,
   scriptSetupOrganizationRule,
   functionalOptionRemovalRule,
+  bindingExpressionDirectiveRule,
   createAppSyntaxRule,
   scriptStyleInsideTemplateRule,
   orphanContentAfterStyleRule,
+  scopedSlotsToSlotsRule,
   routerVueUseRemovalRule,
   routerSSRHistoryRule,
   ssrContextToInjectRule,
