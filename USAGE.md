@@ -48,6 +48,8 @@ vue-ai-migrator migrate ./my-vue2-project
 
 **Perfect for:** Most Vue 2 projects with standard patterns.
 
+**Validated on:** [vue-hackernews-2.0](https://github.com/vuejs/vue-hackernews-2.0) — full migration, build and runtime verified.
+
 ### 🤖 AI Mode (Optional) - For Complex Cases
 
 Enable AI assistance for complex migrations:
@@ -272,6 +274,13 @@ module.exports = {
   // Paths to ignore
   ignore: ['node_modules', 'dist', 'build', '.git'],
 
+  // Custom fixer rules (paths relative to project root)
+  // Each module exports FixRule or FixRule[]
+  // fixerRulesAdd: ["./my-custom-rules.js"],
+
+  // Fixer rules to disable
+  // fixerRulesDisable: ["detail-view-store-rule"],
+
   // Use AI
   useAI: true,
 
@@ -282,6 +291,8 @@ module.exports = {
   transformations: ['composition-api', 'global-api', 'filters', 'v-model', 'event-api'],
 };
 ```
+
+See `fixtures/custom-fixer-rule/` for an example custom rule.
 
 ## 💻 Programmatic Usage
 

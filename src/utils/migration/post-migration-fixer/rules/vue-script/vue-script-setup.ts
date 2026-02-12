@@ -201,7 +201,7 @@ export const scriptSetupThisEmitRule: FixRule = {
 function extractMisplacedImportsAndRemove(script: string): { cleaned: string; extractedImports: string[] } {
   const extractedImports: string[] = [];
   const importRe = /^\s*import\s+(?:(?:\{[\s\S]*?\}|\*\s+as\s+\w+|\w+)\s+from\s+['"][^'"]+['"]|['"][^'"]+['"])\s*;?\s*$/gm;
-  let cleaned = script.replace(importRe, (match) => {
+  const cleaned = script.replace(importRe, (match) => {
     const normalized = match.trim().replace(/\s*;\s*$/, ";");
     if (normalized && !extractedImports.includes(normalized)) {
       extractedImports.push(normalized);
@@ -338,7 +338,6 @@ function extractScriptSections(script: string): {
 
 function extractBlock(lines: string[], start: number): { text: string; next: number } {
   const block: string[] = [lines[start]];
-  let depth = 0;
   let inParen = 0;
   let inBrace = 0;
   let i = start;

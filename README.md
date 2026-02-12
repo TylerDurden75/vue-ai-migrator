@@ -31,6 +31,8 @@ Automatic Vue 2 → Vue 3 migration combining:
 
 > 📖 **Full usage** → [USAGE.md](./USAGE.md) — installation, commands, configuration, and examples.
 
+> ✅ **Successfully tested** on [vue-hackernews-2.0](https://github.com/vuejs/vue-hackernews-2.0) — full migration, build and runtime verified (Vuex, slots, SSR).
+
 ## 📑 Table of Contents
 
 - [Features](#-features)
@@ -64,7 +66,7 @@ Automatic Vue 2 → Vue 3 migration combining:
 - **Parallel processing**: Process multiple files simultaneously for better performance
 - **Smart caching**: Avoids reprocessing unchanged files
 - **Robust error handling**: Comprehensive error handling with retry mechanisms
-- **Well tested**: 340+ unit tests covering all modules and transformations
+- **Well tested**: 605+ unit tests covering all modules and transformations
 - **Classification system**: Automatic complexity classification (Simple/Medium/Complex)
 - **Test generation**: Automatic Vitest test generation for migrated components
 - **Enhanced reporting**: Detailed reports with classification and recommendations
@@ -676,7 +678,7 @@ module.exports = {
 
   // Fixer rules to disable (by rule id)
   fixerRulesDisable: ["detail-view-store-rule"],
-  // Custom rules (paths relative to project root - module exports FixRule or FixRule[])
+  // Custom fixer rules (paths relative to project root - module exports FixRule or FixRule[])
   // fixerRulesAdd: ["./my-custom-rules.js"],
 
   // Fixer rules to enable only (if set, only these run)
@@ -1057,6 +1059,7 @@ See [PERFORMANCE.md](./PERFORMANCE.md) for detailed performance analysis and com
 - ✅ **Syntax validation**: Post-migration syntax checking
 - ✅ **AST validation**: Ensures generated code is valid
 - ✅ **Type checking**: TypeScript validation (when applicable)
+- ✅ **Tested on real projects**: [vue-hackernews-2.0](https://github.com/vuejs/vue-hackernews-2.0) — full migration, build and runtime verified
 
 ### Hallucination Management
 
@@ -1090,7 +1093,7 @@ vue-ai-migrator rollback ./my-vue2-project --file src/components/MyComponent.vue
 
 ## 🧪 Testing
 
-- **340+ unit tests** covering all modules and transformations
+- **605+ unit tests** covering all modules and transformations
 - **100% pass rate** - All tests passing
 - **AST-based transformations** for robust code generation
 - Tests for error handling, transformations, and migration flow
@@ -1113,15 +1116,15 @@ vue-ai-migrator rollback ./my-vue2-project --file src/components/MyComponent.vue
 
 See [ROADMAP.md](./docs/ROADMAP.md) for detailed roadmap and future plans.
 
-**Current Version**: v0.6.0 - Free Mode by Default
+**Current Version**: v0.6.4 - Vuex/Pinia & Validation
 
 - ✅ **Free Mode by Default** - No API key required!
 - ✅ Core migration features
+- ✅ **Vuex → Pinia** (mapState/mapActions root store, useIndexStore)
+- ✅ **Custom fixer rules** (fixerRulesAdd)
 - ✅ AI Agent integration (optional)
 - ✅ Classification system with free mode coverage
-- ✅ Test generation
-- ✅ Migration planning
-- ✅ Enhanced user experience with helpful messages
+- ✅ Tested on vue-hackernews-2.0
 
 **Next Version**: v0.7.0 - Multi-Provider Support
 
