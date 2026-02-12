@@ -18,6 +18,9 @@ export const vuexPiniaComponentsTransform: Transform = (
   let hasChanges = false;
   const storeModules = new Map<string, string>(); // module name → store name (e.g., 'user' → 'useUserStore')
 
+  // Root store convention: store/index.js → moduleName "store" → useStoreStore
+  const ROOT_MODULE_NAME = "store";
+
   // Find all mapGetters, mapActions, mapState, mapMutations calls
   root.find(j.CallExpression).forEach((path: any) => {
     const callee = path.value.callee;
@@ -30,16 +33,19 @@ export const vuexPiniaComponentsTransform: Transform = (
     ) {
       const args = path.value.arguments || [];
 
+      let moduleName: string | null = null;
       if (args.length >= 2) {
-        const moduleName =
+        moduleName =
           args[0].value || (args[0].type === "Literal" ? args[0].value : null);
+      } else if (args.length === 1) {
+        // Root store: mapState(['count']), mapActions(['increment'])
+        moduleName = ROOT_MODULE_NAME;
+      }
 
-        if (moduleName) {
-          // Determine store name: 'user' → 'useUserStore'
-          const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
-          storeModules.set(moduleName, storeName);
-          hasChanges = true;
-        }
+      if (moduleName) {
+        const storeName = `use${moduleName.charAt(0).toUpperCase() + moduleName.slice(1)}Store`;
+        storeModules.set(moduleName, storeName);
+        hasChanges = true;
       }
     }
   });
@@ -84,7 +90,10 @@ export const vuexPiniaComponentsTransform: Transform = (
 
         // Initialize stores
         storeModules.forEach((storeName, moduleName) => {
-          const importPath = `../store/modules/${moduleName}`;
+          const importPath =
+            moduleName === ROOT_MODULE_NAME
+              ? "../store"
+              : `../store/modules/${moduleName}`;
           storeImports.set(storeName, importPath);
 
           const storeVarName = moduleName + "Store";
@@ -107,34 +116,36 @@ export const vuexPiniaComponentsTransform: Transform = (
           const computedProps = computedProp.value.properties || [];
 
           computedProps.forEach((prop: any) => {
-            // Handle ...mapGetters() spread
+            // Handle ...mapState() and ...mapGetters() spread
             if (prop.type === "SpreadElement" && prop.argument) {
               const spreadArg = prop.argument;
-              if (
+              const isMapState =
                 spreadArg.type === "CallExpression" &&
-                spreadArg.callee.name === "mapGetters"
-              ) {
-                const args = spreadArg.arguments || [];
-                if (args.length >= 2) {
-                  const moduleName =
-                    args[0].value ||
-                    (args[0].type === "Literal" ? args[0].value : null);
-                  const getters = args[1];
+                spreadArg.callee.name === "mapState";
+              const isMapGetters =
+                spreadArg.type === "CallExpression" &&
+                spreadArg.callee.name === "mapGetters";
 
-                  if (
-                    moduleName &&
-                    getters &&
-                    getters.type === "ArrayExpression"
-                  ) {
-                    const storeVarName = moduleName + "Store";
-                    getters.elements.forEach((getter: any) => {
-                      const getterName =
-                        getter.value ||
-                        (getter.type === "Literal" ? getter.value : null);
-                      if (getterName) {
-                        // Check if this getter is used as a function (like userById(id))
-                        // If it's used in a computed property that calls it, it's a function getter
-                        const isFunctionGetter = computedProps.some(
+              if (isMapState || isMapGetters) {
+                const args = spreadArg.arguments || [];
+                const hasModule = args.length >= 2;
+                const moduleName = hasModule
+                  ? args[0].value ||
+                    (args[0].type === "Literal" ? args[0].value : null)
+                  : ROOT_MODULE_NAME;
+                const items = hasModule ? args[1] : args[0];
+
+                if (moduleName && items && items.type === "ArrayExpression") {
+                  const storeVarName = moduleName + "Store";
+                  items.elements.forEach((item: any) => {
+                    const itemName =
+                      item.value ||
+                      (item.type === "Literal" ? item.value : null);
+                    if (itemName) {
+                      // mapGetters only: check if getter is used as function (e.g. userById(id))
+                      const isFunctionGetter =
+                        isMapGetters &&
+                        computedProps.some(
                           (cp: any) => {
                             if (
                               cp.key &&
@@ -145,8 +156,8 @@ export const vuexPiniaComponentsTransform: Transform = (
                               if (body && body.type === "BlockStatement") {
                                 const bodyStr = j(cp.value).toSource();
                                 return (
-                                  bodyStr.includes(`${getterName}(`) ||
-                                  bodyStr.includes(`this.${getterName}(`)
+                                  bodyStr.includes(`${itemName}(`) ||
+                                  bodyStr.includes(`this.${itemName}(`)
                                 );
                               }
                             }
@@ -154,62 +165,61 @@ export const vuexPiniaComponentsTransform: Transform = (
                           },
                         );
 
-                        if (isFunctionGetter) {
-                          // Function getter: const userById = usersStore.userById;
-                          setupStatements.push(
-                            j.variableDeclaration("const", [
-                              j.variableDeclarator(
-                                j.identifier(getterName),
-                                j.memberExpression(
-                                  j.identifier(storeVarName),
-                                  j.identifier(getterName),
-                                ),
+                      if (isFunctionGetter) {
+                        // Function getter: const userById = usersStore.userById;
+                        setupStatements.push(
+                          j.variableDeclaration("const", [
+                            j.variableDeclarator(
+                              j.identifier(itemName),
+                              j.memberExpression(
+                                j.identifier(storeVarName),
+                                j.identifier(itemName),
                               ),
-                            ]),
-                          );
-                          returnProperties.push(
-                            j.property(
-                              "init",
-                              j.identifier(getterName),
-                              j.identifier(getterName),
                             ),
-                          );
-                        } else {
-                          // Regular getter: const isAuthenticated = computed(() => authStore.isAuthenticated);
-                          const computedCall = j.callExpression(
-                            j.identifier("computed"),
-                            [
-                              j.arrowFunctionExpression(
-                                [],
-                                j.memberExpression(
-                                  j.identifier(storeVarName),
-                                  j.identifier(getterName),
-                                ),
+                          ]),
+                        );
+                        returnProperties.push(
+                          j.property(
+                            "init",
+                            j.identifier(itemName),
+                            j.identifier(itemName),
+                          ),
+                        );
+                      } else {
+                        // mapState/mapGetters: const count = computed(() => store.count);
+                        const computedCall = j.callExpression(
+                          j.identifier("computed"),
+                          [
+                            j.arrowFunctionExpression(
+                              [],
+                              j.memberExpression(
+                                j.identifier(storeVarName),
+                                j.identifier(itemName),
                               ),
-                            ],
-                          );
-
-                          setupStatements.push(
-                            j.variableDeclaration("const", [
-                              j.variableDeclarator(
-                                j.identifier(getterName),
-                                computedCall,
-                              ),
-                            ]),
-                          );
-
-                          returnProperties.push(
-                            j.property(
-                              "init",
-                              j.identifier(getterName),
-                              j.identifier(getterName),
                             ),
-                          );
-                          vueImports.add("computed");
-                        }
+                          ],
+                        );
+
+                        setupStatements.push(
+                          j.variableDeclaration("const", [
+                            j.variableDeclarator(
+                              j.identifier(itemName),
+                              computedCall,
+                            ),
+                          ]),
+                        );
+
+                        returnProperties.push(
+                          j.property(
+                            "init",
+                            j.identifier(itemName),
+                            j.identifier(itemName),
+                          ),
+                        );
+                        vueImports.add("computed");
                       }
-                    });
-                  }
+                    }
+                  });
                 }
               }
             } else if (prop.key && prop.value) {
@@ -275,49 +285,52 @@ export const vuexPiniaComponentsTransform: Transform = (
           const methodProps = methodsProp.value.properties || [];
 
           methodProps.forEach((prop: any) => {
-            // Handle ...mapActions() spread
+            // Handle ...mapActions() and ...mapMutations() spread
             if (prop.type === "SpreadElement" && prop.argument) {
               const spreadArg = prop.argument;
-              if (
+              const isMapActions =
                 spreadArg.type === "CallExpression" &&
-                spreadArg.callee.name === "mapActions"
-              ) {
-                const args = spreadArg.arguments || [];
-                if (args.length >= 2) {
-                  const moduleName =
-                    args[0].value ||
-                    (args[0].type === "Literal" ? args[0].value : null);
-                  const actions = args[1];
+                spreadArg.callee.name === "mapActions";
+              const isMapMutations =
+                spreadArg.type === "CallExpression" &&
+                spreadArg.callee.name === "mapMutations";
 
-                  if (
-                    moduleName &&
-                    actions &&
-                    actions.type === "ArrayExpression"
-                  ) {
-                    const storeVarName = moduleName + "Store";
+              if (isMapActions || isMapMutations) {
+                const args = spreadArg.arguments || [];
+                const hasModule = args.length >= 2;
+                const moduleName = hasModule
+                  ? args[0].value ||
+                    (args[0].type === "Literal" ? args[0].value : null)
+                  : ROOT_MODULE_NAME;
+                const actions = hasModule ? args[1] : args[0];
+
+                if (moduleName && actions && actions.type === "ArrayExpression") {
+                  const storeVarName = moduleName + "Store";
                     actions.elements.forEach((action: any) => {
                       const actionName =
                         action.value ||
                         (action.type === "Literal" ? action.value : null);
                       if (actionName) {
-                        // Create method that calls store action
-                        const methodFn = j.functionExpression(
-                          j.identifier(actionName),
+                        // Create method that calls store action: const increment = (...args) => store.increment(...args)
+                        const methodFn = j.arrowFunctionExpression(
                           [j.restElement(j.identifier("args"))],
-                          j.blockStatement([
-                            j.returnStatement(
-                              j.callExpression(
-                                j.memberExpression(
-                                  j.identifier(storeVarName),
-                                  j.identifier(actionName),
-                                ),
-                                [j.spreadElement(j.identifier("args"))],
-                              ),
+                          j.callExpression(
+                            j.memberExpression(
+                              j.identifier(storeVarName),
+                              j.identifier(actionName),
+                            ),
+                            [j.spreadElement(j.identifier("args"))],
+                          ),
+                        );
+
+                        setupStatements.push(
+                          j.variableDeclaration("const", [
+                            j.variableDeclarator(
+                              j.identifier(actionName),
+                              methodFn,
                             ),
                           ]),
                         );
-
-                        setupStatements.push(methodFn);
                         returnProperties.push(
                           j.property(
                             "init",
@@ -327,7 +340,6 @@ export const vuexPiniaComponentsTransform: Transform = (
                         );
                       }
                     });
-                  }
                 }
               }
             } else if (prop.key && prop.value) {

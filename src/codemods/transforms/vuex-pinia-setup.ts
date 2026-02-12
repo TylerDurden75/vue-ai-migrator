@@ -796,13 +796,16 @@ export const vuexPiniaSetupTransform: Transform = (
         const config = args[0];
         const properties = config.properties || [];
 
-        // Extract store name from filename
+        // Extract store name from filename (store/index.js → "store" for root)
         const fileName = fileInfo.path || "store";
-        const storeName =
-          fileName
-            .replace(/\.(js|ts)$/, "")
-            .split("/")
-            .pop() || "main";
+        const parts = fileName.replace(/\.(js|ts)$/, "").split("/");
+        const basename = parts[parts.length - 1] || "main";
+        const storeId =
+          basename === "index" && parts.length > 1
+            ? parts[parts.length - 2] // store/index.js → "store"
+            : basename;
+        const storeName = storeId.charAt(0).toUpperCase() + storeId.slice(1);
+        const useStoreName = `use${storeName}Store`;
 
         // Build Setup Store function body
         const setupStatements: any[] = [];
@@ -1381,17 +1384,27 @@ export const vuexPiniaSetupTransform: Transform = (
           [],
           j.blockStatement(setupStatements)
         );
-        const storeId = j.literal(storeName);
+        const defineStoreId = j.literal(storeId);
         const defineStoreCall = j.callExpression(j.identifier("defineStore"), [
-          storeId,
+          defineStoreId,
           setupFunction,
         ]);
 
-        // Replace new Vuex.Store() with defineStore()
-        if (path.parent && path.parent.value) {
-          j(path).replaceWith(defineStoreCall);
+        // Replace new Vuex.Store() - convert export default to export const useXStore
+        const parent = path.parent?.value;
+        if (parent && parent.type === "ExportDefaultDeclaration") {
+          j(path.parent).replaceWith(
+            j.exportNamedDeclaration(
+              j.variableDeclaration("const", [
+                j.variableDeclarator(
+                  j.identifier(useStoreName),
+                  defineStoreCall,
+                ),
+              ])
+            )
+          );
         } else {
-          path.value = defineStoreCall;
+          j(path).replaceWith(defineStoreCall);
         }
         hasChanges = true;
       }
