@@ -1597,7 +1597,7 @@ function transformProvideAST(
   j: any,
   provideValue: any,
   imports: Set<string>,
-  dataProperties?: Set<string>,
+  _dataProperties?: Set<string>,
 ): any[] {
   const statements: any[] = [];
   if (!provideValue) return statements;
