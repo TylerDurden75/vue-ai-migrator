@@ -514,7 +514,7 @@ defineProps(["item"]);
       content.match(/<template>([\s\S]*?)<\/template>/)?.[1] || "";
     const projectRoot = path.join(
       __dirname,
-      "../../../../../../vue-hackernews-2.0"
+      "../../../../../../fixtures/vue2-minimal"
     );
 
     const result = await templateFilterFunctionImportsRule.apply(
@@ -531,7 +531,6 @@ defineProps(["item"]);
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("import { host, timeAgo }");
-    // Fallback to @/filters when projectRoot lacks filters (vue-hackernews-2.0 not in repo)
     expect(result.content).toMatch(/from ["']@\/(?:util\/)?filters["']/);
     expect(result.fixes.length).toBeGreaterThan(0);
   });
