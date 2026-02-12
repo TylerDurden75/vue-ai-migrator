@@ -101,14 +101,29 @@ export function parseVueFile(content: string): VueFileParts {
     });
   }
 
-  // Match custom blocks (e.g., <docs>, <i18n>)
+  // Match custom blocks (e.g., <docs>, <i18n>) - exclude HTML elements that belong inside <template>
   const customBlockRegex = /<(\w+)([^>]*)>([\s\S]*?)<\/\1>/gi;
   const processedBlocks = new Set<string>();
+  const htmlElements = new Set([
+    'a', 'abbr', 'address', 'article', 'aside', 'audio', 'b', 'bdi', 'bdo', 'blockquote', 'br',
+    'button', 'canvas', 'caption', 'cite', 'code', 'col', 'colgroup', 'data', 'datalist', 'dd',
+    'del', 'details', 'dfn', 'dialog', 'div', 'dl', 'dt', 'em', 'embed', 'fieldset', 'figcaption',
+    'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hgroup',
+    'hr', 'i', 'iframe', 'img', 'input', 'ins', 'kbd', 'label', 'legend', 'li', 'link', 'main',
+    'map', 'mark', 'menu', 'meta', 'meter', 'nav', 'noscript', 'object', 'ol', 'optgroup',
+    'option', 'output', 'p', 'param', 'picture', 'pre', 'progress', 'q', 'rp', 'rt', 'ruby',
+    's', 'samp', 'section', 'select', 'slot', 'small', 'source', 'span', 'strong', 'sub', 'summary',
+    'sup', 'table', 'tbody', 'td', 'textarea', 'tfoot', 'th', 'thead', 'time', 'tr', 'track',
+    'u', 'ul', 'var', 'video', 'wbr',
+    // Vue built-in
+    'component', 'transition', 'transition-group', 'keep-alive', 'slot', 'router-link', 'router-view',
+  ]);
   let customMatch;
   while ((customMatch = customBlockRegex.exec(content)) !== null) {
     const blockType = customMatch[1].toLowerCase();
     if (
       !['template', 'script', 'style'].includes(blockType) &&
+      !htmlElements.has(blockType) &&
       !processedBlocks.has(customMatch[0])
     ) {
       processedBlocks.add(customMatch[0]);

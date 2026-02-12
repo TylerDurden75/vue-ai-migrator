@@ -12,6 +12,7 @@ const mockGetStoreMethodMap = getStoreMethodMap as jest.MockedFunction<typeof ge
 
 describe('Post Migration Fixer', () => {
   const testProjectRoot = path.join(__dirname, '../../test-project');
+  const customRuleProjectRoot = path.join(__dirname, '../../fixtures/custom-fixer-rule');
   const hasTestProject = fs.existsSync(testProjectRoot);
 
   beforeEach(() => {
@@ -368,6 +369,24 @@ const filteredUsers = ref([]);
 
       expect(result).toBeDefined();
       expect(result.content).toContain('lang="ts"');
+    });
+
+    it('should apply custom rules from fixerRulesAdd config', async () => {
+      const code = `<script setup>
+// TODO: implement feature
+const x = 1;
+</script>`;
+
+      const result = await fixPostMigrationIssues(
+        'test.vue',
+        code,
+        false,
+        customRuleProjectRoot
+      );
+
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain('// FIXME: implement feature');
+      expect(result.fixes.some(f => f.includes('custom rule'))).toBe(true);
     });
   });
 

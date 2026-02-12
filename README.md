@@ -676,6 +676,8 @@ module.exports = {
 
   // Fixer rules to disable (by rule id)
   fixerRulesDisable: ["detail-view-store-rule"],
+  // Custom rules (paths relative to project root - module exports FixRule or FixRule[])
+  // fixerRulesAdd: ["./my-custom-rules.js"],
 
   // Fixer rules to enable only (if set, only these run)
   // fixerRulesEnable: ["missing-vue-imports", "fix-store-member-mismatch"],

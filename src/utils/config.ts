@@ -21,6 +21,8 @@ export interface VueMigratorConfig {
   fixerRulesEnable?: string[];
   /** Fixer rules to disable (by rule id) */
   fixerRulesDisable?: string[];
+  /** Custom fixer rules (paths to modules exporting FixRule or FixRule[]) - relative to project root */
+  fixerRulesAdd?: string[];
   /** Transformations to apply */
   transformations?: string[];
   /** Use AI for complex cases */
@@ -75,6 +77,7 @@ function mergeConfig(
     routerPaths: user.routerPaths ?? defaults.routerPaths,
     fixerRulesEnable: user.fixerRulesEnable,
     fixerRulesDisable: user.fixerRulesDisable,
+    fixerRulesAdd: user.fixerRulesAdd,
     transformations: user.transformations ?? defaults.transformations,
     useAI: user.useAI ?? defaults.useAI,
     ai: user.ai ? { ...defaults.ai, ...user.ai } : defaults.ai,

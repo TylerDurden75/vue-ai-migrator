@@ -3,8 +3,10 @@
  * Uses optimized rule engine for single-pass execution
  */
 
+import { createRequire } from "module";
+import * as path from "path";
 import { RuleEngine } from "./rule-engine";
-import type { FixResult, FixContext } from "./types";
+import type { FixRule, FixResult, FixContext } from "./types";
 import { allRules } from "./rule-groups";
 import { scriptStyleInsideTemplateRule } from "./rules/vue-script/vue-structure-fixes";
 import { formatWithPrettier } from "../prettier-formatter";
@@ -12,8 +14,43 @@ import { astCache } from "./utils/ast-cache";
 import { loadConfig } from "../../config";
 import { getMainStoreInfo } from "./utils/store-analysis-cache";
 
+const _req = createRequire(require.resolve("./rule-engine"));
+
 const ruleEngine = new RuleEngine();
 ruleEngine.registerRules(allRules);
+
+/** Load custom rules from config.fixerRulesAdd paths (relative to projectRoot) */
+function loadCustomRules(projectRoot: string, rulePaths: string[]): FixRule[] {
+  const rules: FixRule[] = [];
+  for (const rulePath of rulePaths) {
+    try {
+      const resolved = path.resolve(projectRoot, rulePath);
+      const mod = _req(resolved);
+      const ruleOrRules = mod?.default ?? mod;
+      if (Array.isArray(ruleOrRules)) {
+        rules.push(...ruleOrRules.filter((r): r is FixRule => r && typeof r?.apply === "function"));
+      } else if (ruleOrRules && typeof ruleOrRules?.apply === "function") {
+        rules.push(ruleOrRules);
+      }
+    } catch (err) {
+      // Log but don't fail - custom rule may be optional
+      console.warn(`[vue-ai-migrator] Could not load custom rule from ${rulePath}:`, err);
+    }
+  }
+  return rules;
+}
+
+/** Build engine for a run: allRules + optional custom rules from config */
+function getEngineForRun(projectRoot: string | undefined, fixerRulesAdd?: string[]) {
+  if (!projectRoot || !fixerRulesAdd?.length) {
+    return ruleEngine;
+  }
+  const customRules = loadCustomRules(projectRoot, fixerRulesAdd);
+  if (customRules.length === 0) return ruleEngine;
+  const engine = new RuleEngine();
+  engine.registerRules([...allRules, ...customRules]);
+  return engine;
+}
 
 /**
  * Main function: Fix post-migration issues using optimized rule engine
@@ -32,11 +69,13 @@ export async function fixPostMigrationIssues(
   
   let fixerRulesDisable: string[] | undefined;
   let fixerRulesEnable: string[] | undefined;
+  let fixerRulesAdd: string[] | undefined;
   if (projectRoot) {
     try {
       const config = await loadConfig(projectRoot);
       fixerRulesDisable = config.fixerRulesDisable;
       fixerRulesEnable = config.fixerRulesEnable;
+      fixerRulesAdd = config.fixerRulesAdd;
     } catch {
       // Config not found or invalid, use defaults
     }
@@ -63,8 +102,9 @@ export async function fixPostMigrationIssues(
     fixerRulesEnable,
   };
 
-  // Execute all rules in a single optimized pass
-  const result = await ruleEngine.execute(filePath, content, context);
+  // Execute all rules in a single optimized pass (use custom engine if fixerRulesAdd)
+  const engine = getEngineForRun(projectRoot, fixerRulesAdd);
+  const result = await engine.execute(filePath, content, context);
 
   // Update AST cache if content changed
   if (result.fixed) {
