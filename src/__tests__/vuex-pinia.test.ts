@@ -385,4 +385,41 @@ export default new Vuex.Store({
       expect(result.code).toMatch(/shoppingCart\s*:\s*ShoppingCart/);
     });
   });
+
+  describe('vuex-pinia-components (mapState/mapActions root store)', () => {
+    it('should transform mapState and mapActions with single arg and remove Vuex import', async () => {
+      const componentCode = `
+<template>
+  <div>
+    <p>Count: {{ count }}</p>
+    <button @click="increment">Increment</button>
+  </div>
+</template>
+
+<script>
+import { mapState, mapActions } from 'vuex';
+export default {
+  computed: {
+    ...mapState(['count']),
+  },
+  methods: {
+    ...mapActions(['increment']),
+  },
+};
+</script>
+      `.trim();
+
+      const result = await runner.transform('views/Home.vue', componentCode, {
+        transformations: ['vuex-pinia-components'],
+      });
+
+      expect(result.modified).toBe(true);
+      expect(result.code).toContain('useStoreStore');
+      expect(result.code).toMatch(/from\s+['"]\.\.\/store['"]/);
+      expect(result.code).toContain('setup');
+      expect(result.code).toContain('computed');
+      expect(result.code).toMatch(/storeStore\.(count|increment)/);
+      expect(result.code).not.toMatch(/from\s+['"]vuex['"]/);
+    });
+  });
 });

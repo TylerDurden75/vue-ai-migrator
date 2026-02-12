@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2025-02-XX
+
+### Added
+
+- **Vuex → Pinia (root store)**: `mapState(['count'])` and `mapActions(['increment'])` with single argument now transform to Pinia `useStoreStore` (store/index.js → useStoreStore)
+- **Export Pinia root store**: `export default new Vuex.Store()` in store/index.js now becomes `export const useStoreStore = defineStore('store', ...)` for component imports
+- **Configuration**: `fixerRulesAdd` option to load custom post-migration fixer rules from project paths
+- **Fixture**: `fixtures/custom-fixer-rule` demonstrating custom rule (TODO → FIXME) and config
+
+### Fixed
+
+- **vuex-pinia-components**: Remove unused Vuex import after mapState/mapActions transformation (no more stale `import { mapState, mapActions } from 'vuex'`)
+- **vue-parser**: HTML elements (button, div, span, etc.) no longer mistaken for custom blocks (fixes slot-scope migration crash)
+
+### Changed
+
+- **store/index.js migration**: Root store now exports named `useStoreStore` instead of default for consistency with component imports
+
 ## [0.6.2] - 2025-02-XX
 
 ### Fixed
