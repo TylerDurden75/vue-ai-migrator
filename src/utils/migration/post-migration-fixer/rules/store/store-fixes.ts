@@ -1361,12 +1361,45 @@ export const storeAddMissingAuthMethodsRule: FixRule = {
   },
 };
 
+/** Setters (SET_LIST, SET_ITEMS, etc.) - never treat as fetch method (they don't return Promise) */
+const SETTER_PREFIX = /^SET_/;
+
+function isValidFetchMethod(name: string): boolean {
+  return !SETTER_PREFIX.test(name);
+}
+
 /**
- * Fix: SSR list flash - SET_LIST before FETCH_ITEMS causes items to disappear on hydration.
+ * Detect the fetch-by-ids method name from store content.
+ * Prefers { ids } only (excludes SET_LIST which has { type, ids }), then falls back to common names.
+ */
+function detectFetchItemsMethod(content: string): string | null {
+  // 1. Function with { ids } only (excludes SET_LIST, SET_ITEMS which have { type, ids } etc.)
+  const exactMatch = content.match(/(?:async\s+)?function\s+(\w+)\s*\(\s*\{\s*ids\s*\}\s*\)/);
+  if (exactMatch && isValidFetchMethod(exactMatch[1])) return exactMatch[1];
+  // 2. Method shorthand: X: ({ ids }) =>
+  const methodExact = content.match(/(\w+)\s*:\s*(?:async\s*)?\(\s*\{\s*ids\s*\}\s*\)/);
+  if (methodExact && isValidFetchMethod(methodExact[1])) return methodExact[1];
+  // 3. Const arrow: const X = ({ ids }) =>
+  const constExact = content.match(/const\s+(\w+)\s*=\s*(?:async\s*)?\(\s*\{\s*ids\s*\}\s*\)/);
+  if (constExact && isValidFetchMethod(constExact[1])) return constExact[1];
+  // 4. Broader: { ids, ... } or { ..., ids } but exclude SET_* names
+  const defMatch = content.match(/(?:async\s+)?function\s+(\w+)\s*\(\s*\{[^}]*\bids\b[^}]*\}/);
+  if (defMatch && isValidFetchMethod(defMatch[1])) return defMatch[1];
+  const methodMatch = content.match(/(\w+)\s*:\s*(?:async\s*)?\([^)]*\{[^}]*\bids\b[^}]*\}/);
+  if (methodMatch && isValidFetchMethod(methodMatch[1])) return methodMatch[1];
+  const constMatch = content.match(/const\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\{[^}]*\bids\b[^}]*\}/);
+  if (constMatch && isValidFetchMethod(constMatch[1])) return constMatch[1];
+  // 5. Fallback: first common name that exists in content
+  const common = ["FETCH_ITEMS", "fetchItems", "loadItems", "ensureItems", "FETCH_ITEMS_BY_IDS"];
+  return common.find((name) => new RegExp(`\\b${name}\\b`).test(content)) ?? null;
+}
+
+/**
+ * Fix: SSR list flash - SET_LIST before fetch causes items to disappear on hydration.
  * Pattern: fetchIds().then(ids => SET_LIST({ type, ids })).then(() => ENSURE_ACTIVE_ITEMS())
  * The list is updated before items are in cache, so activeItems briefly returns [].
- * Fix: Fetch items first, then update list - .then(ids => FETCH_ITEMS({ ids }).then(() => SET_LIST(...)))
- * Generic: applies to any Pinia store with this fetch-then-set-list-then-ensure pattern.
+ * Fix: Fetch items first, then update list - .then(ids => fetchMethod({ ids }).then(() => SET_LIST(...)))
+ * Generic: detects fetch method from store (FETCH_ITEMS, fetchItems, loadItems, etc.).
  */
 export const storeListBeforeItemsFlashRule: FixRule = {
   id: "store-list-before-items-flash",
@@ -1375,18 +1408,22 @@ export const storeListBeforeItemsFlashRule: FixRule = {
   shouldApply: (filePath, content) => {
     if (!(filePath.includes("/store/") || filePath.includes("store.js") || filePath.includes("store.ts")))
       return false;
-    if (!content.includes("defineStore") || !content.includes("FETCH_ITEMS")) return false;
+    if (!content.includes("defineStore")) return false;
+    const fetchMethod = detectFetchItemsMethod(content);
+    if (!fetchMethod) return false;
     return /\.then\s*\(\s*\w+\s*=>\s*SET_\w+\s*\(\s*\{[^}]*\}\s*\)\s*\)\s*\.then\s*\(\s*\(\s*\)\s*=>\s*\w+\s*\(\s*\)\s*\)/.test(
       content
     );
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fetchMethod = detectFetchItemsMethod(content);
+    if (!fetchMethod) return result;
     const re =
       /\.then\s*\(\s*(\w+)\s*=>\s*(\w+)\s*\(\s*(\{[^}]*\})\s*\)\s*\)\s*\.then\s*\(\s*\(\s*\)\s*=>\s*(\w+)\s*\(\s*\)\s*\)/g;
     const fixed = content.replace(re, (_, idsParam, setFunc, setArgs, _ensureFunc) => {
       result.fixes.push(`Fixed list/items order: fetch items before SET_* (avoids SSR hydration flash)`);
-      return `.then(${idsParam} => FETCH_ITEMS({ ids: ${idsParam} }).then(() => ${setFunc}(${setArgs})))`;
+      return `.then(${idsParam} => ${fetchMethod}({ ids: ${idsParam} }).then(() => ${setFunc}(${setArgs})))`;
     });
     if (fixed !== content) {
       result.content = fixed;

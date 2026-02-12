@@ -911,9 +911,48 @@ describe("storeListBeforeItemsFlashRule", () => {
     const content = `export const useIndexStore = defineStore("index", () => ({ items: [] }));`;
     expect(storeListBeforeItemsFlashRule.shouldApply("src/store/index.js", content)).toBe(false);
   });
+
+  it("should detect fetchItems dynamically (not just FETCH_ITEMS)", async () => {
+    const content = `export const useIndexStore = defineStore("index", () => {
+  function fetchItems({ ids }) { return loadByIds(ids); }
+  function FETCH_LIST_DATA({ type }) {
+    return fetchIdsByType(type)
+      .then(ids => SET_LIST({ type, ids }))
+      .then(() => ENSURE_ACTIVE_ITEMS());
+  }
+  return {};
+});`;
+    const result = await storeListBeforeItemsFlashRule.apply("src/store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("fetchItems({ ids: ids }).then(() => SET_LIST({ type, ids }))");
+    expect(result.content).not.toContain("FETCH_ITEMS(");
+  });
+
+  it("should NOT pick SET_LIST (appears before FETCH_ITEMS, has { type, ids }) - SET_LIST returns undefined", async () => {
+    const content = `export const useIndexStore = defineStore("index", () => {
+  function SET_LIST({ type, ids }) { lists[type] = ids; }
+  function FETCH_ITEMS({ ids }) { return fetchItems(ids); }
+  function FETCH_LIST_DATA({ type }) {
+    return fetchIdsByType(type)
+      .then(ids => SET_LIST({ type, ids }))
+      .then(() => ENSURE_ACTIVE_ITEMS());
+  }
+  return {};
+});`;
+    const result = await storeListBeforeItemsFlashRule.apply("src/store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("FETCH_ITEMS({ ids: ids }).then(() => SET_LIST({ type, ids }))");
+    expect(result.content).not.toContain("SET_LIST({ ids: ids }).then");
+  });
 });
 
-describe("storeListBeforeItemsFlashRule", () => {
+describe("storeListBeforeItemsFlashRule (order)", () => {
   it("should fix SET_LIST before ENSURE_ACTIVE_ITEMS (fetch items first, then set list)", async () => {
     const content = `export const useIndexStore = defineStore("index", () => {
   function FETCH_ITEMS({ ids }) { return fetchItems(ids); }

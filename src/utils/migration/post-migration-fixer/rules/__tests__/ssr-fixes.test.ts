@@ -261,6 +261,16 @@ export default {
       expect(result.fixed).toBe(false);
       expect(result.content).toBe("store.indexStore.fetchItem();");
     });
+    it("detects plugin var from getCurrentInstance (custom name loadingBar)", async () => {
+      const content = `<script setup>
+const loadingBar = getCurrentInstance()?.appContext.config.globalProperties.$loadingBar;
+loadingBar.indexStore.start();
+</script>`;
+      const result = await barIndexStoreFixRule.apply("App.vue", content, { enableTypeScript: false, isVueFile: true });
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("loadingBar?.start?.()");
+      expect(result.content).not.toContain("loadingBar.indexStore");
+    });
   });
 
   describe("storePiniaStateFixRule", () => {

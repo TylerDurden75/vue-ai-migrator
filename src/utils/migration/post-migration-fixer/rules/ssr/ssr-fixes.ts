@@ -656,13 +656,46 @@ export const asyncDataStoreDispatchRule: FixRule = {
 /** Store-like identifiers: never apply plugin fix (varName.store is valid for userStore.store) */
 const STORE_LIKE = /^(store|indexStore|mainStore|userStore|[\w]+Store)$/;
 
-/** Plugin/progress bar vars from getCurrentInstance() - add optional chaining (can be undefined) */
-const PLUGIN_VAR_NAMES = /^(bar|progressBar|nprogress|plugin)$/i;
+/** Fallback: common plugin/progress bar var names when getCurrentInstance not found */
+const FALLBACK_PLUGIN_NAMES = /^(bar|progressBar|nprogress|plugin)$/i;
+
+/** Extract script content from .vue file or return full content */
+function getScriptContent(filePath: string, content: string): string {
+  if (filePath.endsWith(".vue")) {
+    const m = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+    return m ? m[1] : content;
+  }
+  return content;
+}
+
+/**
+ * Detect plugin vars from getCurrentInstance/globalProperties.
+ * Returns set of variable names that are assigned from globalProperties (not stores).
+ */
+function detectPluginVars(content: string, storeLike: RegExp): Set<string> {
+  const pluginVars = new Set<string>();
+  const script = content;
+  // const X = getCurrentInstance()?.appContext.config.globalProperties.$Y (X = var name, exclude if store-like)
+  for (const m of script.matchAll(/const\s+(\w+)\s*=\s*getCurrentInstance\s*\([^)]*\)\s*\?\.(?:appContext\.)?config\.globalProperties\.\$\w+/g)) {
+    const varName = m[1];
+    if (!storeLike.test(varName)) pluginVars.add(varName);
+  }
+  // globalProperties.$X = Y  (Y is the plugin var - when assigned from createApp().mount, etc.)
+  for (const m of script.matchAll(/globalProperties\.\$\w+\s*=\s*(\w+)/g)) {
+    const varName = m[1];
+    if (!storeLike.test(varName)) pluginVars.add(varName);
+  }
+  return pluginVars;
+}
+
+function isPluginVar(varName: string, pluginVars: Set<string>, fallbackRe: RegExp): boolean {
+  return pluginVars.has(varName) || fallbackRe.test(varName);
+}
 
 /**
  * Fix: varName.indexStore.X / varName.store.X → varName.X when varName is NOT a store.
- * For plugin vars (bar, progressBar): use varName?.method?.() since they can be undefined.
- * Generic: plugin/bar from getCurrentInstance().$xxx has no .store/.indexStore - applies to any varName.
+ * For plugin vars: use varName?.method?.() since they can be undefined (from getCurrentInstance).
+ * Generic: detects plugin vars from getCurrentInstance/globalProperties, fallback to common names.
  */
 export const barIndexStoreFixRule: FixRule = {
   id: "bar-index-store-fix",
@@ -673,13 +706,20 @@ export const barIndexStoreFixRule: FixRule = {
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptContent = getScriptContent(filePath, content);
+    const pluginVars = detectPluginVars(scriptContent, STORE_LIKE);
     let fixed = content.replace(/\b(\w+)\.(?:indexStore|store)\./g, (match, varName) => {
       if (STORE_LIKE.test(varName)) return match;
-      return PLUGIN_VAR_NAMES.test(varName) ? `${varName}?.` : `${varName}.`;
+      return isPluginVar(varName, pluginVars, FALLBACK_PLUGIN_NAMES) ? `${varName}?.` : `${varName}.`;
     });
-    // For plugin vars: bar?.start() -> bar?.start?.() (bar can be undefined, so method call needs ?.)
+    // For plugin vars: varName?.start() -> varName?.start?.() (plugin can be undefined)
     if (fixed !== content) {
-      fixed = fixed.replace(/\b(bar|progressBar|nprogress|plugin)\?\.(\w+)\s*\(\s*\)/gi, "$1?.$2?.()");
+      const pluginVarNames = [...pluginVars];
+      const fallbackNames = "bar|progressBar|nprogress|plugin";
+      const allPluginNames = pluginVarNames.length
+        ? `${pluginVarNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")}|${fallbackNames}`
+        : fallbackNames;
+      fixed = fixed.replace(new RegExp(`\\b(${allPluginNames})\\?\\.(\\w+)\\s*\\(\\s*\\)`, "gi"), "$1?.$2?.()");
     }
     if (fixed !== content) {
       result.content = fixed;
