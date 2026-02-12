@@ -226,6 +226,67 @@ export const compositionApiTransform: Transform = (
             hasChanges = true;
           }
         }
+
+        // Preserve asyncData and title (SSR options) via defineOptions
+        // Single script setup block - no second block needed
+        const defineOptionsProps: any[] = [];
+        const asyncDataProp = findProperty(properties, "asyncData");
+        const titleProp = findProperty(properties, "title");
+        if (asyncDataProp) {
+          const val =
+            (asyncDataProp as any).value ??
+            ((asyncDataProp as any).params ? asyncDataProp : null);
+          if (val) {
+            if (val.type === "ObjectMethod") {
+              defineOptionsProps.push(
+                j.objectMethod(
+                  "method",
+                  j.identifier("asyncData"),
+                  val.params,
+                  val.body,
+                ),
+              );
+            } else {
+              defineOptionsProps.push(
+                j.objectProperty(j.identifier("asyncData"), j.clone(val)),
+              );
+            }
+          }
+        }
+        if (titleProp) {
+          const titleVal =
+            (titleProp as any).value ??
+            ((titleProp as any).params ? titleProp : null);
+          if (titleVal) {
+            if (titleVal.type === "ObjectMethod") {
+              defineOptionsProps.push(
+                j.objectMethod(
+                  "method",
+                  j.identifier("title"),
+                  titleVal.params,
+                  titleVal.body,
+                ),
+              );
+            } else {
+              defineOptionsProps.push(
+                j.objectProperty(
+                  j.identifier("title"),
+                  j.clone(titleVal),
+                ),
+              );
+            }
+          }
+        }
+        if (defineOptionsProps.length > 0) {
+          statements.unshift(
+            j.expressionStatement(
+              j.callExpression(j.identifier("defineOptions"), [
+                j.objectExpression(defineOptionsProps),
+              ]),
+            ),
+          );
+          hasChanges = true;
+        }
       }
     }
   });

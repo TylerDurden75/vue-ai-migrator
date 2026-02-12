@@ -6,7 +6,9 @@ import {
   computedValueRule,
   vueComputedExtraParenRule,
   malformedComputedRule,
-  computedSyntaxRule
+  computedSyntaxRule,
+  computedRefComparisonRule,
+  refComparisonInCallbackRule
 } from "../computed/computed-fixes";
 
 describe("computedValueRule", () => {
@@ -176,6 +178,27 @@ const user = computed<any>(() => {
       isVueFile: true
     });
     expect(result.fixed).toBe(false);
+  });
+
+  it("should fix });); to }); in store files (Pinia computed)", async () => {
+    const content = `import { defineStore } from "pinia";
+import { ref, computed } from "vue";
+
+export const useIndexStore = defineStore("index", () => {
+  const activeType = ref(null);
+  const activeIds = computed(() => {
+    if (!activeType.value) return [];
+    return [];
+  }););
+  return { activeIds };
+});`;
+    const result = await vueComputedExtraParenRule.apply("src/store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("  });");
+    expect(result.content).not.toContain("}););");
   });
 });
 
@@ -396,5 +419,40 @@ const filtered = computed(() => items.filter(x => x > 1));
 
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("items.value.filter");
+  });
+});
+
+describe("computedRefComparisonRule", () => {
+  it("fixes hasMore = computed(() => page < maxPage) for pagination", async () => {
+    const content = `<script setup>
+const page = computed(() => 1);
+const maxPage = computed(() => 5);
+const hasMore = computed(() => page < maxPage);
+</script>`;
+    const result = await computedRefComparisonRule.apply("ItemList.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("computed(() => page.value < maxPage.value)");
+  });
+});
+
+describe("refComparisonInCallbackRule", () => {
+  it("fixes if (page < 0 || page > maxPage) in .then() for pagination bounds", async () => {
+    const content = `<script setup>
+const page = computed(() => 1);
+const maxPage = computed(() => 5);
+indexStore.FETCH_LIST_DATA({ type }).then(() => {
+  if (page < 0 || page > maxPage) router.replace('/1');
+});
+</script>`;
+    const result = await refComparisonInCallbackRule.apply("ItemList.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("page.value < 0");
+    expect(result.content).toContain("page.value > maxPage.value");
   });
 });

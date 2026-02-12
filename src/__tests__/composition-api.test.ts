@@ -7,6 +7,36 @@ describe('Composition API Transformation', () => {
     runner = new CodemodRunner();
   });
 
+  describe('asyncData and title preservation via defineOptions', () => {
+    it('should preserve asyncData in defineOptions when transforming to script setup', async () => {
+      const vueCode = `
+<template>
+  <div>{{ user?.id }}</div>
+</template>
+
+<script>
+export default {
+  data() {
+    return { loading: false };
+  },
+  asyncData({ store, route }) {
+    return store.FETCH_USER({ id: route.params.id });
+  }
+}
+</script>
+`;
+      const result = await runner.transform('UserView.vue', vueCode, {
+        transformations: ['composition-api', 'script-setup'],
+      });
+
+      expect(result.modified).toBe(true);
+      expect(result.code).toContain('defineOptions');
+      expect(result.code).toContain('asyncData');
+      expect(result.code).toContain('store.FETCH_USER');
+      expect(result.code).not.toMatch(/<script>\s*\n\s*export\s+default/);
+    });
+  });
+
   describe('data() transformation', () => {
     it('should transform data() function to ref()', async () => {
       const code = `

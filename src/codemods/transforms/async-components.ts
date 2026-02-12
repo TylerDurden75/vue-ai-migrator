@@ -22,13 +22,18 @@ function getLoaderFromComponent(componentValue: any): any {
   return null;
 }
 
-/** Check if function uses Vue 2 (resolve, reject) async component pattern - must return Promise in Vue 3 */
+/** Check if function uses Vue 2 (resolve, reject) async component pattern - must return Promise in Vue 3.
+ * Only match when first param is 'resolve' - avoid false positives like (to, from) from route watchers.
+ */
 function isResolveRejectLoader(node: any): boolean {
   if (!node || (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression')) {
     return false;
   }
   const params = node.params || [];
-  return params.length === 2;
+  if (params.length !== 2) return false;
+  const first = params[0];
+  const firstName = first?.name ?? first?.left?.name;
+  return firstName === 'resolve';
 }
 
 function wrapResolveRejectInPromise(j: any, fn: any): any {

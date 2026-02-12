@@ -4,7 +4,7 @@
 
 import type { FixRule, FixContext, FixRuleResult } from "../../types";
 import { getCachedRegex } from "../../utils/regex-cache";
-import { getStoreMethodMap } from "../../utils/store-analysis-cache";
+import { getStoreMethodMap, getStoreConfigForModule } from "../../utils/store-analysis-cache";
 
 /** Detect store variable from const X = useYStore(). Prefer indexStore, store, mainStore. */
 export function getStoreVarFromScript(scriptContent: string): string | null {
@@ -23,7 +23,7 @@ export const storeScriptSetupRule: FixRule = {
   priority: 70,
   shouldApply: (filePath, content) => {
     return filePath.endsWith(".vue") &&
-           content.includes("<script setup") &&
+           (content.includes("<script setup") || content.includes("<scriptsetup")) &&
            content.includes("this.");
   },
   apply: async (filePath, content, _context: FixContext) => {
@@ -59,6 +59,117 @@ export const storeScriptSetupRule: FixRule = {
 };
 
 /**
+ * Fix: Add missing route, indexStore, loading declarations when used in script setup but not declared.
+ * Generic: handles migration artifacts where composables were inlined but declarations were lost.
+ */
+export const addMissingComposableDeclarationsRule: FixRule = {
+  id: "add-missing-composable-declarations",
+  description: "Add const route = useRoute(), indexStore = useIndexStore(), loading = ref() when used but not declared",
+  priority: 67,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script setup")) return false;
+    const script = content.match(/<script[^>]*setup[^>]*>([\s\S]*?)<\/script>/i)?.[1] ?? "";
+    const needsRoute = /\broute\.\w+|route\?\.\w+/.test(script) && !/const\s+route\s*=\s*useRoute\s*\(\)/.test(script);
+    const needsStore = /\b(indexStore|mainStore|store)\.\w+/.test(script) &&
+      !/const\s+(?:indexStore|mainStore|store)\s*=\s*use\w+Store\s*\(\)/.test(script);
+    const needsLoading = /\bloading\.value\b/.test(script) && !/const\s+loading\s*=\s*ref\s*\(/.test(script);
+    const needsItem = /\bitem\.value\b/.test(script) &&
+      !/const\s+item\s*=\s*computed\s*\(/.test(script) &&
+      /\b(?:indexStore|mainStore|store)\.\w+\[/.test(script);
+    return needsRoute || needsStore || needsLoading || needsItem;
+  },
+  apply: async (filePath, content, context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*setup[^>]*>)([\s\S]*?)(<\/script>)/i);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+
+    const declarations: string[] = [];
+    const insertAfterImports = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
+    const insertPos = insertAfterImports ? insertAfterImports[0].length : 0;
+
+    if (/\broute\.\w+|route\?\.\w+/.test(scriptContent) && !/const\s+route\s*=\s*useRoute\s*\(\)/.test(scriptContent)) {
+      if (!/import\s*\{[^}]*\buseRoute\b[^}]*\}\s*from\s*['"]vue-router['"]/.test(scriptContent)) {
+        const routerImport = scriptContent.match(/import\s*\{([^}]+)\}\s*from\s*['"]vue-router['"]/);
+        if (routerImport) {
+          const names = routerImport[1].trim();
+          scriptContent = scriptContent.replace(
+            /import\s*\{[^}]+\}\s*from\s*['"]vue-router['"]/,
+            `import { ${names}${names ? ", " : ""}useRoute } from "vue-router"`
+          );
+        } else {
+          const pos = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/)?.[0].length ?? 0;
+          scriptContent = scriptContent.slice(0, pos) + 'import { useRoute } from "vue-router";\n' + scriptContent.slice(pos);
+        }
+      }
+      declarations.push("const route = useRoute()");
+    }
+
+    const storeInfo = context.mainStoreInfo ?? { storeName: "useIndexStore", storeVar: "indexStore", importPath: "@/store/index", storeId: "index" };
+    const usedStoreMatch = scriptContent.match(/\b(indexStore|mainStore|store)\.\w+/);
+    const usedStoreVar = usedStoreMatch ? usedStoreMatch[1] : storeInfo.storeVar;
+    const hasStoreDecl = new RegExp(`const\\s+${usedStoreVar}\\s*=\\s*use\\w+Store\\s*\\(`).test(scriptContent);
+    if (usedStoreMatch && !hasStoreDecl) {
+      const importPattern = new RegExp(`import\\s*\\{[^}]*\\b${storeInfo.storeName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b[^}]*\\}\\s*from\\s*['"]${storeInfo.importPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}['"]`);
+      if (!importPattern.test(scriptContent)) {
+        const pos = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/)?.[0].length ?? 0;
+        scriptContent = scriptContent.slice(0, pos) + `import { ${storeInfo.storeName} } from "${storeInfo.importPath}";\n` + scriptContent.slice(pos);
+      }
+      declarations.push(`const ${usedStoreVar} = ${storeInfo.storeName}()`);
+    }
+
+    if (/\bloading\.value\b/.test(scriptContent) && !/const\s+loading\s*=\s*ref\s*\(/.test(scriptContent)) {
+      if (!/import\s*\{[^}]*\bref\b[^}]*\}\s*from\s*['"]vue['"]/.test(scriptContent)) {
+        const vueImport = scriptContent.match(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/);
+        if (vueImport) {
+          scriptContent = scriptContent.replace(
+            /import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/,
+            (_, names) => `import { ${names.trim()}, ref } from "vue"`
+          );
+        } else {
+          scriptContent = scriptContent.slice(0, insertPos) + 'import { ref } from "vue";\n' + scriptContent.slice(insertPos);
+        }
+      }
+      declarations.push("const loading = ref(false)");
+    }
+
+    if (/\bitem\.value\b/.test(scriptContent)) {
+      const storeItemsMatch = scriptContent.match(/\b(indexStore|mainStore|store)\.(\w+)\[/);
+      if (!/const\s+item\s*=\s*computed\s*\(/.test(scriptContent) && storeItemsMatch) {
+        const storeVar = storeItemsMatch[1];
+        const itemsProp = storeItemsMatch[2];
+        if (!/import\s*\{[^}]*\bcomputed\b[^}]*\}\s*from\s*['"]vue['"]/.test(scriptContent)) {
+          const vueImport = scriptContent.match(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/);
+          if (vueImport) {
+            scriptContent = scriptContent.replace(
+              /import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/,
+              (_, names) => `import { ${names.trim()}, computed } from "vue"`
+            );
+          }
+        }
+        const idSource = /route\.params|route\?\.\s*params/.test(scriptContent)
+          ? "route.params.id"
+          : /props\.id/.test(scriptContent)
+            ? "props.id"
+            : "route?.params?.id ?? props?.id";
+        declarations.push(`const item = computed(() => ${storeVar}.${itemsProp}[${idSource}])`);
+      }
+    }
+
+    if (declarations.length === 0) return result;
+
+    const declBlock = declarations.join(";\n") + ";\n\n";
+    const newInsertPos = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/)?.[0].length ?? insertPos;
+    scriptContent = scriptContent.slice(0, newInsertPos) + declBlock + scriptContent.slice(newInsertPos);
+
+    result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+    result.fixed = true;
+    result.fixes.push(`Added missing declarations: ${declarations.join(", ")}`);
+    return result;
+  }
+};
+
+/**
  * Fix: Replace this.$router and this.$route with useRouter() / useRoute() in <script setup>
  * Adds vue-router import and const router = useRouter() / const route = useRoute() when needed.
  */
@@ -69,7 +180,7 @@ export const replaceThisRouterRouteRule: FixRule = {
   shouldApply: (filePath, content) => {
     return (
       filePath.endsWith(".vue") &&
-      content.includes("<script setup") &&
+      (content.includes("<script setup") || content.includes("<scriptsetup")) &&
       (content.includes("this.$router") || content.includes("this.$route"))
     );
   },
@@ -516,18 +627,14 @@ export const routerPushTypeCheckRule: FixRule = {
   }
 };
 
-function moduleToStore(module: string): { storeVar: string; storeName: string; importPath: string } {
-  if (module === "index") {
-    return { storeVar: "indexStore", storeName: "useIndexStore", importPath: "@/store/index" };
-  }
-  const storeVar = `${module}Store`;
-  const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
-  const importPath = `@/store/modules/${module}`;
-  return { storeVar, storeName, importPath };
-}
-
 /** Derive useXxxStore and import path from storeVar (userStore → useUserStore, @/store/modules/user). Generic. */
-function storeVarToUseStore(storeVar: string): { storeName: string; importPath: string } {
+function storeVarToUseStore(
+  storeVar: string,
+  mainStoreInfo?: { storeName: string; importPath: string } | null
+): { storeName: string; importPath: string } {
+  if ((storeVar === "indexStore" || storeVar === "store") && mainStoreInfo) {
+    return { storeName: mainStoreInfo.storeName, importPath: mainStoreInfo.importPath };
+  }
   if (storeVar === "indexStore") {
     return { storeName: "useIndexStore", importPath: "@/store/index" };
   }
@@ -634,7 +741,7 @@ export const storeDispatchModuleActionRule: FixRule = {
       /\.dispatch\s*\(\s*['"][^'"]+\/[^'"]+['"]/.test(content)
     );
   },
-  apply: async (filePath, content, _context: FixContext) => {
+  apply: async (filePath, content, context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
     if (!scriptMatch) return result;
@@ -643,7 +750,7 @@ export const storeDispatchModuleActionRule: FixRule = {
     const storesToAdd = new Map<string, { storeVar: string; storeName: string; importPath: string }>();
 
     const ensureStore = (module: string) => {
-      const { storeVar, storeName, importPath } = moduleToStore(module);
+      const { storeVar, storeName, importPath } = getStoreConfigForModule(module, context.mainStoreInfo);
       if (!storesToAdd.has(storeVar)) storesToAdd.set(storeVar, { storeVar, storeName, importPath });
     };
 
@@ -656,7 +763,7 @@ export const storeDispatchModuleActionRule: FixRule = {
       const action = m[3];
       const args = m[4]?.trim() ?? "";
       ensureStore(module);
-      const { storeVar } = moduleToStore(module);
+      const { storeVar } = getStoreConfigForModule(module, context.mainStoreInfo);
       const replacement = args ? `${storeVar}.${action}(${args})` : `${storeVar}.${action}()`;
       replacements.push({ start: m.index, end: m.index + m[0].length, replacement });
     }
@@ -708,7 +815,7 @@ export const fixMalformedStoreDispatchRule: FixRule = {
       /\w+Store\.\w+\s*\/\s*\w+\s*\(/.test(content)
     );
   },
-  apply: async (filePath, content, _context: FixContext) => {
+  apply: async (filePath, content, context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
     if (!scriptMatch) return result;
@@ -717,7 +824,7 @@ export const fixMalformedStoreDispatchRule: FixRule = {
     const storesToAdd = new Map<string, { storeVar: string; storeName: string; importPath: string }>();
 
     const ensureStore = (module: string) => {
-      const { storeVar, storeName, importPath } = moduleToStore(module);
+      const { storeVar, storeName, importPath } = getStoreConfigForModule(module, context.mainStoreInfo);
       if (!storesToAdd.has(storeVar)) storesToAdd.set(storeVar, { storeVar, storeName, importPath });
     };
 
@@ -730,7 +837,7 @@ export const fixMalformedStoreDispatchRule: FixRule = {
       const action = m[3];
       const args = m[4].trim();
       ensureStore(module);
-      const { storeVar } = moduleToStore(module);
+      const { storeVar } = getStoreConfigForModule(module, context.mainStoreInfo);
       const replacement = args ? `${storeVar}.${action}(${args})` : `${storeVar}.${action}()`;
       fixed = fixed.replace(m[0], replacement);
     }
@@ -1070,12 +1177,15 @@ export const storeRefsFromIndexStoreRule: FixRule = {
       }
     }
     for (const prop of STORE_PAGINATION_PROPS) {
-      const pattern = new RegExp(`(^|[^.\\w])${prop}\\b`, "g");
       const prefixPattern = new RegExp(`${storeVar}\\.${prop}`);
-      if (pattern.test(scriptContent) && !prefixPattern.test(scriptContent)) {
-        scriptContent = scriptContent.replace(new RegExp(`(^|[^.\\w])${prop}\\b`, "g"), `$1${storeVar}.${prop}`);
-        fixedProps.push(prop);
-      }
+      if (prefixPattern.test(scriptContent)) continue;
+      const pattern = new RegExp(`(^|[^.\\w])${prop}\\b`, "g");
+      scriptContent = scriptContent.replace(pattern, (match, before, offset, fullString) => {
+        const beforeStr = fullString.slice(0, offset);
+        if (/\b(?:const|let|var)\s+$/.test(beforeStr)) return match;
+        return `${before}${storeVar}.${prop}`;
+      });
+      if (new RegExp(`${storeVar}\\.${prop}`).test(scriptContent)) fixedProps.push(prop);
     }
     if (fixedProps.length > 0) {
       result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
@@ -1163,6 +1273,9 @@ export const thisBarToGetCurrentInstanceRule: FixRule = {
         decls.push(decl);
       }
       scriptContent = scriptContent.replace(new RegExp(`this\\.\\$${prop}\\b`, "g"), varName);
+      // Optional chaining: varName.start(...)/finish(...) → varName?.start?.(...)/finish?.(...) (globalProperties can be undefined before mount)
+      const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      scriptContent = scriptContent.replace(new RegExp(`\\b${esc(varName)}\\.(start|finish)\\s*\\(`, "g"), `${varName}?.$1?.(`);
     }
     if (decls.length > 0) {
       scriptContent = scriptContent.slice(0, afterImports) + "\n" + decls.join("\n") + "\n" + scriptContent.slice(afterImports);
@@ -1267,6 +1380,120 @@ export const indexStoreDuplicateRule: FixRule = {
   },
 };
 
+const STORE_VAR_PREFERENCE = ["indexStore", "mainStore", "store"];
+
+/**
+ * Fix: Remove duplicate store declaration when both store and indexStore (or similar) exist.
+ * Keeps the preferred name (indexStore > mainStore > store) and removes the other.
+ * Replaces all usages of the removed variable with the kept one.
+ */
+export const storeIndexStoreRedundantRule: FixRule = {
+  id: "store-index-store-redundant",
+  description: "Remove duplicate store useXStore() when indexStore and store both exist; unify to indexStore",
+  priority: 65,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    const storeDecls = [...script.matchAll(/const\s+(\w+)\s*=\s*use(\w+Store)\s*\(\s*\)/g)];
+    if (storeDecls.length < 2) return false;
+    const byStore = new Map<string, string[]>();
+    for (const [, varName, storeName] of storeDecls) {
+      const key = `use${storeName}`;
+      if (!byStore.has(key)) byStore.set(key, []);
+      byStore.get(key)!.push(varName);
+    }
+    for (const vars of byStore.values()) {
+      if (vars.length >= 2) {
+        const preferred = vars.find(v => STORE_VAR_PREFERENCE.includes(v)) ?? vars[0];
+        const redundant = vars.filter(v => v !== preferred);
+        if (redundant.length > 0) return true;
+      }
+    }
+    return false;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let script = scriptMatch[2];
+    const storeDecls = [...script.matchAll(/const\s+(\w+)\s*=\s*use(\w+Store)\s*\(\s*\)/g)];
+    const byStore = new Map<string, string[]>();
+    for (const [, varName, storeName] of storeDecls) {
+      const key = `use${storeName}`;
+      if (!byStore.has(key)) byStore.set(key, []);
+      byStore.get(key)!.push(varName);
+    }
+    for (const [storeKey, vars] of byStore) {
+      if (vars.length < 2) continue;
+      const preferred = STORE_VAR_PREFERENCE.find(p => vars.includes(p)) ?? vars[0];
+      const redundant = vars.filter(v => v !== preferred);
+      for (const dup of redundant) {
+        // store.XXX → preferred.XXX (property access)
+        script = script.replace(new RegExp(`\\b${dup}\\.`, "g"), `${preferred}.`);
+        // standalone dup (e.g. doFetchComments(store, item)) - but NOT in import paths or destructuring params
+        script = script.replace(
+          new RegExp(`\\b${dup}\\b(?!\\s*=)`, "g"),
+          (match, offset) => {
+            // Skip if inside a string (import path)
+            const before = script.slice(0, offset);
+            const openDouble = (before.match(/"/g) || []).length;
+            const openSingle = (before.match(/'/g) || []).length;
+            if (openDouble % 2 === 1 || openSingle % 2 === 1) return match;
+            // Skip destructuring param: { store } or , store,
+            const beforeTrim = script.slice(Math.max(0, offset - 50), offset);
+            if (/\{\s*$|,\s*$/.test(beforeTrim)) return match;
+            return preferred;
+          }
+        );
+        const storeFunc = storeKey;
+        script = script.replace(new RegExp(`const\\s+${dup}\\s*=\\s*${storeFunc}\\(\\s*\\)\\s*;?\\s*\\n?`, "g"), "");
+      }
+    }
+    script = script.replace(/\n{3,}/g, "\n\n");
+    if (script !== scriptMatch[2]) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[1] + script + scriptMatch[3]);
+      result.fixed = true;
+      result.fixes.push("Removed redundant store declaration; unified to preferred name");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: storeVar.commit('MUTATION', args) → storeVar.MUTATION(args) in script setup (Pinia: no commit).
+ * Generic: applies when store from useXStore() uses .commit (Vuex pattern).
+ */
+export const storeCommitToDirectInVueRule: FixRule = {
+  id: "store-commit-to-direct-in-vue",
+  description: "Replace storeVar.commit('X', args) with storeVar.X(args) in script setup (Pinia)",
+  priority: 66,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      (content.includes("<script setup") || content.includes("<scriptsetup")) &&
+      /\b\w+Store\.commit\s*\(/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+    const before = scriptContent;
+    scriptContent = scriptContent.replace(
+      /(\w+Store)\.commit\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*([^)]*))?\s*\)/g,
+      (_, storeVar, mutation, args) =>
+        args !== undefined ? `${storeVar}.${mutation}(${args})` : `${storeVar}.${mutation}()`
+    );
+    if (scriptContent !== before) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+      result.fixed = true;
+      result.fixes.push("Replaced store.commit with direct mutation call (Pinia)");
+    }
+    return result;
+  },
+};
+
 /**
  * Fix: this.$store.commit("X", args) → indexStore.X(args) when indexStore exists.
  */
@@ -1299,7 +1526,7 @@ export const thisStoreCommitToStoreRule: FixRule = {
 
 /**
  * Fix: this.$store → storeVar in script setup. Generic: detects store from const X = useYStore().
- * In Composition API, this doesn't exist - use the store variable from useXStore().
+ * When no store exists, adds useIndexStore() and import. In Composition API, this doesn't exist.
  */
 export const thisStoreToIndexStoreRule: FixRule = {
   id: "this-store-to-index-store",
@@ -1312,15 +1539,40 @@ export const thisStoreToIndexStoreRule: FixRule = {
       content.includes("this.$store")
     );
   },
-  apply: async (filePath, content, _context: FixContext) => {
+  apply: async (filePath, content, context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
     if (!scriptMatch || !/this\.\$store/.test(scriptMatch[2])) return result;
-    const scriptContent = scriptMatch[2];
-    const storeVar = getStoreVarFromScript(scriptContent);
-    if (!storeVar) return result;
+    const scriptContent0 = scriptMatch[2];
+    let scriptContent = scriptContent0;
+    let storeVar = getStoreVarFromScript(scriptContent);
+    if (!storeVar && /this\.\$store\.(state|getters|dispatch)\b/.test(scriptContent0)) {
+      return result;
+    }
+    const storeInfo = context.mainStoreInfo ?? { storeName: "useIndexStore", storeVar: "indexStore", importPath: "@/store/index" };
+    if (!storeVar) {
+      storeVar = storeInfo.storeVar;
+      const hasStoreImport = new RegExp(`${storeInfo.storeName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|use\\w+Store\\s*\\(`).test(scriptContent);
+      if (!hasStoreImport) {
+        const vueImportMatch = scriptContent.match(/import\s+\{([^}]+)\}\s+from\s+['"]vue['"]/);
+        if (vueImportMatch) {
+          scriptContent = scriptContent.replace(
+            /import\s+\{[^}]*\}\s+from\s+['"]vue['"]/,
+            (m) => m + `\nimport { ${storeInfo.storeName} } from '${storeInfo.importPath}';`
+          );
+        } else {
+          scriptContent = `import { ${storeInfo.storeName} } from '${storeInfo.importPath}';\n` + scriptContent;
+        }
+        const firstConst = scriptContent.search(/\n\s*const\s+\w+\s*=/);
+        const insertIdx = firstConst >= 0 ? firstConst + 1 : scriptContent.search(/\n\n|\n(?!\s*import)/) + 1;
+        const decl = `const ${storeVar} = ${storeInfo.storeName}();\n`;
+        scriptContent = insertIdx > 0
+          ? scriptContent.slice(0, insertIdx) + decl + scriptContent.slice(insertIdx)
+          : decl + scriptContent;
+      }
+    }
     const newScript = scriptContent.replace(/this\.\$store/g, storeVar);
-    if (newScript !== scriptContent) {
+    if (newScript !== scriptMatch[2]) {
       result.content = content.replace(scriptMatch[0], scriptMatch[1] + newScript + scriptMatch[3]);
       result.fixed = true;
       result.fixes.push(`Replaced this.$store with ${storeVar}`);
@@ -1346,6 +1598,79 @@ export const thisRootIsMountedRule: FixRule = {
       result.content = fixed;
       result.fixed = true;
       result.fixes.push("Replaced this.$root._isMounted with !import.meta.env.SSR");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: nextTick from getCurrentInstance/globalProperties → import from 'vue'
+ * When component is mounted in separate app (e.g. ProgressBar), globalProperties may not have $nextTick.
+ */
+export const nextTickFromGlobalPropertiesRule: FixRule = {
+  id: "next-tick-from-global-properties",
+  description: "Replace getCurrentInstance globalProperties.$nextTick with import nextTick from vue",
+  priority: 65,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      /getCurrentInstance\s*\([^)]*\)\s*\?\.\s*appContext\.config\.globalProperties\.\$nextTick/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    if (!scriptMatch) return result;
+    let scriptContent = scriptMatch[2];
+    const pattern = /const\s+nextTick\s*=\s*getCurrentInstance\s*\([^)]*\)\s*\?\.\s*appContext\.config\.globalProperties\.\$nextTick\s*;?\s*\n?/;
+    if (!pattern.test(scriptContent)) return result;
+    scriptContent = scriptContent.replace(pattern, "");
+    const hasNextTickImport = /import\s+.*nextTick.*from\s+['"]vue['"]/.test(scriptContent);
+    if (!hasNextTickImport) {
+      const vueImport = scriptContent.match(/import\s+\{([^}]+)\}\s+from\s+['"]vue['"]/);
+      if (vueImport) {
+        const imports = vueImport[1].split(",").map((s) => s.trim()).filter(Boolean);
+        if (!imports.includes("nextTick")) imports.push("nextTick");
+        scriptContent = scriptContent.replace(
+          /import\s+\{[^}]*\}\s+from\s+['"]vue['"]/,
+          `import { ${imports.join(", ")} } from 'vue'`
+        );
+      } else {
+        const firstImport = scriptContent.match(/^(\s*import\s+[^;]+;\s*\n)/m);
+        scriptContent = firstImport
+          ? scriptContent.replace(firstImport[0], firstImport[0] + "import { nextTick } from 'vue';\n")
+          : "import { nextTick } from 'vue';\n" + scriptContent;
+      }
+    }
+    result.content = content.replace(scriptMatch[0], scriptMatch[1] + scriptContent + scriptMatch[3]);
+    result.fixed = true;
+    result.fixes.push("Replaced getCurrentInstance $nextTick with import nextTick from vue");
+    return result;
+  },
+};
+
+/**
+ * Fix: root._isMounted → typeof window !== 'undefined' when root = $root (Vue 3: no $root).
+ */
+export const rootIsMountedRule: FixRule = {
+  id: "root-is-mounted",
+  description: "Replace root._isMounted with typeof window !== 'undefined' (Vue 3 client check)",
+  priority: 65,
+  shouldApply: (filePath, content) => {
+    return (
+      filePath.endsWith(".vue") &&
+      (content.includes("root._isMounted") || content.includes("root?._isMounted"))
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fixed = content
+      .replace(/root\._isMounted/g, "typeof window !== 'undefined'")
+      .replace(/root\?\._isMounted/g, "typeof window !== 'undefined'");
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Replaced root._isMounted with typeof window !== 'undefined'");
     }
     return result;
   },

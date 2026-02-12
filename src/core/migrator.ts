@@ -1046,7 +1046,30 @@ export async function migrate(
           ignore: ignorePatterns,
           absolute: true,
         });
-        const vueFilesToFix = [...vueOnly, ...storeFiles, ...mainFiles, ...routerFiles, ...appFiles, ...utilFiles, ...utilsFiles];
+        const entryPatterns = [
+          "**/entry*.{ts,js}",
+          "**/*.client.{ts,js}",
+          "**/*.server.{ts,js}",
+          "**/client.{ts,js}",
+          "**/server.{ts,js}",
+        ];
+        const entryFiles = [
+          ...new Set(
+            (await Promise.all(
+              entryPatterns.map((p) => glob(p, { cwd: projectPath, ignore: ignorePatterns, absolute: true }))
+            )).flat()
+          ),
+        ];
+        const vueFilesToFix = [
+          ...vueOnly,
+          ...storeFiles,
+          ...mainFiles,
+          ...routerFiles,
+          ...appFiles,
+          ...utilFiles,
+          ...utilsFiles,
+          ...entryFiles,
+        ];
 
         const { fixPostMigrationIssues: fixPostMigrationIssuesBatch } =
           await import("../utils/migration/post-migration-fixer");

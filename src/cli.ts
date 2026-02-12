@@ -311,7 +311,28 @@ program
             ignore: defaultIgnore,
             absolute: true,
           });
-          const filesToFix = [...new Set([...vueFiles, ...storeFiles, ...mainFiles])];
+          const entryPatterns = [
+            "**/entry*.{ts,js}",
+            "**/*.client.{ts,js}",
+            "**/*.server.{ts,js}",
+            "**/client.{ts,js}",
+            "**/server.{ts,js}",
+          ];
+          const entryFiles = [
+            ...new Set(
+              (await Promise.all(
+                entryPatterns.map((p) => glob(p, { cwd: projectPath, ignore: defaultIgnore, absolute: true }))
+              )).flat()
+            ),
+          ];
+          const filesToFix = [
+            ...new Set([
+              ...vueFiles,
+              ...storeFiles,
+              ...mainFiles,
+              ...entryFiles,
+            ]),
+          ];
           let fixCount = 0;
           for (const filePath of filesToFix) {
             try {
@@ -499,11 +520,26 @@ program
         ignore: ignorePatterns,
         absolute: true,
       });
+      const entryPatterns = [
+        "**/entry*.{ts,js}",
+        "**/*.client.{ts,js}",
+        "**/*.server.{ts,js}",
+        "**/client.{ts,js}",
+        "**/server.{ts,js}",
+      ];
+      const entryFiles = [
+        ...new Set(
+          (await Promise.all(
+            entryPatterns.map((p) => glob(p, { cwd: projectPath, ignore: ignorePatterns, absolute: true }))
+          )).flat()
+        ),
+      ];
       const filesToFix = [
         ...new Set([
           ...vueFiles.filter((f) => f.endsWith(".vue")),
           ...storeFiles,
           ...mainFiles,
+          ...entryFiles,
         ]),
       ];
 

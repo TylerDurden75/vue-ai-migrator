@@ -29,6 +29,37 @@ export interface VueFileParts {
 }
 
 /**
+ * Extract root template block (handles nested <template> from v-if, v-slot, etc.)
+ */
+function extractRootTemplateBlock(content: string): { inner: string; attrs: string; lang?: string } | null {
+  const openMatch = content.match(/<template(\s[^>]*|)>/i);
+  if (!openMatch) return null;
+  const startIdx = openMatch.index! + openMatch[0].length;
+  let depth = 1;
+  let i = startIdx;
+  const len = content.length;
+  while (i < len && depth > 0) {
+    const open = content.toLowerCase().indexOf("<template", i);
+    const close = content.toLowerCase().indexOf("</template>", i);
+    if (close === -1) return null;
+    if (open !== -1 && open < close) {
+      depth++;
+      i = open + 9;
+    } else {
+      depth--;
+      if (depth === 0) {
+        const inner = content.slice(startIdx, close);
+        const attrs = (openMatch[1] || "").trim();
+        const langMatch = attrs.match(/lang=["']([^"']+)["']/);
+        return { inner: inner.trim(), attrs, lang: langMatch?.[1] || "html" };
+      }
+      i = close + 11;
+    }
+  }
+  return null;
+}
+
+/**
  * Parse a Vue SFC file into its component parts
  */
 export function parseVueFile(content: string): VueFileParts {
@@ -37,14 +68,11 @@ export function parseVueFile(content: string): VueFileParts {
     customBlocks: [],
   };
 
-  // Match template block
-  const templateMatch = content.match(
-    /<template(?:\s+lang=["']([^"']+)["'])?[^>]*>([\s\S]*?)<\/template>/i
-  );
-  if (templateMatch) {
+  const templateBlock = extractRootTemplateBlock(content);
+  if (templateBlock) {
     parts.template = {
-      content: templateMatch[2].trim(),
-      lang: templateMatch[1] || 'html',
+      content: templateBlock.inner,
+      lang: templateBlock.lang,
     };
   }
 

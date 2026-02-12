@@ -34,6 +34,13 @@ export interface FixRule {
   ) => Promise<FixRuleResult>;
 }
 
+export interface MainStoreInfo {
+  storeName: string;
+  storeVar: string;
+  importPath: string;
+  storeId: string;
+}
+
 export interface FixContext {
   enableTypeScript: boolean;
   projectRoot?: string;
@@ -44,6 +51,8 @@ export interface FixContext {
     scriptContent?: string;
     templateContent?: string;
   };
+  /** Main store from project (useXStore, xStore, @/store/index) - detected dynamically */
+  mainStoreInfo?: MainStoreInfo;
   /** Rule IDs to disable (from vue-migrator.config.js fixerRulesDisable) */
   fixerRulesDisable?: string[];
   /** If set, only run these rule IDs (from vue-migrator.config.js fixerRulesEnable) */

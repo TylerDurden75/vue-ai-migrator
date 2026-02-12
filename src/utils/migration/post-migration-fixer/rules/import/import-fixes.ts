@@ -161,6 +161,32 @@ export const dataImportConflictRule: FixRule = {
 };
 
 /**
+ * Fix: Concatenated imports without separator - } from 'path'import { → } from 'path';\nimport {
+ * Generic: handles migration artifacts where two import lines were merged (no ; or newline).
+ */
+export const fixConcatenatedImportsRule: FixRule = {
+  id: "fix-concatenated-imports",
+  description: "Split concatenated import statements (} from path'import {)",
+  priority: 93,
+  shouldApply: (_filePath, content) => {
+    return /\}\s*from\s+['"][^'"]+['"]\s*import\s+/.test(content);
+  },
+  apply: async (_filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fixed = content.replace(
+      /\}\s*from\s+(['"][^'"]+['"])\s*import\s+/g,
+      "} from $1;\nimport "
+    );
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Split concatenated imports (added missing separator)");
+    }
+    return result;
+  }
+};
+
+/**
  * Fix: Split imports on the same line (';import or ";import → newline + import).
  */
 export const splitImportsOnSameLineRule: FixRule = {
@@ -285,6 +311,34 @@ export const removeVueCompilerMacrosRule: FixRule = {
 };
 
 /**
+ * Fix: Add missing closing quote/semicolon on import (e.g. import X from "../Y.vue → import X from "../Y.vue";)
+ * Generic: import ... from "path or 'path without closing.
+ */
+export const importMissingQuoteRule: FixRule = {
+  id: "import-missing-quote",
+  description: "Fix import with missing closing quote and semicolon",
+  priority: 92,
+  shouldApply: (_filePath, content) => {
+    return /import\s+[\s\S]+?\s+from\s+["'][^"']*\.(?:vue|js|ts)\s*\n/.test(content);
+  },
+  apply: async (_filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fixed = content.replace(
+      /(import\s+[\s\S]+?\s+from\s+)(["'])([^"']*\.(?:vue|js|ts))\s*(\n)/g,
+      (match, before, quote, path, nl) => {
+        result.fixes.push("Added missing quote/semicolon to import");
+        return before + quote + path + quote + ";" + nl;
+      }
+    );
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+    }
+    return result;
+  },
+};
+
+/**
  * Fix: Merge duplicate imports
  */
 export const mergeDuplicateImportsRule: FixRule = {
@@ -402,17 +456,20 @@ export const duplicateSameIdentifierImportsRule: FixRule = {
     if (!filePath.endsWith(".vue") && !filePath.endsWith(".ts") && !filePath.endsWith(".js")) return false;
     const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? (filePath.endsWith(".vue") ? "" : content);
     const importRegex = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]\s*;?\s*\n?/g;
-    const byName = new Map<string, Array<{ path: string; full: string }>>();
+    const byLocalName = new Map<string, Array<{ path: string }>>();
     let m;
     while ((m = importRegex.exec(script)) !== null) {
-      const paths = m[2];
-      const names = m[1].split(",").map((n: string) => n.trim().split(/\s+as\s+/)[0]).filter(Boolean);
-      names.forEach((name: string) => {
-        if (!byName.has(name)) byName.set(name, []);
-        byName.get(name)!.push({ path: paths, full: m![0] });
+      const path = m[2];
+      const names = m[1].split(",").map((n: string) => {
+        const t = n.trim().split(/\s+as\s+/);
+        return (t[1]?.trim() ?? t[0].trim());
+      }).filter(Boolean);
+      names.forEach((local: string) => {
+        if (!byLocalName.has(local)) byLocalName.set(local, []);
+        byLocalName.get(local)!.push({ path });
       });
     }
-    const hasDuplicateImports = Array.from(byName.values()).some(
+    const hasDuplicateImports = Array.from(byLocalName.values()).some(
       entries => new Set(entries.map(e => e.path)).size > 1
     );
     const duplicateConst = /const\s+(\w+)\s*=\s*[^;]+;\s*\n\s*const\s+\1\s*=\s*[^;]+;/;
@@ -425,28 +482,31 @@ export const duplicateSameIdentifierImportsRule: FixRule = {
     if (!scriptContent) return result;
 
     const importRegex = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]\s*;?\s*\n?/g;
-    const byName = new Map<string, Array<{ path: string; full: string; namesInLine: string[] }>>();
+    const byLocalName = new Map<string, Array<{ path: string; full: string }>>();
     let m;
-    const allImports: Array<{ full: string; path: string; names: string[] }> = [];
     while ((m = importRegex.exec(scriptContent)) !== null) {
       const path = m[2];
-      const names = m[1].split(",").map((n: string) => n.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
-      allImports.push({ full: m[0], path, names });
-      names.forEach((name: string) => {
-        if (!byName.has(name)) byName.set(name, []);
-        byName.get(name)!.push({ path, full: m![0], namesInLine: names });
+      const specs = m[1].split(",").map((n: string) => {
+        const t = n.trim().split(/\s+as\s+/);
+        const source = t[0].trim();
+        const local = (t[1]?.trim() ?? source);
+        return { source, local };
+      }).filter((x: { source: string }) => x.source);
+      specs.forEach(({ local }: { source: string; local: string }) => {
+        if (!byLocalName.has(local)) byLocalName.set(local, []);
+        byLocalName.get(local)!.push({ path, full: m![0] });
       });
     }
 
     const toRemove = new Set<string>();
-    byName.forEach((entries, name) => {
+    byLocalName.forEach((entries, _localName) => {
       const paths = entries.map(e => e.path);
       const uniquePaths = [...new Set(paths)];
       if (uniquePaths.length <= 1) return;
       const preferred = uniquePaths.find(p => /@\/store\/index['"]?$/.test(p) || (p.includes("/store/") && !p.includes("/store/modules/")));
       const keepPath = preferred ?? uniquePaths[0];
-      entries.forEach(({ path, full, namesInLine }) => {
-        if (path !== keepPath && namesInLine.length === 1 && namesInLine[0] === name) toRemove.add(full);
+      entries.forEach(({ path, full }) => {
+        if (path !== keepPath) toRemove.add(full);
       });
     });
 
@@ -984,6 +1044,43 @@ export const vueGlobalApiTreeshakeRule: FixRule = {
     }
     return result;
   }
+};
+
+/**
+ * Fix: Malformed defineAsyncComponent - when used with (to, from) style params (route watcher) instead of (resolve, reject).
+ * Converts defineAsyncComponent(() => new Promise((x = a, y = b) => {...})) to (x, y) => {...}
+ */
+export const fixMalformedDefineAsyncComponentRule: FixRule = {
+  id: "fix-malformed-define-async-component",
+  description: "Fix defineAsyncComponent used for data loading (wrong pattern) to plain function",
+  priority: 85,
+  shouldApply: (filePath, content) => {
+    return (
+      (filePath.endsWith(".vue") || filePath.endsWith(".js") || filePath.endsWith(".ts")) &&
+      content.includes("defineAsyncComponent") &&
+      /defineAsyncComponent\s*\(\s*\(\)\s*=>\s*new\s+Promise\s*\(\s*\(\s*\w+\s*=/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const match = content.match(
+      /(\w+)\s*=\s*defineAsyncComponent\s*\(\s*\(\)\s*=>\s*new\s+Promise\s*\(\s*\((\w+)\s*=\s*[^,]+,(\w+)\s*=\s*[^)]+\)\s*=>\s*\{/
+    );
+    if (!match) return result;
+    const [, varName, param1, param2] = match;
+    const openPattern = new RegExp(
+      `${varName}\\s*=\\s*defineAsyncComponent\\s*\\(\\s*\\(\\)\\s*=>\\s*new\\s+Promise\\s*\\(\\s*\\(\\s*${param1}\\s*=[^,]+,${param2}\\s*=[^)]+\\)\\s*=>\\s*\\{`,
+      "g"
+    );
+    let fixed = content.replace(openPattern, `${varName} = (${param1}, ${param2}) => {`);
+    fixed = fixed.replace(/\}\s*\)\s*;\s*\n?\s*\}\s*\)\s*;\s*$/m, "}");
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Fixed malformed defineAsyncComponent (data loader mistaken for async component)");
+    }
+    return result;
+  },
 };
 
 /**

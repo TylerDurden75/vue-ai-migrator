@@ -6,9 +6,23 @@
 import type { FixRule } from "../types";
 
 // Core & SFC
-import { scriptSetupTagSpaceRule, removeExportDefaultRule, scriptSetupThisEmitRule, scriptSetupFormattingRule } from "../rules/vue-script/vue-script-setup";
-import { vModelEmitRule, vModelPropsRule, vModelRemoveModelOptionRule } from "../rules/vue-script/v-model-fixes";
-import { scriptStyleInsideTemplateRule, functionalOptionRemovalRule } from "../rules/vue-script/vue-structure-fixes";
+import {
+  scriptSetupTagSpaceRule,
+  removeExportDefaultRule,
+  scriptSetupThisEmitRule,
+  scriptSetupFormattingRule,
+  scriptSetupOrganizationRule,
+} from "../rules/vue-script/vue-script-setup";
+import {
+  vModelEmitRule,
+  vModelPropsRule,
+  vModelRemoveModelOptionRule,
+} from "../rules/vue-script/v-model-fixes";
+import {
+  scriptStyleInsideTemplateRule,
+  orphanContentAfterStyleRule,
+  functionalOptionRemovalRule,
+} from "../rules/vue-script/vue-structure-fixes";
 
 // Router
 import {
@@ -28,6 +42,12 @@ import {
   routerVueUseRemovalRule,
   ssrContextToInjectRule,
   routerSSRHistoryRule,
+  mergeAsyncDataIntoDefineOptionsRule,
+  defineOptionsTitleSetupRefRule,
+  defineOptionsAsyncDataStoreRefRule,
+  entryServerResolveAsyncComponentsRule,
+  entryServerRouterCurrentRouteRule,
+  entryClientMountRule,
   asyncDataStoreDispatchRule,
   storeDispatchToDirectRule,
   barIndexStoreFixRule,
@@ -36,9 +56,17 @@ import {
   onBeforeUnmountOptionalChainingRule,
   watchListPropsGuardRule,
   listsPropsGuardRule,
+  loadItemsRefValueRule,
+  onBeforeMountFetchRouteDataRule,
+  propsTypeFallbackForRouterLinkRule,
   storeRouteSyncRule,
   storeSelfDispatchRule,
   storeActiveIdsRouteRule,
+  entryServerPiniaSerializeRule,
+  entryClientPiniaHydrateRule,
+  entryClientSyntaxRepairRule,
+  appInitialStateRule,
+  piniaHydrationOrderRule,
 } from "../rules/ssr/ssr-fixes";
 
 // Store
@@ -53,6 +81,7 @@ import {
   storeCommitToDirectRule,
   storeGettersToRefRule,
   storeSetItemsParamShadowRule,
+  storeListBeforeItemsFlashRule,
   storeComputedRefMissingValueRule,
   storeComputedResultRule,
   storeAddLoadingRule,
@@ -68,6 +97,7 @@ import {
   storeDispatchModuleActionRule,
   fixMalformedStoreDispatchRule,
   storeScriptSetupRule,
+  addMissingComposableDeclarationsRule,
   replaceThisRouterRouteRule,
   missingUseRouteImportRule,
   missingUseRouterImportRule,
@@ -82,8 +112,12 @@ import {
   thisBarToGetCurrentInstanceRule,
   removeDuplicateStoreGetCurrentInstanceRule,
   indexStoreDuplicateRule,
+  storeIndexStoreRedundantRule,
+  storeCommitToDirectInVueRule,
   thisStoreCommitToStoreRule,
   thisStoreToIndexStoreRule,
+  nextTickFromGlobalPropertiesRule,
+  rootIsMountedRule,
   thisRootIsMountedRule,
   thisNextTickRule,
   returnThisInScriptSetupRule,
@@ -91,6 +125,7 @@ import {
 
 // Imports
 import {
+  fixConcatenatedImportsRule,
   missingVueImportsRule,
   splitImportsOnSameLineRule,
   removeVuexImportsRule,
@@ -101,15 +136,25 @@ import {
   addMissingStoreImportsRule,
   vueSetRule,
   vueGlobalApiTreeshakeRule,
+  fixMalformedDefineAsyncComponentRule,
   asyncComponentOptionsRule,
   dataImportConflictRule,
 } from "../rules/import/import-fixes";
 
 // Computed
-import { computedValueRule, vueComputedExtraParenRule, malformedComputedRule, computedSyntaxRule } from "../rules/computed/computed-fixes";
+import {
+  computedValueRule,
+  vueComputedExtraParenRule,
+  malformedComputedRule,
+  computedSyntaxRule,
+  computedRefComparisonRule,
+  refComparisonInCallbackRule,
+} from "../rules/computed/computed-fixes";
 
 // Template
 import {
+  transitionGroupVue3Rule,
+  vue2FilterPipeToFunctionRule,
   routerViewTransitionRule,
   transitionAsRootRule,
   functionalComponentRule,
@@ -118,6 +163,7 @@ import {
   vForVIfPrecedenceRule,
   keyAttributesRule,
   componentVariableShadowingRule,
+  componentTagPascalCaseRule,
   webpackPublicAliasRule,
   templateAdjacentMustacheSpacingRule,
   templateInterpolationParensRule,
@@ -128,6 +174,7 @@ import {
   hostWrongArgRule,
   templateFilterFunctionImportsRule,
   missingFilterImportsRule,
+  overlayPointerEventsWhenHiddenRule,
   vModelBindingsRule,
 } from "../rules/template/template-fixes";
 
@@ -141,9 +188,23 @@ import {
 } from "../rules/vue-script/vue-structure-fixes";
 
 // Other
-import { wrongStorePropertyRule, nullChecksLengthRule, detailViewStoreRule } from "../rules/final/final-fixes";
+import {
+  concatenatedStatementsRule,
+  missingCallParenRepairRule,
+  removeDoubleSemicolonsRule,
+  wrongStorePropertyRule,
+  nullChecksLengthRule,
+  detailViewStoreRule,
+  mathCeilPaginationFallbackRule,
+} from "../rules/final/final-fixes";
 import { eventBusDetectionRule } from "../rules/event-bus/event-bus-fixes";
-import { destructuringKeyValueParamRule, incorrectEventTypeRule, filtersKeyAccessRule, stripTypeScriptAnnotationsRule, typescriptTypeImprovementsRule } from "../rules/type/type-fixes";
+import {
+  destructuringKeyValueParamRule,
+  incorrectEventTypeRule,
+  filtersKeyAccessRule,
+  stripTypeScriptAnnotationsRule,
+  typescriptTypeImprovementsRule,
+} from "../rules/type/type-fixes";
 import { processEnvToImportMetaRule } from "../rules/env/env-fixes";
 import { vueStoreVuexToPiniaRule } from "../rules/store/vue-store-vuex";
 
@@ -154,10 +215,14 @@ import { vueStoreVuexToPiniaRule } from "../rules/store/vue-store-vuex";
 /** Core SFC and app bootstrap */
 export const coreRules: FixRule[] = [
   scriptSetupTagSpaceRule,
+  fixConcatenatedImportsRule,
+  fixMalformedDefineAsyncComponentRule,
   removeExportDefaultRule,
+  scriptSetupOrganizationRule,
   functionalOptionRemovalRule,
   createAppSyntaxRule,
   scriptStyleInsideTemplateRule,
+  orphanContentAfterStyleRule,
   routerVueUseRemovalRule,
   routerSSRHistoryRule,
   ssrContextToInjectRule,
@@ -184,10 +249,21 @@ export const storeRules: FixRule[] = [
   storeActiveIdsRouteRule,
   storeSelfDispatchRule,
   processEnvToImportMetaRule,
+  mergeAsyncDataIntoDefineOptionsRule,
+  defineOptionsTitleSetupRefRule,
+  defineOptionsAsyncDataStoreRefRule,
   asyncDataStoreDispatchRule,
   storeDispatchModuleActionRule,
   storeDispatchToDirectRule,
   fixMalformedStoreDispatchRule,
+  entryServerResolveAsyncComponentsRule,
+  entryServerRouterCurrentRouteRule,
+  entryServerPiniaSerializeRule,
+  entryClientMountRule,
+  entryClientPiniaHydrateRule,
+  entryClientSyntaxRepairRule,
+  appInitialStateRule,
+  piniaHydrationOrderRule,
   barIndexStoreFixRule,
   storePiniaStateFixRule,
   storeIndexRemoveObsoleteImportsRule,
@@ -198,6 +274,7 @@ export const storeRules: FixRule[] = [
   storeCommitToDirectRule,
   storeGettersToRefRule,
   storeSetItemsParamShadowRule,
+  storeListBeforeItemsFlashRule,
   storeComputedRefMissingValueRule,
   storeComputedResultRule,
   storeAddLoadingRule,
@@ -231,9 +308,12 @@ export const computedAndScriptSetupRules: FixRule[] = [
   computedValueRule,
   vueComputedExtraParenRule,
   malformedComputedRule,
+  computedRefComparisonRule,
+  refComparisonInCallbackRule,
   duplicateSymbolDeclarationRule,
   computedSyntaxRule,
   storeScriptSetupRule,
+  addMissingComposableDeclarationsRule,
   replaceThisRouterRouteRule,
   missingUseRouteImportRule,
   missingUseRouterImportRule,
@@ -248,14 +328,21 @@ export const computedAndScriptSetupRules: FixRule[] = [
   thisBarToGetCurrentInstanceRule,
   secureRouterPushRule,
   thisStoreToIndexStoreRule,
+  nextTickFromGlobalPropertiesRule,
+  rootIsMountedRule,
   thisRootIsMountedRule,
   thisNextTickRule,
   returnThisInScriptSetupRule,
   indexStoreDuplicateRule,
+  storeIndexStoreRedundantRule,
   routerPushTypeCheckRule,
+  storeCommitToDirectInVueRule,
   thisStoreCommitToStoreRule,
   watchListPropsGuardRule,
   listsPropsGuardRule,
+  loadItemsRefValueRule,
+  onBeforeMountFetchRouteDataRule,
+  propsTypeFallbackForRouterLinkRule,
   onBeforeUnmountAddLetDeclarationRule,
   scriptSetupUndeclaredVarsRule,
   loadingRefRule,
@@ -264,6 +351,8 @@ export const computedAndScriptSetupRules: FixRule[] = [
 
 /** Template fixes */
 export const templateRules: FixRule[] = [
+  transitionGroupVue3Rule,
+  vue2FilterPipeToFunctionRule,
   routerViewTransitionRule,
   transitionAsRootRule,
   functionalComponentRule,
@@ -272,6 +361,7 @@ export const templateRules: FixRule[] = [
   vForVIfPrecedenceRule,
   keyAttributesRule,
   componentVariableShadowingRule,
+  componentTagPascalCaseRule,
   missingComponentImportsRule,
   webpackPublicAliasRule,
   templateAdjacentMustacheSpacingRule,
@@ -283,11 +373,15 @@ export const templateRules: FixRule[] = [
   templateFilterFunctionImportsRule,
   missingFilterImportsRule,
   eventBusDetectionRule,
+  overlayPointerEventsWhenHiddenRule,
   vModelBindingsRule,
 ];
 
 /** Final and formatting - lowest priority */
 export const finalRules: FixRule[] = [
+  concatenatedStatementsRule,
+  missingCallParenRepairRule,
+  removeDoubleSemicolonsRule,
   duplicateKeysRule,
   mergeDuplicateImportsRule,
   typescriptTypeImprovementsRule,
@@ -295,6 +389,7 @@ export const finalRules: FixRule[] = [
   wrongStorePropertyRule,
   nullChecksLengthRule,
   detailViewStoreRule,
+  mathCeilPaginationFallbackRule,
   scriptSetupFormattingRule,
 ];
 

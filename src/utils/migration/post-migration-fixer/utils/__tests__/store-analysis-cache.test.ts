@@ -5,6 +5,7 @@
 import {
   getStoreAnalysis,
   getStoreMethodMap,
+  getStoreConfigForModule,
   clearStoreAnalysisCache,
   hasStoreAnalysisCache,
 } from "../store-analysis-cache";
@@ -89,6 +90,41 @@ describe("store-analysis-cache", () => {
       expect(result).toEqual({
         fetchUser: "user",
         fetchProduct: "product",
+      });
+    });
+  });
+
+  describe("getStoreConfigForModule", () => {
+    it("should use mainStoreInfo when module is index", () => {
+      const mainStoreInfo = {
+        storeName: "useMainStore",
+        storeVar: "mainStore",
+        importPath: "@/store",
+        storeId: "main",
+      };
+      const result = getStoreConfigForModule("index", mainStoreInfo);
+      expect(result).toEqual({
+        storeVar: "mainStore",
+        storeName: "useMainStore",
+        importPath: "@/store",
+      });
+    });
+
+    it("should fallback to indexStore when module is index and no mainStoreInfo", () => {
+      const result = getStoreConfigForModule("index");
+      expect(result).toEqual({
+        storeVar: "indexStore",
+        storeName: "useIndexStore",
+        importPath: "@/store/index",
+      });
+    });
+
+    it("should derive from module name for other modules", () => {
+      const result = getStoreConfigForModule("user");
+      expect(result).toEqual({
+        storeVar: "userStore",
+        storeName: "useUserStore",
+        importPath: "@/store/modules/user",
       });
     });
   });

@@ -5,6 +5,7 @@
 import * as fs from "fs/promises";
 import { glob } from "glob";
 import type { FixRule, FixContext, FixRuleResult } from "../../types";
+import { getStoreConfigForModule } from "../../utils/store-analysis-cache";
 
 /** Find the index of the closing brace that matches the opening brace at startIdx */
 function findMatchingBrace(content: string, startIdx: number): number {
@@ -446,7 +447,7 @@ export const storeVuexGettersDispatchRule: FixRule = {
            content.includes("defineStore") &&
            (content.includes("getters[") || content.includes("dispatch('") || content.includes('dispatch("'));
   },
-  apply: async (filePath, content, _context: FixContext) => {
+  apply: async (filePath, content, context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -464,12 +465,6 @@ export const storeVuexGettersDispatchRule: FixRule = {
 
     let insertPoint = content.indexOf(defineStoreMatch[0]) + defineStoreMatch[0].length;
 
-    const moduleToStore = (module: string) => {
-      const storeVarName = `${module}Store`;
-      const useName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
-      return { storeVarName, useName };
-    };
-
     const modulesNeeded = new Set<string>();
     content.replace(/getters\[['"]([^'"]+)\/([^'"]+)['"]\]/g, (_, module) => {
       modulesNeeded.add(module);
@@ -483,8 +478,7 @@ export const storeVuexGettersDispatchRule: FixRule = {
     let fixed = content;
 
     for (const module of modulesNeeded) {
-      const { storeVarName, useName } = moduleToStore(module);
-      const importPath = module === "index" ? "@/store/index" : `@/store/modules/${module}`;
+      const { storeVar: storeVarName, storeName: useName, importPath } = getStoreConfigForModule(module, context.mainStoreInfo);
       const hasImport = fixed.includes(`from "${importPath}"`) || fixed.includes(`from '${importPath}'`);
       if (!hasImport) {
         const lastImportIdx = fixed.lastIndexOf("import ");
@@ -504,11 +498,11 @@ export const storeVuexGettersDispatchRule: FixRule = {
     }
 
     fixed = fixed.replace(/getters\[['"]([^'"]+)\/([^'"]+)['"]\]/g, (_, module, getter) => {
-      const { storeVarName } = moduleToStore(module);
+      const { storeVar: storeVarName } = getStoreConfigForModule(module, context.mainStoreInfo);
       return `${storeVarName}.${getter}`;
     });
     fixed = fixed.replace(/dispatch\s*\(\s*['"]([^'"]+)\/([^'"]+)['"]\s*\)/g, (_, module, action) => {
-      const { storeVarName } = moduleToStore(module);
+      const { storeVar: storeVarName } = getStoreConfigForModule(module, context.mainStoreInfo);
       return `${storeVarName}.${action}()`;
     });
 
@@ -1032,17 +1026,18 @@ export const storeIndexRemoveObsoleteImportsRule: FixRule = {
 };
 
 /**
- * Fix: Store index with only default export - add named export useIndexStore so
- * "import { useIndexStore } from '@/store/index'" works.
+ * Fix: Store index with only default export - add named export useXStore so
+ * "import { useXStore } from '@/store/index'" works. Generic: derives from defineStore("id").
  */
 export const storeIndexNamedExportRule: FixRule = {
   id: "store-index-named-export",
-  description: "Add named export useIndexStore to store/index when only default export exists",
+  description: "Add named export useXStore to store/index when only default export exists (generic)",
   priority: 78,
   shouldApply: (filePath, content) => {
     return (filePath.endsWith("store/index.ts") || filePath.endsWith("store/index.js")) &&
-           /export\s+default\s+defineStore\s*\(\s*["']index["']/.test(content) &&
-           !content.includes("export const useIndexStore");
+           /export\s+default\s+defineStore\s*\(\s*["'](\w+)["']/.test(content) &&
+           !content.includes("export const use") &&
+           !content.includes("export function createStore");
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
@@ -1051,32 +1046,37 @@ export const storeIndexNamedExportRule: FixRule = {
       fixes: [],
       issues: []
     };
+    const idMatch = content.match(/export\s+default\s+defineStore\s*\(\s*["'](\w+)["']/);
+    if (!idMatch) return result;
+    const id = idMatch[1];
+    const storeName = "use" + id.charAt(0).toUpperCase() + id.slice(1) + "Store";
     let fixed = content.replace(
-      /export\s+default\s+defineStore\s*\(\s*["']index["']/,
-      "export const useIndexStore = defineStore(\"index\""
+      new RegExp(`export\\s+default\\s+defineStore\\s*\\(\\s*["']${id}["']`),
+      `export const ${storeName} = defineStore("${id}"`
     );
     if (fixed === content) return result;
-    if (!fixed.includes("export default useIndexStore")) {
-      fixed = fixed.replace(/\}\);?\s*$/, "});\n\nexport default useIndexStore;\n");
+    if (!fixed.includes(`export default ${storeName}`)) {
+      fixed = fixed.replace(/\}\);?\s*$/, `});\n\nexport default ${storeName};\n`);
     }
     result.content = fixed;
     result.fixed = true;
-    result.fixes.push("Added named export useIndexStore to store/index");
+    result.fixes.push(`Added named export ${storeName} to store/index`);
     return result;
   }
 };
 
 /**
- * Fix: export function createStore() { return defineStore(...) } → export const useIndexStore = defineStore(...)
+ * Fix: export function createStore() { return defineStore("id", ...) } → export const useXStore = defineStore(...)
+ * Generic: derives useXStore from defineStore id.
  */
 export const storeCreateStoreToUseIndexRule: FixRule = {
   id: "store-create-store-to-use-index",
-  description: "Convert createStore() wrapper to direct useIndexStore export",
+  description: "Convert createStore() wrapper to direct useXStore export (generic)",
   priority: 77,
   shouldApply: (filePath, content) => {
     return (filePath.endsWith("store/index.ts") || filePath.endsWith("store/index.js")) &&
-           /export\s+function\s+createStore\s*\(\s*\)\s*\{\s*return\s+defineStore/.test(content) &&
-           !content.includes("export const useIndexStore");
+           /export\s+function\s+createStore\s*\(\s*\)\s*\{\s*return\s+defineStore\s*\(\s*["'](\w+)["']/.test(content) &&
+           !content.includes("export const use");
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
@@ -1085,15 +1085,18 @@ export const storeCreateStoreToUseIndexRule: FixRule = {
       fixes: [],
       issues: []
     };
-    if (!/export\s+function\s+createStore\s*\(\s*\)\s*\{\s*return\s+defineStore/.test(content)) return result;
+    const idMatch = content.match(/defineStore\s*\(\s*["'](\w+)["']/);
+    if (!idMatch) return result;
+    const id = idMatch[1];
+    const storeName = "use" + id.charAt(0).toUpperCase() + id.slice(1) + "Store";
     let fixed = content.replace(
       /export\s+function\s+createStore\s*\(\s*\)\s*\{\s*return\s+defineStore/,
-      "export const useIndexStore = defineStore"
+      `export const ${storeName} = defineStore`
     );
     fixed = fixed.replace(/\}\)\s*;?\s*\n\s*\}\s*$/, "});");
     result.content = fixed;
     result.fixed = true;
-    result.fixes.push("Converted createStore() to useIndexStore export");
+    result.fixes.push(`Converted createStore() to ${storeName} export`);
     return result;
   }
 };
@@ -1354,6 +1357,41 @@ export const storeAddMissingAuthMethodsRule: FixRule = {
     const toExportOnly = toAddToReturn.filter((m) => defined.has(m));
     if (toExportOnly.length > 0) fixMsgs.push(`Added to return: ${toExportOnly.join(", ")}`);
     result.fixes.push(fixMsgs.join("; "));
+    return result;
+  },
+};
+
+/**
+ * Fix: SSR list flash - SET_LIST before FETCH_ITEMS causes items to disappear on hydration.
+ * Pattern: fetchIds().then(ids => SET_LIST({ type, ids })).then(() => ENSURE_ACTIVE_ITEMS())
+ * The list is updated before items are in cache, so activeItems briefly returns [].
+ * Fix: Fetch items first, then update list - .then(ids => FETCH_ITEMS({ ids }).then(() => SET_LIST(...)))
+ * Generic: applies to any Pinia store with this fetch-then-set-list-then-ensure pattern.
+ */
+export const storeListBeforeItemsFlashRule: FixRule = {
+  id: "store-list-before-items-flash",
+  description: "Fix list/items order: fetch items before updating list (SSR hydration flash)",
+  priority: 86,
+  shouldApply: (filePath, content) => {
+    if (!(filePath.includes("/store/") || filePath.includes("store.js") || filePath.includes("store.ts")))
+      return false;
+    if (!content.includes("defineStore") || !content.includes("FETCH_ITEMS")) return false;
+    return /\.then\s*\(\s*\w+\s*=>\s*SET_\w+\s*\(\s*\{[^}]*\}\s*\)\s*\)\s*\.then\s*\(\s*\(\s*\)\s*=>\s*\w+\s*\(\s*\)\s*\)/.test(
+      content
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const re =
+      /\.then\s*\(\s*(\w+)\s*=>\s*(\w+)\s*\(\s*(\{[^}]*\})\s*\)\s*\)\s*\.then\s*\(\s*\(\s*\)\s*=>\s*(\w+)\s*\(\s*\)\s*\)/g;
+    const fixed = content.replace(re, (_, idsParam, setFunc, setArgs, _ensureFunc) => {
+      result.fixes.push(`Fixed list/items order: fetch items before SET_* (avoids SSR hydration flash)`);
+      return `.then(${idsParam} => FETCH_ITEMS({ ids: ${idsParam} }).then(() => ${setFunc}(${setArgs})))`;
+    });
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+    }
     return result;
   },
 };

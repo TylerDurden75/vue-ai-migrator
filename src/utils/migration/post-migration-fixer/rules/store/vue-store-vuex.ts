@@ -3,17 +3,7 @@
  */
 
 import type { FixRule, FixContext, FixRuleResult } from "../../types";
-import { getStoreMethodMap } from "../../utils/store-analysis-cache";
-
-function moduleToStore(module: string): { storeVar: string; storeName: string; importPath: string } {
-  if (module === "index") {
-    return { storeVar: "indexStore", storeName: "useIndexStore", importPath: "@/store/index" };
-  }
-  const storeVar = `${module}Store`;
-  const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
-  const importPath = `@/store/modules/${module}`;
-  return { storeVar, storeName, importPath };
-}
+import { getStoreMethodMap, getStoreConfigForModule } from "../../utils/store-analysis-cache";
 
 /** Find the position of the closing paren that matches the open paren at startIdx */
 function findMatchingParen(content: string, startIdx: number): number {
@@ -46,7 +36,7 @@ export const vueStoreVuexToPiniaRule: FixRule = {
         content.includes("this.$store.state"))
     );
   },
-  apply: async (filePath, content, _context: FixContext) => {
+  apply: async (filePath, content, context: FixContext) => {
     const result: FixRuleResult = {
       content,
       fixed: false,
@@ -68,7 +58,7 @@ export const vueStoreVuexToPiniaRule: FixRule = {
     >();
 
     const ensureStore = (module: string) => {
-      const { storeVar, storeName, importPath } = moduleToStore(module);
+      const { storeVar, storeName, importPath } = getStoreConfigForModule(module, context.mainStoreInfo);
       if (!storesToAdd.has(storeVar)) {
         storesToAdd.set(storeVar, { storeVar, storeName, importPath });
       }
@@ -79,7 +69,7 @@ export const vueStoreVuexToPiniaRule: FixRule = {
       /this\.\$store\.getters\s*\[\s*['"]([^'"]+)\/([^'"]+)['"]\s*\]/g,
       (_match, module, getter) => {
         ensureStore(module);
-        const { storeVar } = moduleToStore(module);
+        const { storeVar } = getStoreConfigForModule(module, context.mainStoreInfo);
         return `${storeVar}.${getter}`;
       }
     );
@@ -101,7 +91,7 @@ export const vueStoreVuexToPiniaRule: FixRule = {
       const argsMatch = afterQuote.match(/^\s*,\s*([\s\S]*)\s*\)\s*$/);
       const args = argsMatch ? argsMatch[1].trim() : "";
       ensureStore(module);
-      const { storeVar } = moduleToStore(module);
+      const { storeVar } = getStoreConfigForModule(module, context.mainStoreInfo);
       const replacement = args ? `${storeVar}.${action}(${args})` : `${storeVar}.${action}()`;
       dispatchReplacements.push({ start: dispatchMatch.index, end: endParen + 1, replacement });
     }
@@ -114,15 +104,15 @@ export const vueStoreVuexToPiniaRule: FixRule = {
       /this\.\$store\.state\.(\w+)/g,
       (_match, stateKey) => {
         ensureStore("index");
-        const { storeVar } = moduleToStore("index");
+        const { storeVar } = getStoreConfigForModule("index", context.mainStoreInfo);
         return `${storeVar}.${stateKey}`;
       }
     );
 
     // 3) this.$store.getters.property and this.$store.dispatch('action') without module
     let storeMethodMap: Record<string, string> = {};
-    if (_context.projectRoot) {
-      storeMethodMap = await getStoreMethodMap(_context.projectRoot);
+    if (context.projectRoot) {
+      storeMethodMap = await getStoreMethodMap(context.projectRoot);
     }
 
     // this.$store.getters.property → storeVar.property (use storeMethodMap or fallback to index)
@@ -131,7 +121,7 @@ export const vueStoreVuexToPiniaRule: FixRule = {
       (_match, property) => {
         const module = storeMethodMap[property] ?? "index";
         ensureStore(module);
-        const { storeVar } = moduleToStore(module);
+        const { storeVar } = getStoreConfigForModule(module, context.mainStoreInfo);
         return `${storeVar}.${property}`;
       }
     );
@@ -145,7 +135,7 @@ export const vueStoreVuexToPiniaRule: FixRule = {
       const args = dispMatch[2]?.trim() ?? "";
       const module = storeMethodMap[action] ?? "index";
       ensureStore(module);
-      const { storeVar } = moduleToStore(module);
+      const { storeVar } = getStoreConfigForModule(module, context.mainStoreInfo);
       const endParen = findMatchingParen(scriptContent, scriptContent.indexOf("(", dispMatch.index));
       const replacement = args ? `${storeVar}.${action}(${args})` : `${storeVar}.${action}()`;
       dispReplacements.push({ start: dispMatch.index, end: endParen + 1, replacement });

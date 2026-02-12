@@ -123,16 +123,28 @@ export const malformedComputedRule: FixRule = {
   }
 };
 
+/** File is a Vue SFC or Pinia store */
+function isVueOrStoreFile(filePath: string): boolean {
+  return (
+    filePath.endsWith(".vue") ||
+    filePath.includes("/store/") ||
+    filePath.endsWith("store.js") ||
+    filePath.endsWith("store.ts")
+  );
+}
+
 /**
- * Fix: Extra closing paren in computed in .vue (})); → });).
- * Fixes "Expected ';' but found ')'" in script setup.
+ * Fix: Extra closing paren in computed - applies to .vue and store files.
+ * - })); → });  (two ) before ;)
+ * - });); → }); (}); followed by extra ); - common in migrated Pinia stores)
  */
 export const vueComputedExtraParenRule: FixRule = {
   id: "vue-computed-extra-paren",
-  description: "Fix computed closing })); → }); in .vue files",
+  description: "Fix computed closing })); and });); → }); in .vue and store files",
   priority: 72,
   shouldApply: (filePath, content) => {
-    return filePath.endsWith(".vue") && content.includes("computed") && /\}\)\)\s*;/.test(content);
+    if (!isVueOrStoreFile(filePath) || !content.includes("computed")) return false;
+    return /\}\)\)\s*;/.test(content) || /\}\);\s*\)\s*;/.test(content);
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
@@ -141,11 +153,25 @@ export const vueComputedExtraParenRule: FixRule = {
       fixes: [],
       issues: []
     };
-    const fixed = content.replace(/\}\)\)\s*;/g, "});");
+    let fixed = content;
+    if (/\}\)\)\s*;/.test(fixed)) {
+      // Don't replace })); when it's from .then(x => Fn({ ... })); - the second ) closes .then(
+      let fixedCount = 0;
+      fixed = fixed.replace(/\}\)\)\s*;/g, (match, offset, fullString) => {
+        const before = fullString.slice(Math.max(0, offset - 100), offset + match.length);
+        if (/\.then\s*\(\s*\w+\s*=>\s*[\s\S]*\}\s*\)\s*\)\s*;/.test(before)) return match;
+        fixedCount++;
+        return "});";
+      });
+      if (fixedCount > 0) result.fixes.push("Fixed computed extra paren (})); → });)");
+    }
+    if (/\}\);\s*\)\s*;/.test(fixed)) {
+      fixed = fixed.replace(/\}\);\s*\)\s*;/g, "});");
+      result.fixes.push("Fixed computed extra paren (});); → });)");
+    }
     if (fixed !== content) {
       result.content = fixed;
       result.fixed = true;
-      result.fixes.push("Fixed computed extra paren (})); → });)");
     }
     return result;
   }
@@ -222,4 +248,106 @@ export const computedSyntaxRule: FixRule = {
 
     return result;
   }
+};
+
+/**
+ * Fix: ref/computed comparison without .value in computed callback
+ * Generic: computed(() => refA < refB) → computed(() => refA.value < refB.value)
+ */
+export const computedRefComparisonRule: FixRule = {
+  id: "computed-ref-comparison",
+  description: "Add .value when comparing refs/computed inside computed()",
+  priority: 79,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("computed")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i)?.[1];
+    if (!script) return false;
+    const refComputedRe = /(?:const|let)\s+(\w+)\s*=\s*(?:ref|computed)\s*\(/g;
+    const refNames = new Set<string>();
+    let r;
+    while ((r = refComputedRe.exec(script)) !== null) refNames.add(r[1]);
+    if (refNames.size < 2) return false;
+    const compareRe = /computed\s*\(\s*\(\s*\)\s*=>\s*(\w+)\s*(<|>|<=|>=|==|===|!=|!==)\s*(\w+)\s*\)/;
+    const m = script.match(compareRe);
+    if (!m) return false;
+    const [, left, , right] = m;
+    // Only fix when both are refs/computed - pattern already ensures no .value in this comparison
+    return refNames.has(left) && refNames.has(right);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!scriptMatch) return result;
+    const script = scriptMatch[1];
+    const refComputedRe = /(?:const|let)\s+(\w+)\s*=\s*(?:ref|computed)\s*\(/g;
+    const refNames = new Set<string>();
+    let r;
+    while ((r = refComputedRe.exec(script)) !== null) refNames.add(r[1]);
+    const compareRe = /computed\s*\(\s*\(\s*\)\s*=>\s*(\w+)\s*(<|>|<=|>=|==|===|!=|!==)\s*(\w+)\s*\)/g;
+    const fixed = script.replace(compareRe, (_, left, op, right) => {
+      const leftVal = refNames.has(left) ? `${left}.value` : left;
+      const rightVal = refNames.has(right) ? `${right}.value` : right;
+      return `computed(() => ${leftVal} ${op} ${rightVal})`;
+    });
+    if (fixed !== script) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], fixed));
+      result.fixed = true;
+      result.fixes.push("Add .value to ref/computed in comparison");
+    }
+    return result;
+  },
+};
+
+/**
+ * Fix: ref/computed comparison without .value in if/.then() (pagination hasMore, bounds check)
+ * Generic: if (page < 0 || page > maxPage) → if (page.value < 0 || page.value > maxPage.value)
+ */
+export const refComparisonInCallbackRule: FixRule = {
+  id: "ref-comparison-in-callback",
+  description: "Add .value to ref/computed in if/then comparisons (pagination disabled)",
+  priority: 78,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i)?.[1];
+    if (!script) return false;
+    const refNames = new Set(
+      [...script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:ref|computed)\s*\(/g)].map((m) => m[1])
+    );
+    if (refNames.size === 0) return false;
+    for (const name of refNames) {
+      if (new RegExp(`\\b${name}\\b(?!\\.value)\\s*(<|>|<=|>=|==|===|!=|!==)`).test(script))
+        return true;
+    }
+    return false;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!scriptMatch) return result;
+    const script = scriptMatch[1];
+    const refNames = new Set(
+      [...script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:ref|computed)\s*\(/g)].map((m) => m[1])
+    );
+    let fixed = script;
+    const refList = [...refNames];
+    for (const name of refNames) {
+      const rightAlt = refList.length
+        ? `(?:\\d+|\\b(?:${refList.join("|")})\\b)`
+        : "\\d+";
+      const re = new RegExp(
+        `\\b(${name})\\b(?!\\.value)(\\s*)(<|>|<=|>=|==|===|!=|!==)(\\s*)(${rightAlt})`,
+        "g"
+      );
+      fixed = fixed.replace(re, (_, n, sp1, op, sp2, right) => {
+        const rVal = refNames.has(right) ? `${right}.value` : right;
+        return `${n}.value${sp1}${op}${sp2}${rVal}`;
+      });
+    }
+    if (fixed !== script) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(scriptMatch[1], fixed));
+      result.fixed = true;
+      result.fixes.push("Add .value to ref/computed in callback comparisons (pagination)");
+    }
+    return result;
+  },
 };

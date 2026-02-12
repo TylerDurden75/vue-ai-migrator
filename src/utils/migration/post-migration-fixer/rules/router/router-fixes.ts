@@ -6,17 +6,7 @@ import * as fsSync from "fs";
 import * as path from "path";
 import type { FixRule, FixContext, FixRuleResult } from "../../types";
 import { getCachedRegex } from "../../utils/regex-cache";
-import { getStoreMethodMap } from "../../utils/store-analysis-cache";
-
-function moduleToStore(module: string): { storeVar: string; storeName: string; importPath: string } {
-  if (module === "index") {
-    return { storeVar: "indexStore", storeName: "useIndexStore", importPath: "@/store/index" };
-  }
-  const storeVar = `${module}Store`;
-  const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
-  const importPath = `@/store/modules/${module}`;
-  return { storeVar, storeName, importPath };
-}
+import { getStoreMethodMap, getStoreConfigForModule } from "../../utils/store-analysis-cache";
 
 /**
  * Fix: createApp syntax in main.js/main.ts
@@ -508,7 +498,7 @@ export const routerGuardPiniaRule: FixRule = {
         module = "index";
       }
     }
-    const { storeVar, storeName, importPath } = moduleToStore(module);
+    const { storeVar, storeName, importPath } = getStoreConfigForModule(module, context.mainStoreInfo);
     if (!fixed.includes("getActivePinia")) {
       const insertAfterRouter = fixed.match(/(import\s+[^;]+from\s+['"]vue-router['"]\s*;?\s*\n)/);
       const insertIdx = insertAfterRouter ? (insertAfterRouter.index! + insertAfterRouter[0].length) : 0;

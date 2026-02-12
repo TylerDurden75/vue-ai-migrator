@@ -3,12 +3,57 @@
  */
 
 import {
+  orphanContentAfterStyleRule,
   scriptStyleInsideTemplateRule,
   functionalOptionRemovalRule,
   duplicateSymbolDeclarationRule,
   scriptSetupUndeclaredVarsRule,
   loadingRefRule,
 } from "../vue-script/vue-structure-fixes";
+
+describe("orphanContentAfterStyleRule", () => {
+  it("removes orphan template content after </style> (corrupted migration residue)", async () => {
+    const content = `<template>
+  <span class="meta">{{ item.by }}</span>
+</template>
+<script setup>
+defineProps(["item"]);
+</script>
+<style lang="stylus">
+.meta { color: #828282; }
+</style>
+
+<span class="meta">
+<span if="item.type !" class="comments-link">
+{{ item.time | timeAgo }} ago
+</span>
+</span>`;
+
+    expect(orphanContentAfterStyleRule.shouldApply("Item.vue", content)).toBe(true);
+    const result = await orphanContentAfterStyleRule.apply("Item.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("</style>");
+    expect(result.content).not.toContain('<span if="item.type !"');
+    expect(result.content).not.toContain("| timeAgo");
+    expect(result.content).not.toContain("orphan template");
+  });
+
+  it("does not apply when no content after </style>", async () => {
+    const content = `<template><div>ok</div></template>
+<script setup>const x=1;</script>
+<style>.x{}</style>
+`;
+    expect(orphanContentAfterStyleRule.shouldApply("Test.vue", content)).toBe(false);
+  });
+
+  it("does not apply when content after </style> is just whitespace", async () => {
+    const content = `<template><div>ok</div></template><style>.x{}</style>\n\n`;
+    expect(orphanContentAfterStyleRule.shouldApply("Test.vue", content)).toBe(false);
+  });
+});
 
 describe("functionalOptionRemovalRule", () => {
   it("should remove functional: true from component options", async () => {

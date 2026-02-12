@@ -7,6 +7,13 @@ import * as fs from "fs";
 import type { FixRule, FixContext, FixRuleResult } from "../../types";
 import { getCachedRegex } from "../../utils/regex-cache";
 
+/** Normalize script attrs: ensure " setup" has leading space (fix <scriptsetup> → <script setup>) */
+function normalizeScriptAttrs(attrs: string): string {
+  const t = attrs.trim();
+  if (/^setup\b/.test(t)) return " " + t;
+  return attrs.startsWith(" ") ? attrs : (attrs ? " " + attrs : attrs);
+}
+
 /** Extract root template block (handles nested <template>) */
 function extractRootTemplateBlock(
   content: string
@@ -36,6 +43,93 @@ function extractRootTemplateBlock(
   }
   return null;
 }
+
+/**
+ * Fix: Vue 2 → Vue 3 transition-group pattern.
+ * Vue 3: transition-group with position: absolute in leave-active causes items to jump to top-left.
+ * Pattern: transition > div[v-if] > transition-group with v-for.
+ * Solution: add :key on the div (so outer transition animates the whole block), replace transition-group with ul,
+ * add mode="out-in". Generic: infers key from v-if (e.g. displayedPage from "displayedPage > 0") or script refs.
+ */
+export const transitionGroupVue3Rule: FixRule = {
+  id: "transition-group-vue3",
+  description: "Fix transition-group for Vue 3 (add :key on parent, replace with ul, mode out-in)",
+  priority: 61,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    const hasTransitionGroup =
+      /<transition-group\s+/.test(content) &&
+      /<transition[\s>]/.test(content) &&
+      /v-for\s*=/.test(content);
+    const hasLeaveAbsolute =
+      /\.\w+-leave-active\s*\{[\s\S]*?position\s*:\s*absolute/.test(content) ||
+      /position\s*:\s*absolute[\s\S]*?\.\w+-leave/.test(content);
+    const divHasVifNoKey =
+      /<div[^>]*v-if=[^>]*>[\s\S]*?<transition-group/.test(content) &&
+      !/<div[^>]*:key\s*=/.test(content);
+    return hasTransitionGroup && (hasLeaveAbsolute || divHasVifNoKey);
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const block = extractRootTemplateBlock(content);
+    if (!block) return result;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    let fixed = block.inner;
+
+    const tgMatch = fixed.match(/<transition-group\s+([^>]*)>([\s\S]*?)<\/transition-group>/i);
+    if (!tgMatch) return result;
+    const listTag = tgMatch[1].match(/tag\s*=\s*["'](\w+)["']/i)?.[1] ?? "ul";
+
+    const divWithVif = fixed.match(
+      /<div\s+([^>]*v-if\s*=\s*["']([^"']+)["'][^>]*)>[\s\S]*?<transition-group/
+    );
+    const keyVar =
+      divWithVif?.[2]?.match(/(\w+)/)?.[1] ??
+      ["displayedPage", "displayedTab", "currentPage", "page"].find((v) =>
+        new RegExp(`\\b${v}\\s*(=|\\.value)`).test(script)
+      ) ??
+      null;
+
+    if (keyVar) {
+      const divBeforeTg = fixed.match(
+        /(<div\s+[^>]*v-if\s*=\s*["'][^"']+["'][^>]*)(>)\s*<transition-group/
+      );
+      if (divBeforeTg && !divBeforeTg[1].includes(":key")) {
+        fixed = fixed.replace(
+          new RegExp(
+            `(<div\\s+[^>]*v-if\\s*=\\s*["'][^"']+["'][^>]*)(>)\\s*<transition-group`
+          ),
+          `$1 :key="${keyVar}"$2\n        <transition-group`
+        );
+      }
+    }
+
+    fixed = fixed.replace(
+      /<transition-group\s+[^>]*>([\s\S]*?)<\/transition-group>/i,
+      `<${listTag}>$1</${listTag}>`
+    );
+
+    if (!fixed.match(/<transition[^>]*\s+mode\s*=/)) {
+      fixed = fixed.replace(
+        /<transition\s+([^>]*)>/,
+        (m) => (m.includes('mode="') ? m : m.replace(/>$/, ' mode="out-in">'))
+      );
+    }
+
+    if (fixed !== block.inner) {
+      let fullContent = content.replace(block.full, block.full.replace(block.inner, fixed));
+      // Remove position: absolute from .xxx-leave-active (causes jump in Vue 3 when using ul instead of transition-group)
+      fullContent = fullContent.replace(
+        /(\.\w+-leave-active\s*\{[^}]*?)position\s*:\s*absolute;?\s*/g,
+        "$1"
+      );
+      result.content = fullContent;
+      result.fixed = true;
+      result.fixes.push("Fixed transition-group for Vue 3 (add :key, mode out-in, replace with list, remove leave-active position)");
+    }
+    return result;
+  },
+};
 
 /**
  * Fix: Vue Router 4 - <router-view> can no longer be used directly inside <transition>.
@@ -194,7 +288,7 @@ export const transitionAsRootRule: FixRule = {
         const convertingFromOptionsApi = !scriptAttrs.includes("setup") && /export\s+default\s*\{/.test(scriptInner);
         const attrs = convertingFromOptionsApi
           ? " setup" + (scriptAttrs.trim() ? " " + scriptAttrs.trim() : "")
-          : scriptAttrs;
+          : scriptAttrs.startsWith(" ") ? scriptAttrs : " " + scriptAttrs; // normalize <scriptsetup> → <script setup>
         fixedContent = fixedContent.replace(
           /<script[^>]*>[\s\S]*?<\/script>/,
           `<script${attrs}>${newScript}${scriptClose}`
@@ -222,29 +316,97 @@ export const transitionAsRootRule: FixRule = {
 };
 
 /**
- * Fix: Variable shadowing component - when const X = computed(...) shadows imported component X.
- * Use PascalCase <X> in template for the component so Vue resolves to the component, not the variable.
- * Pattern: <comment v-for="id in comment.kids"> where comment is a variable → <Comment v-for=...>
+ * Fix: Variable shadowing component - when variable `comment` shadows imported component `Comment`.
+ * Convention: component PascalCase, data variable camelCase + "Data" suffix.
+ * Renames variable (comment → commentData) in script + template to avoid Vue "reactive object as component" warning.
+ * Generic: applies when const x = computed/ref and import X (PascalCase) coexist with <x> or x. in template.
  */
 export const componentVariableShadowingRule: FixRule = {
   id: "component-variable-shadowing",
-  description: "Fix variable shadowing component - use PascalCase for component in template",
+  description: "Fix variable shadowing component - rename variable to XData (convention: component PascalCase, data camelCase)",
   priority: 58,
   shouldApply: (filePath, content) => {
     if (!filePath.endsWith(".vue") || !content.includes("<script setup")) return false;
     const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
     const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
-    // Find variables that could shadow: const x = computed(...) or const x = ref(...)
+    const baseName = filePath.replace(/^.*\//, "").replace(/\.vue$/i, "");
     const varMatches = script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:computed|ref)\s*\(/g);
     for (const m of varMatches) {
       const varName = m[1];
       const pascalName = varName.charAt(0).toUpperCase() + varName.slice(1);
-      // Template uses <varname (kebab) and we import PascalName
-      if (
-        new RegExp(`<${varName}[\\s>]`).test(template) &&
-        (script.includes(`import ${pascalName}`) || script.includes(`import { ${pascalName} }`))
-      ) {
-        return true;
+      const hasComponent =
+        script.includes(`import ${pascalName}`) ||
+        script.includes(`import { ${pascalName} }`) ||
+        (baseName === pascalName && (new RegExp(`<${varName}[\\s>]`).test(template) || new RegExp(`\\b${varName}\\.`).test(template)));
+      const hasConflict =
+        (new RegExp(`<${varName}[\\s>]`).test(template) || new RegExp(`\\b${varName}\\.`).test(template)) &&
+        hasComponent;
+      if (hasConflict) return true;
+    }
+    return false;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/(<script[^>]*>)([\s\S]*?)(<\/script>)/);
+    const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
+    if (!scriptMatch || !templateMatch) return result;
+    const [, scriptOpen, script, scriptClose] = scriptMatch;
+    const [, templateOpen, template, templateClose] = templateMatch;
+    const varMatches = [...script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:computed|ref)\s*\(/g)];
+    let fixedScript = script;
+    let fixedTemplate = template;
+    const baseName = filePath.replace(/^.*\//, "").replace(/\.vue$/i, "");
+    for (const m of varMatches) {
+      const varName = m[1];
+      const pascalName = varName.charAt(0).toUpperCase() + varName.slice(1);
+      const newVarName = varName + "Data";
+      const hasComponent =
+        script.includes(`import ${pascalName}`) ||
+        script.includes(`import { ${pascalName} }`) ||
+        baseName === pascalName;
+      const hasConflict =
+        (new RegExp(`<${varName}[\\s>]`).test(template) || new RegExp(`\\b${varName}\\.`).test(template)) &&
+        hasComponent;
+      if (!hasConflict) continue;
+      const varRegex = new RegExp(`\\b${varName}\\b`, "g");
+      fixedScript = fixedScript.replace(varRegex, newVarName);
+      fixedTemplate = fixedTemplate.replace(new RegExp(`<${varName}([\\s>])`, "g"), `<${pascalName}$1`);
+      fixedTemplate = fixedTemplate.replace(new RegExp(`</${varName}>`, "g"), `</${pascalName}>`);
+      fixedTemplate = fixedTemplate.replace(varRegex, newVarName);
+      result.fixed = true;
+    }
+    if (result.fixed) {
+      result.content = content
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/, `${scriptOpen}${fixedScript}${scriptClose}`)
+        .replace(/<template[^>]*>[\s\S]*?<\/template>/, `${templateOpen}${fixedTemplate}${templateClose}`);
+      result.fixes.push("Renamed variable to avoid component shadowing (convention: component PascalCase, data XData)");
+    }
+    return result;
+  },
+};
+
+/** HTML elements - never convert to PascalCase */
+const HTML_TAGS = new Set(["div", "span", "ul", "ol", "li", "a", "p", "button", "input", "form", "table", "tr", "td", "th", "thead", "tbody", "img", "template", "slot", "router-link", "router-view", "transition", "transition-group", "keep-alive", "component"]);
+
+/**
+ * Fix: Use PascalCase for imported component tags (<comment> → <Comment>).
+ * Generic: when import X from "..." and template has <x, convert to <X for Vue best practices.
+ */
+export const componentTagPascalCaseRule: FixRule = {
+  id: "component-tag-pascal-case",
+  description: "Convert kebab-case component tags to PascalCase when component is imported",
+  priority: 57,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    const template = content.match(/<template[^>]*>([\s\S]*?)<\/template>/)?.[1] ?? "";
+    const imports = script.matchAll(/import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"][^'"]+\.vue['"]/g);
+    for (const m of imports) {
+      const names = (m[1] ?? m[2] ?? "").trim();
+      for (const name of names.split(",").map((n) => n.trim().split(/\s+as\s+/)[0].trim())) {
+        if (!name || name.charAt(0) !== name.charAt(0).toUpperCase()) continue;
+        const kebab = name.charAt(0).toLowerCase() + name.slice(1).replace(/([A-Z])/g, "-$1").toLowerCase();
+        if (!HTML_TAGS.has(kebab) && new RegExp(`<${kebab}[\\s>]|</${kebab}>`).test(template)) return true;
       }
     }
     return false;
@@ -252,27 +414,27 @@ export const componentVariableShadowingRule: FixRule = {
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const templateMatch = content.match(/(<template[^>]*>)([\s\S]*?)(<\/template>)/);
-    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/);
-    if (!templateMatch || !scriptMatch) return result;
-    const [, openTag, template, closeTag] = templateMatch;
-    const script = scriptMatch[1];
-    const varMatches = [...script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:computed|ref)\s*\(/g)];
+    if (!templateMatch) return result;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    const [, templateOpen, template, templateClose] = templateMatch;
     let fixed = template;
-    for (const m of varMatches) {
-      const varName = m[1];
-      const pascalName = varName.charAt(0).toUpperCase() + varName.slice(1);
-      if (
-        new RegExp(`<${varName}[\\s>]`).test(fixed) &&
-        (script.includes(`import ${pascalName}`) || script.includes(`import { ${pascalName} }`))
-      ) {
-        fixed = fixed.replace(new RegExp(`<${varName}([\\s>])`, "g"), `<${pascalName}$1`);
-        fixed = fixed.replace(new RegExp(`</${varName}>`, "g"), `</${pascalName}>`);
-        result.fixed = true;
+    const imports = script.matchAll(/import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"][^'"]+\.vue['"]/g);
+    for (const m of imports) {
+      const names = (m[1] ?? m[2] ?? "").trim();
+      for (const name of names.split(",").map((n) => n.trim().split(/\s+as\s+/)[0].trim())) {
+        if (!name || name.charAt(0) !== name.charAt(0).toUpperCase()) continue;
+        const kebab = name.charAt(0).toLowerCase() + name.slice(1).replace(/([A-Z])/g, "-$1").toLowerCase();
+        if (HTML_TAGS.has(kebab)) continue;
+        if (new RegExp(`<${kebab}[\\s>]|</${kebab}>`).test(fixed)) {
+          fixed = fixed.replace(new RegExp(`<${kebab}([\\s>])`, "g"), `<${name}$1`);
+          fixed = fixed.replace(new RegExp(`</${kebab}>`, "g"), `</${name}>`);
+        }
       }
     }
-    if (result.fixed) {
-      result.content = content.replace(/<template[^>]*>[\s\S]*?<\/template>/, `${openTag}${fixed}${closeTag}`);
-      result.fixes.push("Fixed component variable shadowing (use PascalCase for component)");
+    if (fixed !== template) {
+      result.content = content.replace(/<template[^>]*>[\s\S]*?<\/template>/, `${templateOpen}${fixed}${templateClose}`);
+      result.fixed = true;
+      result.fixes.push("Converted component tags to PascalCase");
     }
     return result;
   },
@@ -450,9 +612,10 @@ export const missingComponentImportsRule: FixRule = {
     }
 
     // Check which components are not imported
+    const baseName = filePath.replace(/^.*\//, "").replace(/\.vue$/i, "");
     const missingComponents: string[] = [];
     usedComponents.forEach(componentName => {
-      // Check if component is imported
+      if (componentName === baseName) return; // Recursive component - no self-import needed
       const importPattern = new RegExp(`import\\s+.*?${componentName}.*?from`, "g");
       if (!importPattern.test(_context.scriptContent!)) {
         missingComponents.push(componentName);
@@ -495,9 +658,10 @@ export const missingComponentImportsRule: FixRule = {
           scriptContent = importLine + scriptContent.substring(insertPos).trim();
         });
 
+        const rawAttrs = scriptMatch[0].match(/<script([^>]*)>/)?.[1] ?? "";
         fixed = fixed.replace(
           /<script[^>]*>([\s\S]*?)<\/script>/,
-          `<script${scriptMatch[0].match(/<script\s+([^>]+)>/)?.[1] || ""}>${scriptContent}</script>`
+          `<script${normalizeScriptAttrs(rawAttrs)}>${scriptContent}</script>`
         );
 
         result.content = fixed;
@@ -651,11 +815,87 @@ export const templateFilterFunctionImportsRule: FixRule = {
     const firstImport = scriptContent.match(/(import\s+[^;]+;[\s\n]*)+/);
     const insertIdx = firstImport ? firstImport[0].length : 0;
     scriptContent = scriptContent.slice(0, insertIdx) + importLine + scriptContent.slice(insertIdx);
-    result.content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/, `<script${scriptMatch[1]}>${scriptContent}</script>`);
+    result.content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/, `<script${normalizeScriptAttrs(scriptMatch[1])}>${scriptContent}</script>`);
     result.fixed = true;
     result.fixes.push(`Added filter imports: ${toAdd.join(", ")}`);
     return result;
   }
+};
+
+/** Convert Vue 2 pipe filter to Vue 3 function call. Handles {{ x | f }} and {{ x | f1 | f2 }}. */
+function convertPipeToFunction(inner: string): { result: string; modified: boolean } {
+  if (!inner.includes("|") || / \|\|\s*/.test(inner)) return { result: inner, modified: false };
+  const singleFilterRegex = /([^|{}]+)\s*\|\s*(\w+)(?:\(([^)]*)\))?/g;
+  let prev = "";
+  let innerResult = inner;
+  let modified = false;
+  while (prev !== innerResult) {
+    prev = innerResult;
+    innerResult = innerResult.replace(
+      singleFilterRegex,
+      (_m: string, value: string, filterName: string, args?: string) => {
+        const trimmedValue = value.trim();
+        if (!trimmedValue) return _m;
+        modified = true;
+        const trimmedArgs = args ? args.trim() : "";
+        if (trimmedArgs) return `${filterName}(${trimmedValue}, ${trimmedArgs})`;
+        return `${filterName}(${trimmedValue})`;
+      }
+    );
+  }
+  return { result: innerResult.trim(), modified };
+}
+
+/**
+ * Fix: Vue 2 pipe filter syntax → Vue 3 function calls.
+ * Converts {{ value | filterName }} to {{ filterName(value) }}, and :attr="x | filter" to :attr="filter(x)".
+ * Uses depth-aware template extraction to handle nested <template> (v-if, v-slot).
+ * Generic: any filter name, supports chained filters.
+ */
+export const vue2FilterPipeToFunctionRule: FixRule = {
+  id: "vue2-filter-pipe-to-function",
+  description: "Convert Vue 2 {{ x | filter }} and :attr=\"x | filter\" to Vue 3 function calls",
+  priority: 58,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    const block = extractRootTemplateBlock(content);
+    const template = block?.inner ?? "";
+    const hasMustachePipe = /\{\{[^}]*\|\s*[a-zA-Z_][a-zA-Z0-9_]*/.test(template) && !/ \|\|\s*/.test(template);
+    const hasVBindPipe = /=\s*["'][^"']*\|\s*[a-zA-Z_][a-zA-Z0-9_]*/.test(template);
+    return hasMustachePipe || hasVBindPipe;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const block = extractRootTemplateBlock(content);
+    if (!block) return result;
+    const template = block.inner;
+    let fixed = template;
+    let modified = false;
+
+    fixed = fixed.replace(/\{\{([^}]*)\}\}/g, (fullMatch, inner) => {
+      const { result: innerResult, modified: m } = convertPipeToFunction(inner);
+      if (m) modified = true;
+      return `{{ ${innerResult} }}`;
+    });
+
+    fixed = fixed.replace(
+      /(=\s*["'])([^"']*?)(["'])/g,
+      (fullMatch, prefix: string, attrValue: string, suffix: string) => {
+        if (!/\S\s*\|\s*\w+/.test(attrValue)) return fullMatch;
+        const { result: conv, modified: m } = convertPipeToFunction(attrValue);
+        if (m) modified = true;
+        return `${prefix}${conv}${suffix}`;
+      }
+    );
+
+    if (modified) {
+      const openTag = block.full.match(/<template[^>]*>/i)?.[0] ?? "<template>";
+      result.content = content.replace(block.full, openTag + fixed + "</template>");
+      result.fixed = true;
+      result.fixes.push("Converted Vue 2 filter pipe syntax to Vue 3 function calls");
+    }
+    return result;
+  },
 };
 
 /**
@@ -750,9 +990,10 @@ export const missingFilterImportsRule: FixRule = {
         
         scriptContent = filterDefs.join("\n") + "\n" + scriptContent.substring(insertPos).trim();
 
+        const rawAttrs = scriptMatch[0].match(/<script([^>]*)>/)?.[1] ?? "";
         fixed = fixed.replace(
           /<script[^>]*>([\s\S]*?)<\/script>/,
-          `<script${scriptMatch[0].match(/<script\s+([^>]+)>/)?.[1] || ""}>${scriptContent}</script>`
+          `<script${normalizeScriptAttrs(rawAttrs)}>${scriptContent}</script>`
         );
 
         result.content = fixed;
@@ -1122,4 +1363,37 @@ export const vModelBindingsRule: FixRule = {
 
     return result;
   }
+};
+
+/**
+ * Fix: Add pointer-events: none when overlay has opacity: 0 (prevents blocking clicks)
+ * Generic: opacity: cond ? 1 : 0 in fixed overlay → add pointer-events: cond ? 'auto' : 'none'
+ */
+export const overlayPointerEventsWhenHiddenRule: FixRule = {
+  id: "overlay-pointer-events-when-hidden",
+  description: "Add pointer-events for overlay with conditional opacity to avoid blocking clicks",
+  priority: 62,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    return (
+      /opacity:\s*\w+\s*\?\s*1\s*:\s*0/.test(content) &&
+      !/['"]pointer-events['"]\s*:/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const match = content.match(/opacity:\s*(\w+)\s*\?\s*1\s*:\s*0/);
+    if (!match) return result;
+    const cond = match[1];
+    const fixed = content.replace(
+      /(opacity:\s*\w+\s*\?\s*1\s*:\s*0)(\s*,?\s*)/,
+      `$1,\n      'pointer-events': ${cond} ? 'auto' : 'none'$2`
+    );
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Added pointer-events for overlay when hidden");
+    }
+    return result;
+  },
 };

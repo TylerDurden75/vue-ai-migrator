@@ -14,10 +14,14 @@ import {
   piniaStoreCrossStoreDepsRule,
   storeAddMissingAuthMethodsRule,
   storeComputedRefMissingValueRule,
+  storeListBeforeItemsFlashRule,
 } from "../store/store-fixes";
 import type { FixContext } from "../../types";
 
-jest.mock("../../utils/store-analysis-cache");
+jest.mock("../../utils/store-analysis-cache", () => ({
+  ...jest.requireActual("../../utils/store-analysis-cache"),
+  getStoreMethodMap: jest.fn(),
+}));
 
 describe("asyncFunctionRule", () => {
   it("should make function async if it uses await", async () => {
@@ -881,5 +885,58 @@ export const useIndexStore = defineStore("index", () => {
         "defineStore('index', () => { return { items: [] }; });"
       )
     ).toBe(true);
+  });
+});
+
+describe("storeListBeforeItemsFlashRule", () => {
+  it("should fix SET_LIST before ENSURE_ACTIVE_ITEMS", async () => {
+    const content = `export const useIndexStore = defineStore("index", () => {
+  function FETCH_ITEMS({ ids }) { return fetchItems(ids); }
+  function FETCH_LIST_DATA({ type }) {
+    return fetchIdsByType(type)
+      .then(ids => SET_LIST({ type, ids }))
+      .then(() => ENSURE_ACTIVE_ITEMS());
+  }
+  return {};
+});`;
+    const result = await storeListBeforeItemsFlashRule.apply("src/store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("FETCH_ITEMS({ ids: ids }).then(() => SET_LIST({ type, ids }))");
+  });
+
+  it("should not apply when pattern is absent", () => {
+    const content = `export const useIndexStore = defineStore("index", () => ({ items: [] }));`;
+    expect(storeListBeforeItemsFlashRule.shouldApply("src/store/index.js", content)).toBe(false);
+  });
+});
+
+describe("storeListBeforeItemsFlashRule", () => {
+  it("should fix SET_LIST before ENSURE_ACTIVE_ITEMS (fetch items first, then set list)", async () => {
+    const content = `export const useIndexStore = defineStore("index", () => {
+  function FETCH_ITEMS({ ids }) { return fetchItems(ids); }
+  function FETCH_LIST_DATA({ type }) {
+    return fetchIdsByType(type)
+      .then(ids => SET_LIST({ type, ids }))
+      .then(() => ENSURE_ACTIVE_ITEMS());
+  }
+  return {};
+});`;
+    const result = await storeListBeforeItemsFlashRule.apply("src/store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain(
+      ".then(ids => FETCH_ITEMS({ ids: ids }).then(() => SET_LIST({ type, ids })))"
+    );
+    expect(result.content).not.toContain(".then(() => ENSURE_ACTIVE_ITEMS())");
+  });
+
+  it("should not apply when pattern is absent", () => {
+    const content = `export const useIndexStore = defineStore("index", () => ({ items: [] }));`;
+    expect(storeListBeforeItemsFlashRule.shouldApply("src/store/index.js", content)).toBe(false);
   });
 });

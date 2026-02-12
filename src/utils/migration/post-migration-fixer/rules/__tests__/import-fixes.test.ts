@@ -3,6 +3,7 @@
  */
 
 import {
+  fixConcatenatedImportsRule,
   splitImportsOnSameLineRule,
   removeVuexImportsRule,
   removeVueCompilerMacrosRule,
@@ -24,6 +25,28 @@ jest.mock("../../utils/store-analysis-cache", () => ({
 import { getStoreMethodMap } from "../../utils/store-analysis-cache";
 
 const mockGetStoreMethodMap = getStoreMethodMap as jest.MockedFunction<typeof getStoreMethodMap>;
+
+describe("fixConcatenatedImportsRule", () => {
+  it("should split concatenated imports without separator", async () => {
+    const content = `import { useIndexStore } from '@/store/index'import { host, timeAgo } from "@/util/filters";`;
+    const result = await fixConcatenatedImportsRule.apply("ItemView.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("from '@/store/index';\nimport ");
+    expect(result.content).not.toMatch(/'import\s+{/);
+  });
+
+  it("should not apply when imports are properly separated", async () => {
+    const content = "import { a } from 'x';\nimport { b } from 'y';";
+    const result = await fixConcatenatedImportsRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(false);
+  });
+});
 
 describe("splitImportsOnSameLineRule", () => {
   it("should split two imports on same line (single quote)", async () => {

@@ -4,6 +4,8 @@
 
 import * as path from "path";
 import {
+  transitionGroupVue3Rule,
+  vue2FilterPipeToFunctionRule,
   routerViewTransitionRule,
   transitionAsRootRule,
   functionalComponentRule,
@@ -12,6 +14,7 @@ import {
   vForVIfPrecedenceRule,
   keyAttributesRule,
   componentVariableShadowingRule,
+  componentTagPascalCaseRule,
   missingComponentImportsRule,
   missingFilterImportsRule,
   templateFilterFunctionImportsRule,
@@ -19,6 +22,80 @@ import {
   routerLinkUserContentRule,
   templateAdjacentMustacheSpacingRule,
 } from "../template/template-fixes";
+
+describe("transitionGroupVue3Rule", () => {
+  it("adds :key on div, replaces transition-group with ul, adds mode out-in", async () => {
+    const content = `<template>
+  <div class="news-view">
+    <transition name="slide">
+      <div v-if="displayedPage > 0" class="news-list">
+        <transition-group tag="ul" name="item" class="news-list">
+          <Item v-for="item in displayedItems" :key="item.id" :item="item" />
+        </transition-group>
+      </div>
+    </transition>
+  </div>
+</template>
+<script setup>
+const displayedPage = ref(1);
+const displayedItems = ref([]);
+</script>
+<style>
+.item-leave-active { position: absolute; }
+</style>`;
+    expect(transitionGroupVue3Rule.shouldApply("ItemList.vue", content)).toBe(
+      true
+    );
+    const result = await transitionGroupVue3Rule.apply("ItemList.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain(':key="displayedPage"');
+    expect(result.content).toContain('<ul>');
+    expect(result.content).toContain("</ul>");
+    expect(result.content).not.toContain("transition-group");
+    expect(result.content).toMatch(/mode="out-in"/);
+    expect(result.content).not.toMatch(/\.item-leave-active[\s\S]*?position\s*:\s*absolute/);
+  });
+
+  it("extracts key from v-if expression (e.g. currentPage)", async () => {
+    const content = `<template>
+  <transition>
+    <div v-if="currentPage > 0" class="list">
+      <transition-group tag="ol">
+        <li v-for="x in items" :key="x.id">{{ x }}</li>
+      </transition-group>
+    </div>
+  </transition>
+</template>
+<script setup>
+const currentPage = ref(0);
+const items = ref([]);
+</script>
+<style>.list-leave-active { position: absolute }</style>`;
+    const result = await transitionGroupVue3Rule.apply("List.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain(':key="currentPage"');
+    expect(result.content).toContain("<ol>");
+    expect(result.content).toContain("</ol>");
+  });
+
+  it("does not apply when div already has :key", async () => {
+    const content = `<template>
+  <transition>
+    <div v-if="x" :key="displayedPage" class="list">
+      <transition-group tag="ul"><li v-for="i in items" :key="i">x</li></transition-group>
+    </div>
+  </transition>
+</template>
+<script setup>const x=ref(0);const displayedPage=ref(0);const items=ref([]);</script>`;
+    expect(transitionGroupVue3Rule.shouldApply("Test.vue", content)).toBe(false);
+  });
+});
 
 describe("routerViewTransitionRule", () => {
   it("converts router-view inside transition to slot props pattern", async () => {
@@ -201,7 +278,7 @@ describe("templateAdjacentMustacheSpacingRule", () => {
 });
 
 describe("componentVariableShadowingRule", () => {
-  it("fixes comment variable shadowing Comment component", async () => {
+  it("renames variable to avoid shadowing Comment component (convention: component PascalCase, data XData)", async () => {
     const content = `<template>
   <li v-if="comment">
     <comment v-for="id in comment.kids" :key="id" :id="id"></comment>
@@ -220,9 +297,55 @@ const comment = computed(() => store.items[props.id]);
       }
     );
     expect(result.fixed).toBe(true);
+    expect(result.content).toContain("const commentData = computed");
+    expect(result.content).toContain("commentData.kids");
+    expect(result.content).toContain("v-if=\"commentData\"");
     expect(result.content).toContain("<Comment v-for=");
     expect(result.content).toContain("</Comment>");
     expect(result.content).not.toContain("<comment v-for=");
+  });
+
+  it("handles recursive component (Comment.vue without self-import)", async () => {
+    const content = `<template>
+  <li v-if="comment" class="comment">
+    <comment v-for="id in comment.kids" :key="id" :id="id"></comment>
+  </li>
+</template>
+<script setup>
+import { useIndexStore } from "@/store/index";
+const store = useIndexStore();
+const props = defineProps(["id"]);
+const comment = computed(() => store.items[props.id]);
+</script>`;
+    const result = await componentVariableShadowingRule.apply(
+      "Comment.vue",
+      content,
+      { enableTypeScript: false, isVueFile: true }
+    );
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("const commentData = computed");
+  });
+});
+
+describe("componentTagPascalCaseRule", () => {
+  it("converts kebab-case component tags to PascalCase when component is imported", async () => {
+    const content = `<template>
+  <comment v-for="id in item.kids" :key="id" :id="id"></comment>
+</template>
+<script setup>
+import Comment from "../components/Comment.vue";
+import Spinner from "./Spinner.vue";
+const item = ref({ kids: [] });
+</script>`;
+    const result = await componentTagPascalCaseRule.apply(
+      "ItemView.vue",
+      content,
+      { enableTypeScript: false, isVueFile: true }
+    );
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("<Comment v-for=");
+    expect(result.content).toContain("</Comment>");
+    expect(result.content).not.toContain("<comment ");
   });
 });
 
@@ -469,6 +592,69 @@ defineProps(["item"]);
       }
     );
 
+    expect(result.fixed).toBe(false);
+  });
+});
+
+describe("vue2FilterPipeToFunctionRule", () => {
+  it("should convert Vue 2 pipe filter to Vue 3 function call", async () => {
+    const content = `<template>
+  <span class="time"> {{ item.time | timeAgo }} ago </span>
+</template>
+<script setup>
+import { timeAgo } from "@/util/filters";
+const props = defineProps(["item"]);
+</script>`;
+    const result = await vue2FilterPipeToFunctionRule.apply("Item.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("{{ timeAgo(item.time) }}");
+    expect(result.content).not.toContain("| timeAgo");
+  });
+
+  it("should convert chained filters", async () => {
+    const content = `<template><div>{{ x | a | b }}</div></template><script setup>const x=1;</script>`;
+    const result = await vue2FilterPipeToFunctionRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("{{ b(a(x)) }}");
+  });
+
+  it("converts pipe in nested template (v-if) - depth-aware extraction", async () => {
+    const content = `<template>
+  <li class="news-item">
+    <span class="title">
+      <template v-if="item.url">
+        <a :href="item.url">{{ item.url | host }}</a>
+      </template>
+    </span>
+    <span class="time">{{ item.time | timeAgo }} ago</span>
+  </li>
+</template>
+<script setup>
+import { timeAgo, host } from "@/util/filters";
+</script>`;
+    const result = await vue2FilterPipeToFunctionRule.apply("Item.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("host(item.url)");
+    expect(result.content).toContain("timeAgo(item.time)");
+    expect(result.content).not.toContain("| timeAgo");
+    expect(result.content).not.toContain("| host");
+  });
+
+  it("should not apply when no pipe filter in template", async () => {
+    const content = `<template><div>{{ timeAgo(x) }}</div></template><script setup></script>`;
+    const result = await vue2FilterPipeToFunctionRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
     expect(result.fixed).toBe(false);
   });
 });

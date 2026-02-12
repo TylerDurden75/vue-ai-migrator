@@ -234,3 +234,69 @@ export async function analyzePiniaStores(
 
   return methodToStoreMap;
 }
+
+export interface MainStoreInfo {
+  storeName: string;
+  storeVar: string;
+  importPath: string;
+  storeId: string;
+}
+
+const DEFAULT_MAIN_STORE: MainStoreInfo = {
+  storeName: "useIndexStore",
+  storeVar: "indexStore",
+  importPath: "@/store/index",
+  storeId: "index",
+};
+
+/**
+ * Detects the main store from store/index.js or src/store/index.js.
+ * Returns composable name (useXStore), variable name (xStore), import path.
+ * Used for generic store references across rules.
+ */
+export async function analyzeMainStore(
+  projectRoot: string
+): Promise<MainStoreInfo> {
+  const indexPaths = [
+    path.join(projectRoot, "src", "store", "index.ts"),
+    path.join(projectRoot, "src", "store", "index.js"),
+    path.join(projectRoot, "store", "index.ts"),
+    path.join(projectRoot, "store", "index.js"),
+  ];
+  for (const indexPath of indexPaths) {
+    try {
+      const content = await fs.readFile(indexPath, "utf-8");
+      // export const useXStore = defineStore("id", ...
+      const storeNameMatch = content.match(
+        /export\s+(?:const|function)\s+(use\w+Store)\s*=/
+      );
+      if (!storeNameMatch) {
+        // Fallback: defineStore("id" -> use id to build name
+        const idMatch = content.match(/defineStore\s*\(\s*["'](\w+)["']/);
+        if (idMatch) {
+          const id = idMatch[1];
+          const storeName =
+            "use" + id.charAt(0).toUpperCase() + id.slice(1) + "Store";
+          const storeVar = id + "Store";
+          return {
+            storeName,
+            storeVar,
+            importPath: "@/store/index",
+            storeId: id,
+          };
+        }
+        continue;
+      }
+      const storeName = storeNameMatch[1];
+      const base = storeName.slice(3, -5);
+      const storeVar =
+        (base ? base.charAt(0).toLowerCase() + base.slice(1) : "index") + "Store";
+      const idMatch = content.match(/defineStore\s*\(\s*["'](\w+)["']/);
+      const storeId = idMatch?.[1] ?? "index";
+      return { storeName, storeVar, importPath: "@/store/index", storeId };
+    } catch {
+      continue;
+    }
+  }
+  return DEFAULT_MAIN_STORE;
+}

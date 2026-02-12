@@ -3,10 +3,121 @@
  */
 
 import {
+  concatenatedStatementsRule,
+  missingCallParenRepairRule,
+  removeDoubleSemicolonsRule,
   wrongStorePropertyRule,
   nullChecksLengthRule,
   detailViewStoreRule
 } from "../final/final-fixes";
+
+describe("missingCallParenRepairRule", () => {
+  it("should add missing ) in IDENT({ ... }); (e.g. store action calls)", async () => {
+    const content = `function FETCH_ITEMS({ ids }) {
+  return fetchItems(ids).then(items => SET_ITEMS({ items };
+}
+function FETCH_USER({ id }) {
+  return fetchUser(id).then(user => SET_USER({ id, user };
+}`;
+    const result = await missingCallParenRepairRule.apply("store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("SET_ITEMS({ items }));");
+    expect(result.content).toContain("SET_USER({ id, user }));");
+    expect(result.fixes.length).toBe(2);
+  });
+
+  it("should not modify valid code", async () => {
+    const content = `return fetchItems(ids).then(items => SET_ITEMS({ items }));`;
+    const result = await missingCallParenRepairRule.apply("store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(false);
+    expect(result.content).toBe(content);
+  });
+
+  it("should fix }); in arrow callback (.then(x => IDENT({ ... });)", async () => {
+    const content = `return fetchItems(ids).then(items => SET_ITEMS({ items });
+    }
+    : fetchUser(id).then(user => SET_USER({ id, user });`;
+    const result = await missingCallParenRepairRule.apply("store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("SET_ITEMS({ items }));");
+    expect(result.content).toContain("SET_USER({ id, user }));");
+  });
+
+  it("should not fix standalone valid }); (no arrow context)", async () => {
+    const content = `SET_ITEMS({ items });`;
+    const result = await missingCallParenRepairRule.apply("store/index.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(false);
+    expect(result.content).toBe(content);
+  });
+
+  it("should not apply when pattern is absent", async () => {
+    const content = "const x = 1; export default {};";
+    expect(missingCallParenRepairRule.shouldApply("file.js", content)).toBe(false);
+  });
+});
+
+describe("concatenatedStatementsRule", () => {
+  it("should add semicolon between fn() and const (createPinia()const app)", async () => {
+    const content = `const pinia = createPinia()const app = createVueApp({`;
+    const result = await concatenatedStatementsRule.apply("app.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toBe("const pinia = createPinia();\nconst app = createVueApp({");
+  });
+
+  it("should fix )let and )var as well", async () => {
+    const content = `foo()let x = 1; bar()var y = 2;`;
+    const result = await concatenatedStatementsRule.apply("test.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("foo();\nlet x = 1");
+    expect(result.content).toContain("bar();\nvar y = 2");
+  });
+
+  it("should not apply when pattern is absent", () => {
+    const content = "const x = 1; const y = 2;";
+    expect(concatenatedStatementsRule.shouldApply("file.js", content)).toBe(false);
+  });
+});
+
+describe("removeDoubleSemicolonsRule", () => {
+  it("should remove double semicolons", async () => {
+    const content = `import { a } from 'x';;
+const b = 1;;`;
+    const result = await removeDoubleSemicolonsRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain(";;");
+    expect(result.content).toContain("from 'x';");
+  });
+
+  it("should not apply when no double semicolons", async () => {
+    const content = "const a = 1;\nconst b = 2;";
+    const result = await removeDoubleSemicolonsRule.apply("test.js", content, {
+      enableTypeScript: false,
+      isVueFile: false
+    });
+    expect(result.fixed).toBe(false);
+  });
+});
 
 describe("wrongStorePropertyRule", () => {
   it("should fix wrong store property access", async () => {

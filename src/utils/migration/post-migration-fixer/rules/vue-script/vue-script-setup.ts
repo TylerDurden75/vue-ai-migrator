@@ -10,7 +10,7 @@ import type { FixRule, FixContext, FixRuleResult } from "../../types";
 export const scriptSetupTagSpaceRule: FixRule = {
   id: "script-setup-tag-space",
   description: "Fix <scriptsetup to <script setup",
-  priority: 99,
+  priority: 5, // Run near the end so it fixes scriptsetup reintroduced by other rules
   shouldApply: (filePath, content) => {
     return filePath.endsWith(".vue") && /<scriptsetup\b/i.test(content);
   },
@@ -191,6 +191,213 @@ export const scriptSetupThisEmitRule: FixRule = {
 
     return result;
   }
+};
+
+/**
+ * Section order for script setup (Vue style guide + common conventions)
+ * 1. Imports
+ * 2. Composables (useXxx)
+ * 3. defineProps / defineEmits
+ * 4. let/var
+ * 5. refs
+ * 6. computed
+ * 7. Methods (before watch to avoid TDZ when watch calls fn() with immediate:true)
+ * 8. watch
+ * 9. Lifecycle
+ */
+function extractScriptSections(script: string): {
+  imports: string[];
+  composables: string[];
+  defineProps: string[];
+  defineEmits: string[];
+  letVar: string[];
+  refs: string[];
+  computed: string[];
+  watch: string[];
+  methods: string[];
+  lifecycle: string[];
+  other: string[];
+} {
+  const sections = {
+    imports: [] as string[],
+    composables: [] as string[],
+    defineProps: [] as string[],
+    defineEmits: [] as string[],
+    letVar: [] as string[],
+    refs: [] as string[],
+    computed: [] as string[],
+    watch: [] as string[],
+    methods: [] as string[],
+    lifecycle: [] as string[],
+    other: [] as string[],
+  };
+  const LIFECYCLE = /^(onBeforeMount|onMounted|onBeforeUpdate|onUpdated|onBeforeUnmount|onUnmounted|onActivated|onDeactivated|onErrorCaptured)\s*\(/m;
+  const lines = script.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      i++;
+      continue;
+    }
+    if (/^import\s+/.test(trimmed)) {
+      const block: string[] = [line];
+      i++;
+      while (i < lines.length && /^import\s+/.test(lines[i].trim())) {
+        block.push(lines[i]);
+        i++;
+      }
+      sections.imports.push(block.join("\n"));
+      continue;
+    }
+    if (/^const\s+\w+\s*=\s*use\w+Store?\s*\(/.test(trimmed) || /^const\s+\w+\s*=\s*useRoute\s*\(/.test(trimmed) || /^const\s+\w+\s*=\s*useRouter\s*\(/.test(trimmed) || /^const\s+\w+\s*=\s*getCurrentInstance\s*\(/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.composables.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (/^const\s+\w+\s*=\s*defineProps\s*\(/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.defineProps.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (/^const\s+\w+\s*=\s*defineEmits\s*\(/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.defineEmits.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (/^(let|var)\s+\w+/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.letVar.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (/^const\s+\w+\s*=\s*ref\s*\(/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.refs.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (/^const\s+\w+\s*=\s*computed\s*\(/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.computed.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (/^watch\s*\(/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.watch.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (LIFECYCLE.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.lifecycle.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (/^const\s+\w+\s*=\s*\(/.test(trimmed) || /^const\s+\w+\s*=\s*[^(]+=>\s*\{/.test(trimmed) || /^function\s+\w+\s*\(/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.methods.push(block.text);
+      i = block.next;
+      continue;
+    }
+    if (/^const\s+\w+\s*=/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.other.push(block.text);
+      i = block.next;
+      continue;
+    }
+    sections.other.push(line);
+    i++;
+  }
+  return sections;
+}
+
+function extractBlock(lines: string[], start: number): { text: string; next: number } {
+  const block: string[] = [lines[start]];
+  let depth = 0;
+  let inParen = 0;
+  let inBrace = 0;
+  let i = start;
+  const first = lines[start];
+  for (const c of first) {
+    if (c === "(") inParen++;
+    if (c === ")") inParen--;
+    if (c === "{") inBrace++;
+    if (c === "}") inBrace--;
+  }
+  i++;
+  while (i < lines.length && (inParen > 0 || inBrace > 0 || (!block[block.length - 1].trim().endsWith(";") && !block[block.length - 1].trim().endsWith("}")))) {
+    const line = lines[i];
+    block.push(line);
+    for (const c of line) {
+      if (c === "(") inParen++;
+      if (c === ")") inParen--;
+      if (c === "{") inBrace++;
+      if (c === "}") inBrace--;
+    }
+    i++;
+  }
+  return { text: block.join("\n").replace(/\s*$/, ""), next: i };
+}
+
+function buildOrganizedScript(sections: ReturnType<typeof extractScriptSections>): string {
+  const parts: string[] = [];
+  if (sections.imports.length) parts.push(sections.imports.join("\n\n"));
+  if (sections.composables.length) parts.push(sections.composables.join("\n\n"));
+  if (sections.defineProps.length) parts.push(sections.defineProps.join("\n\n"));
+  if (sections.defineEmits.length) parts.push(sections.defineEmits.join("\n\n"));
+  if (sections.letVar.length) parts.push(sections.letVar.join("\n\n"));
+  if (sections.refs.length) parts.push(sections.refs.join("\n\n"));
+  if (sections.computed.length) parts.push(sections.computed.join("\n\n"));
+  if (sections.methods.length) parts.push(sections.methods.join("\n\n"));
+  if (sections.watch.length) parts.push(sections.watch.join("\n\n"));
+  if (sections.lifecycle.length) parts.push(sections.lifecycle.join("\n\n"));
+  if (sections.other.length) parts.push(sections.other.join("\n"));
+  return parts.filter(Boolean).join("\n\n");
+}
+
+/**
+ * Fix: Organize script setup into consistent section order
+ * Order: imports → composables → defineProps/Emits → refs → computed → methods → watch → lifecycle
+ */
+export const scriptSetupOrganizationRule: FixRule = {
+  id: "script-setup-organization",
+  description: "Organize script setup: imports at top, composables, props, refs, computed, methods, lifecycle",
+  priority: 8,
+  dependencies: ["script-setup-formatting"],
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue") || !content.includes("<script setup")) return false;
+    const script = content.match(/<script[^>]*setup[^>]*>([\s\S]*?)<\/script>/)?.[1];
+    if (!script) return false;
+    const importsOutOfOrder = /[;}]\s*\n\s*import\s+/.test(script) || /\n\s*(?:const|let)\s+[\s\S]*?\n\s*import\s+/.test(script);
+    const watchBeforeComputed = /\bwatch\s*\(/.test(script) && /\bconst\s+\w+\s*=\s*computed\s*\(/.test(script) &&
+      (script.indexOf("watch(") < script.search(/const\s+\w+\s*=\s*computed\s*\(/));
+    // watch must come after methods (avoids TDZ when watch calls fn() with immediate:true)
+    const firstMethodPos = script.search(/(?:^|\n)\s*(?:function\s+\w+\s*\(|const\s+\w+\s*=\s*(?:\([^)]*\)|async\s*\([^)]*\))\s*=>\s*\{)/m);
+    const firstWatchPos = script.search(/(?:^|\n)\s*watch\s*\(/m);
+    const watchBeforeMethods = firstWatchPos >= 0 && firstMethodPos >= 0 && firstWatchPos < firstMethodPos;
+    return importsOutOfOrder || watchBeforeComputed || watchBeforeMethods;
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/);
+    if (!scriptMatch) return result;
+    const script = scriptMatch[1];
+    const sections = extractScriptSections(script);
+    const organized = buildOrganizedScript(sections);
+    if (organized !== script.trim()) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(script, "\n" + organized + "\n"));
+      result.fixed = true;
+      result.fixes.push("Reorganized script setup sections");
+    }
+    return result;
+  },
 };
 
 /**

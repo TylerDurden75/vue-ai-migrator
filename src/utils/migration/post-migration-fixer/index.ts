@@ -10,6 +10,7 @@ import { scriptStyleInsideTemplateRule } from "./rules/vue-script/vue-structure-
 import { formatWithPrettier } from "../prettier-formatter";
 import { astCache } from "./utils/ast-cache";
 import { loadConfig } from "../../config";
+import { getMainStoreInfo } from "./utils/store-analysis-cache";
 
 const ruleEngine = new RuleEngine();
 ruleEngine.registerRules(allRules);
@@ -41,6 +42,15 @@ export async function fixPostMigrationIssues(
     }
   }
 
+  let mainStoreInfo;
+  if (projectRoot) {
+    try {
+      mainStoreInfo = await getMainStoreInfo(projectRoot);
+    } catch {
+      // Use default if detection fails
+    }
+  }
+
   const context: FixContext = {
     enableTypeScript,
     projectRoot,
@@ -48,6 +58,7 @@ export async function fixPostMigrationIssues(
     scriptContent: cachedAST.scriptContent,
     templateContent: cachedAST.templateContent,
     astCache: cachedAST,
+    mainStoreInfo,
     fixerRulesDisable,
     fixerRulesEnable,
   };

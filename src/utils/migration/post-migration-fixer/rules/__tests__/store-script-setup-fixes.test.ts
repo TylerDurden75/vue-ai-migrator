@@ -4,6 +4,7 @@
 
 import {
   storeScriptSetupRule,
+  addMissingComposableDeclarationsRule,
   secureRouterPushRule,
   routerPushTypeCheckRule,
   replaceThisRouterRouteRule,
@@ -12,6 +13,7 @@ import {
   fixStoreMemberMismatchRule,
   thisStoreNameToUseStoreRule,
   thisStoreToIndexStoreRule,
+  storeIndexStoreRedundantRule,
   returnThisInScriptSetupRule,
   childrenRemovedRule,
   thisBarToGetCurrentInstanceRule,
@@ -19,7 +21,16 @@ import {
 import * as path from "path";
 
 jest.mock("../../utils/store-analysis-cache", () => ({
-  getStoreMethodMap: jest.fn()
+  getStoreMethodMap: jest.fn(),
+  getStoreConfigForModule: jest.fn((module: string) => {
+    if (module === "index") {
+      return { storeVar: "indexStore", storeName: "useIndexStore", importPath: "@/store/index" };
+    }
+    const storeVar = `${module}Store`;
+    const storeName = `use${module.charAt(0).toUpperCase() + module.slice(1)}Store`;
+    const importPath = `@/store/modules/${module}`;
+    return { storeVar, storeName, importPath };
+  }),
 }));
 import { getStoreMethodMap } from "../../utils/store-analysis-cache";
 
@@ -399,6 +410,55 @@ const goToUser = () => {
   });
 });
 
+describe("addMissingComposableDeclarationsRule", () => {
+  it("should add route, indexStore, loading when used but not declared", async () => {
+    const content = `<template><div>{{ item?.title }}</div></template>
+<script setup>
+import { computed, onBeforeMount, ref } from "vue";
+import { useIndexStore } from "@/store/index";
+import { host, timeAgo } from "@/util/filters";
+
+const item = computed(() => indexStore.items[route.params.id]);
+const fetchComments = () => {
+  const itemData = item.value;
+  if (!itemData?.kids) return;
+  loading.value = true;
+  doFetchComments(indexStore, itemData).then(() => { loading.value = false; });
+};
+onBeforeMount(async () => {
+  const id = route.params.id;
+  if (!id) return;
+  await indexStore.FETCH_ITEMS({ ids: [id] });
+  fetchComments();
+});
+</script>`;
+    const result = await addMissingComposableDeclarationsRule.apply("ItemView.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("const route = useRoute()");
+    expect(result.content).toContain("const indexStore = useIndexStore()");
+    expect(result.content).toContain("const loading = ref(false)");
+    expect(result.content).toContain("import { useRoute }");
+  });
+
+  it("should not apply when declarations exist", async () => {
+    const content = `<script setup>
+import { useRoute } from "vue-router";
+import { useIndexStore } from "@/store/index";
+const route = useRoute();
+const indexStore = useIndexStore();
+const x = indexStore.items[route.params.id];
+</script>`;
+    const result = await addMissingComposableDeclarationsRule.apply("test.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(false);
+  });
+});
+
 describe("replaceThisRouterRouteRule", () => {
   it("should replace this.$router with useRouter() and add import", async () => {
     const content = `<script setup lang="ts">
@@ -735,6 +795,66 @@ const items = this.$store.state.items;
   });
 });
 
+describe("storeIndexStoreRedundantRule (duplicate store declaration)", () => {
+  it("should remove store when indexStore exists, unify usages to indexStore", async () => {
+    const content = `<script setup>
+const store = useIndexStore();
+const indexStore = useIndexStore();
+function doFetchComments(store, item) {
+  return store.FETCH_ITEMS({ ids: item.kids });
+}
+doFetchComments(store, item.value);
+</script>`;
+    const result = await storeIndexStoreRedundantRule.apply("ItemView.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).not.toContain("const store = useIndexStore()");
+    expect(result.content).toContain("const indexStore = useIndexStore()");
+    expect(result.content).toContain("doFetchComments(indexStore, item.value)");
+    expect(result.content).toContain("indexStore.FETCH_ITEMS");
+    // Param can stay 'store' (positional) or become indexStore - both work
+    expect(result.content).toMatch(/function doFetchComments\((store|indexStore), item\)/);
+  });
+
+  it("should NOT replace store in asyncData destructuring (param from caller)", async () => {
+    const content = `<script setup>
+import { useIndexStore } from "@/store/index";
+const indexStore = useIndexStore();
+const store = useIndexStore();
+defineOptions({
+  asyncData({ store, route: { params: { id } } }) {
+    return store.FETCH_USER({ id });
+  },
+});
+const user = computed(() => store.users[route.params.id]);
+</script>`;
+    const result = await storeIndexStoreRedundantRule.apply("UserView.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+      scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('from "@/store/index"'); // import path unchanged (not @/indexStore/index)
+    expect(result.content).toContain("asyncData({ store, route:"); // destructuring param kept (caller passes { store })
+  });
+
+  it("should not apply when only one store declaration exists", () => {
+    expect(storeIndexStoreRedundantRule.shouldApply("x.vue", `<script setup>
+const indexStore = useIndexStore();
+</script>`)).toBe(false);
+  });
+
+  it("should apply when both store and indexStore use same useIndexStore", () => {
+    expect(storeIndexStoreRedundantRule.shouldApply("x.vue", `<script setup>
+const store = useIndexStore();
+const indexStore = useIndexStore();
+</script>`)).toBe(true);
+  });
+});
+
 describe("thisBarToGetCurrentInstanceRule (generic)", () => {
   it("replaces this.$bar with getCurrentInstance (vue-hackernews case)", async () => {
     const content = `<script setup>
@@ -746,7 +866,7 @@ const start = () => { this.$bar.start(); };
       scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
     });
     expect(result.fixed).toBe(true);
-    expect(result.content).toContain("bar.start()");
+    expect(result.content).toContain("bar?.start?.()");
     expect(result.content).toContain("const bar = getCurrentInstance()?.appContext.config.globalProperties.$bar");
     expect(result.content).not.toContain("this.$bar");
   });
@@ -761,7 +881,7 @@ this.$progress.start();
       scriptContent: content.match(/<script[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? ""
     });
     expect(result.fixed).toBe(true);
-    expect(result.content).toContain("progress.start()");
+    expect(result.content).toContain("progress?.start?.()");
     expect(result.content).toContain("const progress = getCurrentInstance()?.appContext.config.globalProperties.$progress");
   });
 

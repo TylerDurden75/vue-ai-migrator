@@ -5,6 +5,92 @@
 import type { FixRule, FixContext, FixRuleResult } from "../../types";
 import { getCachedRegex } from "../../utils/regex-cache";
 
+const OBJ_PATTERN = "\\{(?:[^{}]|\\{[^{}]*\\})*\\}";
+
+/**
+ * Fix: Add missing closing ")" on function call with object arg.
+ * Handles two malformed patterns (migration artifacts):
+ * - IDENT({ ... }; → IDENT({ ... }));
+ * - IDENT({ ... }); inside arrow => (e.g. .then(x => Fn({ ... });) → })); (missing ) to close call)
+ * Generic: applies to any .js/.ts/.vue file.
+ */
+export const missingCallParenRepairRule: FixRule = {
+  id: "missing-call-paren-repair",
+  description: "Add missing ) in IDENT({ ... }); or IDENT({ ... }; (malformed call)",
+  priority: 25,
+  shouldApply: (filePath, content) => {
+    if (!/\.(js|ts|vue)$/i.test(filePath)) return false;
+    return (
+      /\w+\s*\(\s*\{[^}]*(?:\{[^{}]*\}[^{}]*)*\}\s*;\s*/.test(content) ||
+      /=>\s*\w+\s*\(\s*\{[^}]*(?:\{[^{}]*\}[^{}]*)*\}\s*\)\s*;\s*/.test(content)
+    );
+  },
+  apply: async (_filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    // Case 1: }; (no ) at all) → });
+    const re1 = new RegExp(`(\\w+)\\s*\\(\\s*(${OBJ_PATTERN})\\s*;(\\s*)`, "g");
+    // Case 2: }); after => (arrow callback - need extra ) to close .then) → });
+    const re2 = new RegExp(`(=>)\\s*(\\w+)\\s*\\(\\s*(${OBJ_PATTERN})\\s*\\)\\s*;(\\s*)`, "g");
+    let fixed = content;
+    fixed = fixed.replace(re1, (_, name, obj, trailing) => {
+      result.fixes.push(`Fixed missing ) in ${name}({ ... });`);
+      return `${name}(${obj}));${trailing}`;
+    });
+    fixed = fixed.replace(re2, (_, arrow, name, obj, trailing) => {
+      result.fixes.push(`Fixed missing ) in ${name}({ ... });`);
+      return `${arrow} ${name}(${obj}));${trailing}`;
+    });
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+    }
+    return result;
+  }
+};
+
+/**
+ * Fix: Concatenated statements - )const / )let / )var without separator.
+ * Pattern: fn()const x = ... (migration artifact - missing semicolon/newline).
+ * Generic: applies to .js/.ts/.vue when ) is immediately followed by const/let/var.
+ */
+export const concatenatedStatementsRule: FixRule = {
+  id: "concatenated-statements",
+  description: "Add missing semicolon between statements (e.g. fn()const → fn(); const)",
+  priority: 24,
+  shouldApply: (_filePath, content) => /\)\s*(const|let|var)\s+/.test(content),
+  apply: async (_filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fixed = content.replace(/\)\s*(const|let|var)\s+/g, ");\n$1 ");
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Added missing semicolon between concatenated statements");
+    }
+    return result;
+  }
+};
+
+/**
+ * Fix: Remove stray double semicolons ;; (migration artifacts).
+ * Generic: applies to any file.
+ */
+export const removeDoubleSemicolonsRule: FixRule = {
+  id: "remove-double-semicolons",
+  description: "Remove stray ;; (double semicolons)",
+  priority: 20,
+  shouldApply: (_filePath, content) => /;;\s*\n/.test(content) || /;;\s*import/.test(content),
+  apply: async (_filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fixed = content.replace(/;;+/g, ";");
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Removed double semicolons");
+    }
+    return result;
+  }
+};
+
 /**
  * Fix: Detect and fix wrong store property access (generic)
  * Pattern: wrongStore.allItems → correctStore.allItems
@@ -277,4 +363,35 @@ export const detailViewStoreRule: FixRule = {
 
     return result;
   }
+};
+
+/**
+ * Fix: Add || 1 to Math.ceil for pagination to avoid 0/NaN display
+ * Generic: return Math.ceil(...); → return Math.ceil(...) || 1; when pagination-like
+ */
+export const mathCeilPaginationFallbackRule: FixRule = {
+  id: "math-ceil-pagination-fallback",
+  description: "Add || 1 to Math.ceil pagination to avoid 0/NaN",
+  priority: 18,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    return (
+      /return\s+Math\.ceil\([^)]*\)\s*;/.test(content) &&
+      !/Math\.ceil\([^)]*\)\s*\|\|\s*1/.test(content) &&
+      /\.length|itemsPerPage|pageSize/.test(content)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const fixed = content.replace(
+      /(return\s+Math\.ceil\([^)]+\))(\s*;)/g,
+      "$1 || 1$2"
+    );
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Added || 1 to Math.ceil pagination");
+    }
+    return result;
+  },
 };
