@@ -796,13 +796,13 @@ export const vuexPiniaSetupTransform: Transform = (
         const config = args[0];
         const properties = config.properties || [];
 
-        // Extract store name from filename (store/index.js → "store" for root)
+        // Extract store name from filename (store/index.js → "index" → useIndexStore, aligns with fixer)
         const fileName = fileInfo.path || "store";
         const parts = fileName.replace(/\.(js|ts)$/, "").split("/");
         const basename = parts[parts.length - 1] || "main";
         const storeId =
           basename === "index" && parts.length > 1
-            ? parts[parts.length - 2] // store/index.js → "store"
+            ? "index" // store/index.js → useIndexStore (convention used by fixer, vue-hackernews)
             : basename;
         const storeName = storeId.charAt(0).toUpperCase() + storeId.slice(1);
         const useStoreName = `use${storeName}Store`;

@@ -18,8 +18,8 @@ export const vuexPiniaComponentsTransform: Transform = (
   let hasChanges = false;
   const storeModules = new Map<string, string>(); // module name → store name (e.g., 'user' → 'useUserStore')
 
-  // Root store convention: store/index.js → moduleName "store" → useStoreStore
-  const ROOT_MODULE_NAME = "store";
+  // Root store convention: store/index.js → useIndexStore (aligns with fixer, vue-hackernews)
+  const ROOT_MODULE_NAME = "index";
 
   // Find all mapGetters, mapActions, mapState, mapMutations calls
   root.find(j.CallExpression).forEach((path: any) => {

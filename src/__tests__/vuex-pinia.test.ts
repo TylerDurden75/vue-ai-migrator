@@ -414,11 +414,11 @@ export default {
       });
 
       expect(result.modified).toBe(true);
-      expect(result.code).toContain('useStoreStore');
+      expect(result.code).toContain('useIndexStore');
       expect(result.code).toMatch(/from\s+['"]\.\.\/store['"]/);
       expect(result.code).toContain('setup');
       expect(result.code).toContain('computed');
-      expect(result.code).toMatch(/storeStore\.(count|increment)/);
+      expect(result.code).toMatch(/indexStore\.(count|increment)/);
       expect(result.code).not.toMatch(/from\s+['"]vuex['"]/);
     });
   });
