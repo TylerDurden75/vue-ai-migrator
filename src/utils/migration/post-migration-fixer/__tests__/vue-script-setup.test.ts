@@ -187,5 +187,27 @@ import { computed, watch, ref } from "vue";
       expect(result.content).toMatch(/import\s+\{\s*host,\s*timeAgo\s*\}\s+from\s+["']@\/util\/filters["']/);
       expect(result.content.indexOf("import")).toBeLessThan(result.content.indexOf("watch("));
     });
+
+    it("extracts imports that are mid-line inside watch callback (e.g. fetchComments();import {...})", async () => {
+      const content = `<script setup>
+import { computed, onBeforeMount, watch, ref } from "vue";
+import Spinner from '../components/Spinner.vue';
+const item = computed(() => store.items[route.params.id]);
+watch(
+  () => item.value,
+  v => { if (v) fetchComments();import { host, timeAgo } from "@/util/filters";
+ },
+  { immediate: true }
+);
+</script>`;
+      const result = await scriptSetupOrganizationRule.apply("ItemView.vue", content, {
+        enableTypeScript: false,
+        isVueFile: true,
+      });
+      expect(result.fixed).toBe(true);
+      expect(result.content).not.toContain("fetchComments();import");
+      expect(result.content).toMatch(/import\s+\{\s*host,\s*timeAgo\s*\}\s+from\s+["']@\/util\/filters["']/);
+      expect(result.content).toContain("v => { if (v) fetchComments();");
+    });
   });
 });

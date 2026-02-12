@@ -21,6 +21,8 @@ import {
   vModelBindingsRule,
   routerLinkUserContentRule,
   templateAdjacentMustacheSpacingRule,
+  webpackPublicAliasRule,
+  vitePublicPathRule,
 } from "../template/template-fixes";
 
 describe("transitionGroupVue3Rule", () => {
@@ -1013,5 +1015,46 @@ const username = ref('');
     });
 
     expect(result.fixed).toBe(false);
+  });
+});
+
+describe("vitePublicPathRule", () => {
+  it("replaces /public/ with / in Vue src and href attributes", async () => {
+    const content = `<template>
+  <img src="/public/logo-48.png" alt="logo">
+</template>
+<script setup></script>`;
+    const result = await vitePublicPathRule.apply("App.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('src="/logo-48.png"');
+    expect(result.content).not.toContain("/public/");
+  });
+
+  it("replaces /public/ in manifest.json", async () => {
+    const content = '{"icons":[{"src":"/public/logo-120.png"}]}';
+    const result = await vitePublicPathRule.apply("manifest.json", content, {
+      enableTypeScript: false,
+      isVueFile: false,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('"src":"/logo-120.png"');
+  });
+});
+
+describe("webpackPublicAliasRule", () => {
+  it("replaces ~public/ with / for Vite", async () => {
+    const content = `<template>
+  <img src="~public/logo-48.png" alt="logo">
+</template>
+<script setup></script>`;
+    const result = await webpackPublicAliasRule.apply("App.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true,
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain('src="/logo-48.png"');
   });
 });

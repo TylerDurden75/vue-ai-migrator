@@ -534,12 +534,18 @@ program
           )).flat()
         ),
       ];
+      const extraFiles = await Promise.all([
+        glob("index.html", { cwd: projectPath, absolute: true }),
+        glob("src/index.template.html", { cwd: projectPath, absolute: true }),
+        glob("manifest.json", { cwd: projectPath, absolute: true }),
+      ]).then((arr) => arr.flat().filter((f): f is string => !!f));
       const filesToFix = [
         ...new Set([
           ...vueFiles.filter((f) => f.endsWith(".vue")),
           ...storeFiles,
           ...mainFiles,
           ...entryFiles,
+          ...extraFiles,
         ]),
       ];
 

@@ -197,18 +197,30 @@ export const scriptSetupThisEmitRule: FixRule = {
  * Extract import statements that are inside blocks (e.g. watch callback) and remove them.
  * Returns cleaned script + list of extracted import strings.
  * extractScriptSections treats watch( as a block and swallows imports inside it - they never get reordered.
+ * Handles both: imports on their own line, and imports mid-line (e.g. after ; on same line).
  */
 function extractMisplacedImportsAndRemove(script: string): { cleaned: string; extractedImports: string[] } {
   const extractedImports: string[] = [];
-  const importRe = /^\s*import\s+(?:(?:\{[\s\S]*?\}|\*\s+as\s+\w+|\w+)\s+from\s+['"][^'"]+['"]|['"][^'"]+['"])\s*;?\s*$/gm;
-  const cleaned = script.replace(importRe, (match) => {
-    const normalized = match.trim().replace(/\s*;\s*$/, ";");
+  const addImport = (raw: string) => {
+    const normalized = raw.trim().replace(/\s*;\s*$/, ";");
     if (normalized && !extractedImports.includes(normalized)) {
       extractedImports.push(normalized);
     }
+  };
+  // 1. Imports on their own line
+  const importRe = /^\s*import\s+(?:(?:\{[\s\S]*?\}|\*\s+as\s+\w+|\w+)\s+from\s+['"][^'"]+['"]|['"][^'"]+['"])\s*;?\s*$/gm;
+  let cleaned = script.replace(importRe, (match) => {
+    addImport(match);
     return "";
   });
-  return { cleaned: cleaned.replace(/^\s*\n/gm, ""), extractedImports };
+  cleaned = cleaned.replace(/^\s*\n/gm, "");
+  // 2. Imports mid-line (e.g. fetchComments();import { x } from "y"; - common after bad AST merge)
+  const midLineImportRe = /;\s*import\s+(\{[^}]*\}\s+from\s+['"][^'"]+['"])\s*;?/g;
+  cleaned = cleaned.replace(midLineImportRe, (match, importPart) => {
+    addImport(`import ${importPart};`);
+    return ";";
+  });
+  return { cleaned, extractedImports };
 }
 
 /**

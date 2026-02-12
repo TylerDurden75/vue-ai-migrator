@@ -177,6 +177,7 @@ import {
   missingFilterImportsRule,
   overlayPointerEventsWhenHiddenRule,
   vModelBindingsRule,
+  vitePublicPathRule,
 } from "../rules/template/template-fixes";
 
 // Vue structure
@@ -366,6 +367,7 @@ export const templateRules: FixRule[] = [
   componentTagPascalCaseRule,
   missingComponentImportsRule,
   webpackPublicAliasRule,
+  vitePublicPathRule,
   templateAdjacentMustacheSpacingRule,
   templateInterpolationParensRule,
   routerLinkUserContentRule,

@@ -226,6 +226,9 @@ export async function migrateToViteConfig(
       try {
         let indexHtmlContent = await fs.readFile(publicIndexHtmlPath, "utf-8");
         
+        // Fix /public/ paths: Vite serves public/ at root, use / not /public/
+        indexHtmlContent = indexHtmlContent.replace(/(["'])\/public\//g, "$1/");
+
         // Ensure the script tag references the entry point (main.js or main.ts per --typescript)
         if (!indexHtmlContent.includes('<script') || !indexHtmlContent.includes('src=')) {
           // Find the closing </body> tag and add script before it
@@ -253,15 +256,32 @@ export async function migrateToViteConfig(
         // Remove public/index.html after migration
         await fs.unlink(publicIndexHtmlPath);
         result.changes.push("Removed public/index.html (Vite uses root index.html)");
+
+        // Fix /public/ in manifest.json if present
+        const manifestPath = path.join(projectPath, "manifest.json");
+        if (fsSync.existsSync(manifestPath)) {
+          const manifestContent = await fs.readFile(manifestPath, "utf-8");
+          const manifestFixed = manifestContent.replace(/(["'])\/public\//g, "$1/");
+          if (manifestFixed !== manifestContent) {
+            await fs.writeFile(manifestPath, manifestFixed, "utf-8");
+            result.changes.push("Fixed /public/ paths in manifest.json for Vite");
+          }
+        }
       } catch (error) {
         result.warnings.push(
           `Could not migrate index.html: ${error instanceof Error ? error.message : String(error)}`
         );
       }
     } else if (fsSync.existsSync(rootIndexHtmlPath)) {
-      // Root index.html exists, ensure it has the script tag
+      // Root index.html exists, ensure it has the script tag and fix /public/ paths
       try {
         let indexHtmlContent = await fs.readFile(rootIndexHtmlPath, "utf-8");
+        const beforeFix = indexHtmlContent;
+        indexHtmlContent = indexHtmlContent.replace(/(["'])\/public\//g, "$1/");
+        if (indexHtmlContent !== beforeFix) {
+          await fs.writeFile(rootIndexHtmlPath, indexHtmlContent, "utf-8");
+          result.changes.push("Fixed /public/ paths in index.html for Vite");
+        }
         if (!indexHtmlContent.includes('<script') || !indexHtmlContent.includes('src=')) {
           if (indexHtmlContent.includes('</body>')) {
             indexHtmlContent = indexHtmlContent.replace(

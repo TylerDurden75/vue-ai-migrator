@@ -441,14 +441,15 @@ export const componentTagPascalCaseRule: FixRule = {
 };
 
 /**
- * Fix: Webpack alias ~public/ to Vite path /public/
+ * Fix: Webpack alias ~public/ to Vite root path.
+ * In Vite, files in public/ are served at root - use / not /public/.
  */
 export const webpackPublicAliasRule: FixRule = {
   id: "webpack-public-alias",
-  description: "Replace ~public/ with /public/ for Vite",
+  description: "Replace ~public/ with / for Vite (public files served at root)",
   priority: 59,
   shouldApply: (filePath, content) =>
-    filePath.endsWith(".vue") && content.includes("~public/"),
+    (filePath.endsWith(".vue") || filePath.endsWith(".html")) && content.includes("~public/"),
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = {
       content,
@@ -456,11 +457,49 @@ export const webpackPublicAliasRule: FixRule = {
       fixes: [],
       issues: []
     };
-    const fixed = content.replace(/~public\//g, "/public/");
+    const fixed = content.replace(/~public\//g, "/");
     if (fixed !== content) {
       result.content = fixed;
       result.fixed = true;
-      result.fixes.push("Replaced ~public/ with /public/ (Vite)");
+      result.fixes.push("Replaced ~public/ with / (Vite: public files at root)");
+    }
+    return result;
+  }
+};
+
+/**
+ * Fix: /public/ in asset paths → / for Vite.
+ * Vite serves public/ directory at root: /public/logo.png is wrong, use /logo.png.
+ */
+export const vitePublicPathRule: FixRule = {
+  id: "vite-public-path",
+  description: "Replace /public/ with / in asset paths (Vite serves public at root)",
+  priority: 59,
+  shouldApply: (filePath, content) => {
+    if (!content.includes("/public/")) return false;
+    return (
+      filePath.endsWith(".vue") ||
+      filePath.endsWith(".html") ||
+      filePath.endsWith("manifest.json") ||
+      filePath.endsWith("index.template.html")
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: []
+    };
+    // Match "/public/ in URL contexts: href="/public/..., src="/public/..., "src":"/public/...
+    const fixed = content.replace(
+      /(["'])\/public\//g,
+      "$1/"
+    );
+    if (fixed !== content) {
+      result.content = fixed;
+      result.fixed = true;
+      result.fixes.push("Replaced /public/ with / in asset paths (Vite)");
     }
     return result;
   }
