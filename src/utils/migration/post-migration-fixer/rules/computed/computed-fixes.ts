@@ -351,3 +351,55 @@ export const refComparisonInCallbackRule: FixRule = {
     return result;
   },
 };
+
+/**
+ * Fix: ref/computed property access in function guards without .value
+ * Pattern: if (!refVar || !refVar.prop) return; → if (!refVar?.value || !refVar.value?.prop) return;
+ * Causes fetchComments/item.kids etc. to always return early - comments never load.
+ * Generic: any ref/computed used in guard condition with property access.
+ */
+export const refPropertyAccessInGuardRule: FixRule = {
+  id: "ref-property-access-in-guard",
+  description: "Add .value when ref/computed used in guard: !refVar.prop → !refVar.value?.prop (comments not loading)",
+  priority: 77,
+  shouldApply: (filePath, content) => {
+    if (!filePath.endsWith(".vue")) return false;
+    const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i)?.[1];
+    if (!script) return false;
+    const refNames = [...script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:ref|computed)\s*\(/g)].map((m) => m[1]);
+    if (refNames.length === 0) return false;
+    return refNames.some(
+      (v) =>
+        new RegExp(`if\\s*\\(\\s*!\\s*${v}\\s*\\|\\|\\s*!${v}\\.\\w+`).test(script) ||
+        new RegExp(`if\\s*\\(\\s*!\\s*${v}\\.\\w+`).test(script)
+    );
+  },
+  apply: async (filePath, content, _context: FixContext) => {
+    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+    const scriptMatch = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!scriptMatch) return result;
+    const script = scriptMatch[1];
+    const refNames = new Set(
+      [...script.matchAll(/(?:const|let)\s+(\w+)\s*=\s*(?:ref|computed)\s*\(/g)].map((m) => m[1])
+    );
+    let fixed = script;
+    for (const v of refNames) {
+      // if (!refVar || !refVar.prop) → if (!refVar?.value || !refVar.value?.prop)
+      fixed = fixed.replace(
+        new RegExp(`if\\s*\\(\\s*!\\s*${v}\\s*\\|\\|\\s*!${v}\\.(\\w+)\\s*\\)`, "g"),
+        (_, prop) => `if (!${v}?.value || !${v}.value?.${prop})`
+      );
+      // if (!refVar.prop) → if (!refVar.value?.prop)
+      fixed = fixed.replace(
+        new RegExp(`if\\s*\\(\\s*!\\s*${v}\\.(\\w+)\\s*\\)`, "g"),
+        (_, prop) => `if (!${v}.value?.${prop})`
+      );
+    }
+    if (fixed !== script) {
+      result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(script, fixed));
+      result.fixed = true;
+      result.fixes.push("Added .value to ref/computed in guard (fixes comments not loading)");
+    }
+    return result;
+  },
+};

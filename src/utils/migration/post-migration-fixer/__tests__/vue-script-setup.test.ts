@@ -2,7 +2,7 @@
  * Unit tests for Vue script setup fixes rules
  */
 
-import { removeExportDefaultRule, scriptSetupThisEmitRule, scriptSetupFormattingRule } from "../rules/vue-script/vue-script-setup";
+import { removeExportDefaultRule, scriptSetupThisEmitRule, scriptSetupFormattingRule, scriptSetupOrganizationRule } from "../rules/vue-script/vue-script-setup";
 
 describe("Vue Script Setup Fixes Rules", () => {
   describe("removeExportDefaultRule", () => {
@@ -159,6 +159,33 @@ const handleSubmit = () => { this.$emit('submit'); };
         // Should have proper line breaks
         expect(result.content).toMatch(/<script[^>]*>\n/);
       }
+    });
+  });
+
+  describe("scriptSetupOrganizationRule", () => {
+    it("extracts misplaced imports from inside watch callback and moves to top", async () => {
+      const content = `<script setup>
+import Spinner from '../components/Spinner.vue';
+const item = computed(() => store.items[route.params.id]);
+watch(
+  () => item.value,
+  v => {
+    if (v) fetchComments();
+    import { host, timeAgo } from "@/util/filters";
+  },
+  { immediate: true }
+);
+const by = val => val;
+import { computed, watch, ref } from "vue";
+</script>`;
+      const result = await scriptSetupOrganizationRule.apply("ItemView.vue", content, {
+        enableTypeScript: false,
+        isVueFile: true,
+      });
+      expect(result.fixed).toBe(true);
+      expect(result.content).not.toContain('if (v) fetchComments();\n    import { host, timeAgo }');
+      expect(result.content).toMatch(/import\s+\{\s*host,\s*timeAgo\s*\}\s+from\s+["']@\/util\/filters["']/);
+      expect(result.content.indexOf("import")).toBeLessThan(result.content.indexOf("watch("));
     });
   });
 });

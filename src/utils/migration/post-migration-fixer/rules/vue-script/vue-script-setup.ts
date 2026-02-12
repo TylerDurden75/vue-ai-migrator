@@ -194,6 +194,24 @@ export const scriptSetupThisEmitRule: FixRule = {
 };
 
 /**
+ * Extract import statements that are inside blocks (e.g. watch callback) and remove them.
+ * Returns cleaned script + list of extracted import strings.
+ * extractScriptSections treats watch( as a block and swallows imports inside it - they never get reordered.
+ */
+function extractMisplacedImportsAndRemove(script: string): { cleaned: string; extractedImports: string[] } {
+  const extractedImports: string[] = [];
+  const importRe = /^\s*import\s+(?:(?:\{[\s\S]*?\}|\*\s+as\s+\w+|\w+)\s+from\s+['"][^'"]+['"]|['"][^'"]+['"])\s*;?\s*$/gm;
+  let cleaned = script.replace(importRe, (match) => {
+    const normalized = match.trim().replace(/\s*;\s*$/, ";");
+    if (normalized && !extractedImports.includes(normalized)) {
+      extractedImports.push(normalized);
+    }
+    return "";
+  });
+  return { cleaned: cleaned.replace(/^\s*\n/gm, ""), extractedImports };
+}
+
+/**
  * Section order for script setup (Vue style guide + common conventions)
  * 1. Imports
  * 2. Composables (useXxx)
@@ -376,23 +394,33 @@ export const scriptSetupOrganizationRule: FixRule = {
     const script = content.match(/<script[^>]*setup[^>]*>([\s\S]*?)<\/script>/)?.[1];
     if (!script) return false;
     const importsOutOfOrder = /[;}]\s*\n\s*import\s+/.test(script) || /\n\s*(?:const|let)\s+[\s\S]*?\n\s*import\s+/.test(script);
+    const importInsideBlock = /\{\s*[\s\S]*?import\s+[\s\S]*?\}/.test(script);
     const watchBeforeComputed = /\bwatch\s*\(/.test(script) && /\bconst\s+\w+\s*=\s*computed\s*\(/.test(script) &&
       (script.indexOf("watch(") < script.search(/const\s+\w+\s*=\s*computed\s*\(/));
     // watch must come after methods (avoids TDZ when watch calls fn() with immediate:true)
     const firstMethodPos = script.search(/(?:^|\n)\s*(?:function\s+\w+\s*\(|const\s+\w+\s*=\s*(?:\([^)]*\)|async\s*\([^)]*\))\s*=>\s*\{)/m);
     const firstWatchPos = script.search(/(?:^|\n)\s*watch\s*\(/m);
     const watchBeforeMethods = firstWatchPos >= 0 && firstMethodPos >= 0 && firstWatchPos < firstMethodPos;
-    return importsOutOfOrder || watchBeforeComputed || watchBeforeMethods;
+    return importsOutOfOrder || importInsideBlock || watchBeforeComputed || watchBeforeMethods;
   },
   apply: async (filePath, content, _context: FixContext) => {
     const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
     const scriptMatch = content.match(/<script\s+setup[^>]*>([\s\S]*?)<\/script>/);
     if (!scriptMatch) return result;
-    const script = scriptMatch[1];
+    let script = scriptMatch[1];
+    // Extract imports embedded in blocks (watch callbacks, etc.) - extractScriptSections can't see them
+    const { cleaned, extractedImports } = extractMisplacedImportsAndRemove(script);
+    script = cleaned;
     const sections = extractScriptSections(script);
+    // Prepend extracted imports to the imports section
+    if (extractedImports.length) {
+      sections.imports = [...extractedImports, ...sections.imports];
+      result.fixes.push("Moved misplaced imports to top");
+    }
     const organized = buildOrganizedScript(sections);
-    if (organized !== script.trim()) {
-      result.content = content.replace(scriptMatch[0], scriptMatch[0].replace(script, "\n" + organized + "\n"));
+    if (organized !== script.trim() || extractedImports.length > 0) {
+      const openTag = scriptMatch[0].match(/^<script[^>]*>/)![0];
+      result.content = content.replace(scriptMatch[0], openTag + "\n" + organized + "\n</script>");
       result.fixed = true;
       result.fixes.push("Reorganized script setup sections");
     }

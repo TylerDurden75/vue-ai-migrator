@@ -352,6 +352,23 @@ onBeforeMount(() => { doFetchComments(indexStore, item); });
       expect(result.fixed).toBe(true);
       expect(result.content).toContain("doFetchComments(indexStore, item.value)");
     });
+    it("does NOT replace item in function param: function doFetchComments(store, item)", async () => {
+      const content = `<script setup>
+const item = computed(() => store.items[route.params.id]);
+function doFetchComments(store, item) {
+  if (item && item.kids) return store.FETCH_ITEMS({ ids: item.kids });
+}
+onBeforeMount(() => { doFetchComments(indexStore, item); });
+</script>`;
+      const result = await loadItemsRefValueRule.apply("ItemView.vue", content, {
+        enableTypeScript: false,
+        isVueFile: true,
+      });
+      expect(result.fixed).toBe(true);
+      expect(result.content).toContain("function doFetchComments(store, item)");
+      expect(result.content).not.toContain("function doFetchComments(store, item.value)");
+      expect(result.content).toContain("doFetchComments(indexStore, item.value)");
+    });
     it("does not double-add .value when already present", async () => {
       const content = `<script setup>
 const page = computed(() => 1);

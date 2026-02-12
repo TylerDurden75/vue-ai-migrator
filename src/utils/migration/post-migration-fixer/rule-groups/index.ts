@@ -149,6 +149,7 @@ import {
   computedSyntaxRule,
   computedRefComparisonRule,
   refComparisonInCallbackRule,
+  refPropertyAccessInGuardRule,
 } from "../rules/computed/computed-fixes";
 
 // Template
@@ -310,6 +311,7 @@ export const computedAndScriptSetupRules: FixRule[] = [
   malformedComputedRule,
   computedRefComparisonRule,
   refComparisonInCallbackRule,
+  refPropertyAccessInGuardRule,
   duplicateSymbolDeclarationRule,
   computedSyntaxRule,
   storeScriptSetupRule,

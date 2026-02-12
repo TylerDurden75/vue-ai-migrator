@@ -948,15 +948,15 @@ export const loadItemsRefValueRule: FixRule = {
     const refComputedVars = new Set([...content.matchAll(/const\s+(\w+)\s*=\s*(?:ref|computed)\s*\(/g)].map((m) => m[1]));
     let fixed = content;
     for (const v of refComputedVars) {
-      // Case 1: ref is first arg - fn(ref, ...) or fn(ref)
+      // Case 1: ref is first arg - fn(ref, ...) or fn(ref) - NOT in function/const declaration
       const re1 = new RegExp(
-        `(\\b${LOAD_LIKE_FN_PATTERN})\\s*\\(\\s*\\b${v}\\b(?!\\s*\\.\\s*value)((?:\\s*,\\s*[^)]*)?)\\s*\\)`,
+        `(?<!function\\s)(\\b${LOAD_LIKE_FN_PATTERN})\\s*\\(\\s*\\b${v}\\b(?!\\s*\\.\\s*value)((?:\\s*,\\s*[^)]*)?)\\s*\\)`,
         "g"
       );
       fixed = fixed.replace(re1, (_, fnName, rest) => `${fnName}(${v}.value${rest})`);
-      // Case 2: ref is 2nd+ arg - fn(store, ref) or fn(a, ref, b)
+      // Case 2: ref is 2nd+ arg - fn(store, ref) or fn(a, ref, b) - NOT in function/const declaration
       const re2 = new RegExp(
-        `(\\b${LOAD_LIKE_FN_PATTERN}\\s*\\([^)]*?),\\s*\\b${v}\\b(?!\\.value)(\\s*(?:,\\s*[^)]*)?)\\)`,
+        `(?<!function\\s)(\\b${LOAD_LIKE_FN_PATTERN}\\s*\\([^)]*?),\\s*\\b${v}\\b(?!\\.value)(\\s*(?:,\\s*[^)]*)?)\\)`,
         "g"
       );
       fixed = fixed.replace(re2, (_, fnAndArgs, after) => `${fnAndArgs}, ${v}.value${after})`);

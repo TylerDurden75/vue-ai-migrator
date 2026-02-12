@@ -8,7 +8,8 @@ import {
   malformedComputedRule,
   computedSyntaxRule,
   computedRefComparisonRule,
-  refComparisonInCallbackRule
+  refComparisonInCallbackRule,
+  refPropertyAccessInGuardRule
 } from "../computed/computed-fixes";
 
 describe("computedValueRule", () => {
@@ -454,5 +455,42 @@ indexStore.FETCH_LIST_DATA({ type }).then(() => {
     expect(result.fixed).toBe(true);
     expect(result.content).toContain("page.value < 0");
     expect(result.content).toContain("page.value > maxPage.value");
+  });
+});
+
+describe("refPropertyAccessInGuardRule", () => {
+  it("fixes if (!item || !item.kids) in fetchComments - comments not loading", async () => {
+    const content = `<script setup>
+const item = computed(() => store.items[route.params.id]);
+const fetchComments = () => {
+  if (!item || !item.kids) {
+    return;
+  }
+  doFetchComments(store, item.value);
+};
+</script>`;
+    const result = await refPropertyAccessInGuardRule.apply("ItemView.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(true);
+    expect(result.content).toContain("if (!item?.value || !item.value?.kids)");
+    expect(result.content).not.toContain("if (!item || !item.kids)");
+  });
+  it("does NOT replace in doFetchComments(store, item) - item is param", async () => {
+    const content = `<script setup>
+const item = computed(() => store.items[route.params.id]);
+function doFetchComments(store, item) {
+  if (item && item.kids) {
+    return store.FETCH_ITEMS({ ids: item.kids });
+  }
+}
+</script>`;
+    const result = await refPropertyAccessInGuardRule.apply("ItemView.vue", content, {
+      enableTypeScript: false,
+      isVueFile: true
+    });
+    expect(result.fixed).toBe(false);
+    expect(result.content).toContain("if (item && item.kids)");
   });
 });
