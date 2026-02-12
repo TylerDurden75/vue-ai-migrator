@@ -479,6 +479,14 @@ export const vuexPiniaComponentsTransform: Transform = (
           program.body.unshift(vueImportStmt);
         }
 
+        // Remove Vuex import (mapState, mapActions, etc.) - no longer needed
+        root.find(j.ImportDeclaration).forEach((path: any) => {
+          const src = path.value.source?.value;
+          if (src === "vuex") {
+            j(path).remove();
+          }
+        });
+
         hasChanges = true;
       }
     }
