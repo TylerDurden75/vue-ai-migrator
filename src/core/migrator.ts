@@ -13,7 +13,7 @@ import {
   MigrationError,
 } from "../utils/safety";
 import { RollbackManager } from "../utils/safety";
-import { migratePackageJson, migratePackageJsonForViteSSR, mergeVuexStore } from "../utils/migration";
+import { migratePackageJson, migratePackageJsonForViteSSR, addVitestConfigToVite, mergeVuexStore } from "../utils/migration";
 import {
   migrateWebpackConfig,
   migrateVueConfig,
@@ -452,29 +452,6 @@ export async function migrate(
                   migrated = true;
                   explanation = agentResult.explanation;
                   result.transformationsApplied++;
-
-                  // Generate tests if requested and migration successful
-                  if (testGenerator && agentResult.migratedCode) {
-                    try {
-                      const componentName =
-                        filePath.split("/").pop()?.replace(".vue", "") ||
-                        "Component";
-                      const testResult = await testGenerator.generateTest(
-                        filePath,
-                        agentResult.migratedCode,
-                        {
-                          componentName,
-                        }
-                      );
-                      await testGenerator.writeTest(testResult);
-                      result.testFilesGenerated =
-                        (result.testFilesGenerated || 0) + 1;
-                    } catch (error) {
-                      result.warnings.push(
-                        `Could not generate test for ${filePath}: ${error instanceof Error ? error.message : String(error)}`
-                      );
-                    }
-                  }
                 } else {
                   result.warnings.push(
                     `AI could not migrate ${filePath}: ${agentResult.reason || "Unknown reason"}`
@@ -483,6 +460,44 @@ export async function migrate(
               } catch (error) {
                 result.errors.push(
                   `AI error for ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+                );
+              }
+            }
+
+            // Generate tests for migrated Vue components (codemod or AI path)
+            if (
+              testGenerator &&
+              migrated &&
+              finalCode !== content &&
+              filePath.endsWith(".vue") &&
+              !dryRun
+            ) {
+              try {
+                const componentName =
+                  filePath.split("/").pop()?.replace(".vue", "") ||
+                  "Component";
+                const testResult = await testGenerator.generateTest(
+                  filePath,
+                  finalCode,
+                  { componentName }
+                );
+                const testPath = path.resolve(projectPath, testResult.filePath);
+                const testExisted = await fs
+                  .access(testPath)
+                  .then(() => true)
+                  .catch(() => false);
+                if (rollbackManager && testExisted) {
+                  await rollbackManager.backupFile(testPath);
+                }
+                await testGenerator.writeTest(testResult);
+                if (rollbackManager && !testExisted) {
+                  rollbackManager.addCreatedFile(testPath);
+                }
+                result.testFilesGenerated =
+                  (result.testFilesGenerated || 0) + 1;
+              } catch (error) {
+                result.warnings.push(
+                  `Could not generate test for ${filePath}: ${error instanceof Error ? error.message : String(error)}`
                 );
               }
             }
@@ -751,7 +766,8 @@ export async function migrate(
         const packageResult = await migratePackageJson(
           projectPath,
           dryRun,
-          options.enableTypeScript || false
+          options.enableTypeScript || false,
+          options.generateTests || false
         );
         if (packageResult.modified) {
           result.warnings.push(
@@ -935,6 +951,21 @@ export async function migrate(
           }
         } catch (error) {
           viteConfigResult = null;
+        }
+      }
+
+      // Add Vitest test config to vite.config when generating tests
+      if (options.generateTests && !dryRun) {
+        try {
+          const vitestConfigAdded = await addVitestConfigToVite(
+            projectPath,
+            rollbackManager ?? undefined
+          );
+          if (vitestConfigAdded) {
+            result.warnings.push("Vite Config: Added test config (environment: jsdom, setupFiles)");
+          }
+        } catch {
+          /* ignore */
         }
       }
 

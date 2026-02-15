@@ -8,12 +8,23 @@ export interface BackupInfo {
   timestamp: Date;
 }
 
+const CREATED_FILES_KEY = "created-files.json";
+
 export class RollbackManager {
   private backups: Map<string, BackupInfo> = new Map();
   private backupDir: string;
+  private createdFiles: Set<string> = new Set();
 
   constructor(projectPath: string) {
     this.backupDir = path.join(projectPath, ".vue-migrator-backup");
+  }
+
+  /**
+   * Register a file that was created during migration (e.g. test file).
+   * These will be deleted on rollback.
+   */
+  addCreatedFile(filePath: string): void {
+    this.createdFiles.add(path.normalize(filePath));
   }
 
   /**
@@ -116,6 +127,39 @@ export class RollbackManager {
   }
 
   /**
+   * Remove generated test files and empty __tests__ directories
+   */
+  private async cleanupCreatedTestFiles(_projectRoot: string): Promise<void> {
+    const toDelete = [...this.createdFiles];
+    const testsDirs = new Set<string>();
+
+    for (const filePath of toDelete) {
+      try {
+        await fs.unlink(filePath);
+        const dir = path.dirname(filePath);
+        if (dir.endsWith("__tests__")) {
+          testsDirs.add(dir);
+        }
+      } catch {
+        // File might not exist, ignore
+      }
+    }
+
+    // Remove empty __tests__ directories (bottom-up so parents can be removed)
+    const sorted = [...testsDirs].sort((a, b) => b.length - a.length);
+    for (const dir of sorted) {
+      try {
+        const entries = await fs.readdir(dir);
+        if (entries.length === 0) {
+          await fs.rmdir(dir);
+        }
+      } catch {
+        // Dir not empty or already removed
+      }
+    }
+  }
+
+  /**
    * Clean up files created during migration (vite.config.js/ts, .backup files, etc.)
    */
   async cleanupMigrationArtifacts(projectRoot: string): Promise<void> {
@@ -174,6 +218,9 @@ export class RollbackManager {
       } catch {
         // Ignore errors reading directory
       }
+
+      // Remove generated test files and empty __tests__ directories
+      await this.cleanupCreatedTestFiles(projectRoot);
 
       // Restore index.html from root to public/ if it was migrated (Vue 2 convention)
       const rootIndexHtml = path.join(projectRoot, "index.html");
@@ -500,6 +547,14 @@ export class RollbackManager {
         }),
       );
       await fs.writeFile(backupFile, JSON.stringify(backupData, null, 2));
+
+      if (this.createdFiles.size > 0) {
+        const createdFilesPath = path.join(this.backupDir, CREATED_FILES_KEY);
+        await fs.writeFile(
+          createdFilesPath,
+          JSON.stringify([...this.createdFiles], null, 2)
+        );
+      }
     } catch (error) {
       // Silently fail - backup saving is optional
     }
@@ -567,6 +622,21 @@ export class RollbackManager {
           this.backups.set(filePath, backup);
         }
       }
+
+      // Load created files list (test files generated during migration)
+      const createdFilesPath = path.join(this.backupDir, CREATED_FILES_KEY);
+      try {
+        const createdContent = await fs.readFile(createdFilesPath, "utf-8");
+        const created = JSON.parse(createdContent) as string[];
+        for (const p of created) {
+          const normalized = path.isAbsolute(p)
+            ? path.normalize(p)
+            : path.normalize(path.resolve(projectRoot, p));
+          this.createdFiles.add(normalized);
+        }
+      } catch {
+        // No created files list, ignore
+      }
     } catch (error) {
       // Silently fail - backup loading is optional
     }
@@ -579,6 +649,7 @@ export class RollbackManager {
     try {
       await fs.rm(this.backupDir, { recursive: true, force: true });
       this.backups.clear();
+      this.createdFiles.clear();
     } catch (error) {
       // Silently fail
     }

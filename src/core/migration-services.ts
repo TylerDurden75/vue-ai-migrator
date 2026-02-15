@@ -17,6 +17,7 @@ export type PostMigrationFixFn = (
 /** Rollback manager type (concrete: has saveBackups in addition to IRollbackManager methods) */
 export type RollbackManagerLike = {
   backupFile(filePath: string): Promise<void>;
+  addCreatedFile(filePath: string): void;
   restoreFile(filePath: string): Promise<boolean>;
   restoreAll(): Promise<{ restored: number; failed: string[] }>;
   loadBackups(): Promise<void>;

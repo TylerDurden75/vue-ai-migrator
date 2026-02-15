@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import * as fsSync from "fs";
 
 export interface PackageJson {
   dependencies?: Record<string, string>;
@@ -16,11 +17,13 @@ export interface PackageMigrationResult {
 
 /**
  * Migrate package.json dependencies from Vue 2 to Vue 3
+ * @param addTestDeps - When true, adds Vitest and @vue/test-utils if generating tests
  */
 export async function migratePackageJson(
   projectPath: string,
   dryRun: boolean = false,
   enableTypeScript: boolean = false,
+  addTestDeps: boolean = false,
 ): Promise<PackageMigrationResult> {
   const result: PackageMigrationResult = {
     modified: false,
@@ -233,6 +236,52 @@ export async function migratePackageJson(
       }
     }
 
+    // Add Vitest and @vue/test-utils when generating tests
+    if (addTestDeps) {
+      if (!allDeps.vitest) {
+        if (!packageJson.devDependencies) {
+          packageJson.devDependencies = {};
+        }
+        packageJson.devDependencies.vitest = "^2.0.0";
+        result.changes.push("Added vitest: ^2.0.0 (for generated tests)");
+        result.modified = true;
+      }
+      if (!allDeps["@vue/test-utils"]) {
+        if (!packageJson.devDependencies) {
+          packageJson.devDependencies = {};
+        }
+        packageJson.devDependencies["@vue/test-utils"] = "^2.4.0";
+        result.changes.push("Added @vue/test-utils: ^2.4.0 (for generated tests)");
+        result.modified = true;
+      }
+      if (!allDeps["jsdom"] && !allDeps["happy-dom"]) {
+        if (!packageJson.devDependencies) {
+          packageJson.devDependencies = {};
+        }
+        packageJson.devDependencies["jsdom"] = "^24.0.0";
+        result.changes.push("Added jsdom: ^24.0.0 (DOM environment for tests)");
+        result.modified = true;
+      }
+      // Add test scripts only when missing (never overwrite existing)
+      const scripts = packageJson.scripts || {};
+      if (!packageJson.scripts) {
+        packageJson.scripts = {};
+      }
+      const toAdd: string[] = [];
+      if (!scripts.test) {
+        packageJson.scripts!.test = "vitest run";
+        toAdd.push("test");
+      }
+      if (!scripts["test:unit"]) {
+        packageJson.scripts!["test:unit"] = "vitest run";
+        toAdd.push("test:unit");
+      }
+      if (toAdd.length > 0) {
+        result.changes.push(`Added "${toAdd.join('", "')}": "vitest run" script(s)`);
+        result.modified = true;
+      }
+    }
+
     // Add TypeScript dependencies if TypeScript is enabled
     if (enableTypeScript) {
       if (!allDeps.typescript) {
@@ -273,6 +322,75 @@ export async function migratePackageJson(
     }
     return result;
   }
+}
+
+const TEST_SETUP_CONTENT = `/**
+ * Vitest setup: stub directives + global Pinia.
+ * Avoids "Failed to resolve directive" and "getActivePinia()" errors in tests.
+ * For components using router-link/view: pass createPinia() + createRouter() per mount.
+ */
+import { config } from '@vue/test-utils';
+import { createPinia } from 'pinia';
+
+const stubDirective = { mounted() {}, updated() {} };
+const stubFocus = { mounted() {} };
+
+config.global.directives = {
+  tooltip: stubDirective,
+  focus: stubFocus,
+};
+
+config.global.plugins = [createPinia()];
+`;
+
+/**
+ * Add Vitest test config to vite.config.js/ts if it exists.
+ * Creates src/test-setup.ts (stub directives) and adds setupFiles to the test block.
+ * Call after Vite config is created (e.g. after migrateToViteConfig).
+ */
+export async function addVitestConfigToVite(
+  projectPath: string,
+  rollbackManager?: { addCreatedFile: (path: string) => void }
+): Promise<boolean> {
+  const viteConfigPaths = [
+    path.join(projectPath, "vite.config.js"),
+    path.join(projectPath, "vite.config.ts"),
+  ];
+  for (const configPath of viteConfigPaths) {
+    if (!fsSync.existsSync(configPath)) continue;
+    try {
+      const content = await fs.readFile(configPath, "utf-8");
+      // Skip if Vitest test block already exists (avoid duplicating config)
+      if (/\btest\s*:\s*\{/.test(content) || /environment\s*:\s*['"]?\w+['"]?/.test(content)) {
+        return false;
+      }
+      if (content.includes("setupFiles")) {
+        return false; // Project already has setup files configured
+      }
+      // Inject test block with setupFiles (stub directives for v-tooltip, v-focus)
+      const testBlock =
+        "\n  test: {\n    environment: 'jsdom',\n    globals: true,\n    setupFiles: ['./src/test-setup.ts'],\n  }";
+      const newContent = content.replace(/\}\s*\)\s*;?\s*$/s, (match) => {
+        const beforeMatch = content.slice(0, content.length - match.length);
+        const needsComma = !/,\s*$/.test(beforeMatch);
+        return `${needsComma ? "," : ""}${testBlock}\n});`;
+      });
+      if (newContent !== content) {
+        await fs.writeFile(configPath, newContent, "utf-8");
+        const testSetupPath = path.resolve(projectPath, "src", "test-setup.ts");
+        const existed = fsSync.existsSync(testSetupPath);
+        if (!existed) {
+          await fs.mkdir(path.dirname(testSetupPath), { recursive: true });
+          await fs.writeFile(testSetupPath, TEST_SETUP_CONTENT, "utf-8");
+          rollbackManager?.addCreatedFile(testSetupPath);
+        }
+        return true;
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+  return false;
 }
 
 /** Webpack-related deps to remove when migrating to Vite */

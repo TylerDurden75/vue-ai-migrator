@@ -72,7 +72,7 @@ export async function processOneFile(
   const warnings: string[] = [];
   let filesModifiedDelta = 0;
   let transformationsAppliedDelta = 0;
-  const testFilesGeneratedDelta = 0;
+  let testFilesGeneratedDelta = 0;
   let classificationLevel: "simple" | "medium" | "complex" | undefined;
   let diff: DiffResult | undefined;
   let explanation: string | undefined;
@@ -156,23 +156,6 @@ export async function processOneFile(
         migrated = true;
         explanation = agentResult.explanation;
         transformationsAppliedDelta++;
-
-        if (testGenerator && agentResult.migratedCode) {
-          try {
-            const componentName =
-              filePath.split("/").pop()?.replace(".vue", "") || "Component";
-            const testResult = await testGenerator.generateTest(
-              filePath,
-              agentResult.migratedCode,
-              { componentName }
-            );
-            await testGenerator.writeTest(testResult);
-          } catch (error) {
-            warnings.push(
-              `Could not generate test for ${filePath}: ${error instanceof Error ? error.message : String(error)}`
-            );
-          }
-        }
       } else {
         warnings.push(
           `AI could not migrate ${filePath}: ${agentResult.reason || "Unknown reason"}`
@@ -181,6 +164,42 @@ export async function processOneFile(
     } catch (error) {
       errors.push(
         `AI error for ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // Generate tests for migrated Vue components (codemod or AI path)
+  if (
+    testGenerator &&
+    migrated &&
+    finalCode !== content &&
+    filePath.endsWith(".vue") &&
+    !dryRun
+  ) {
+    try {
+      const componentName =
+        filePath.split("/").pop()?.replace(".vue", "") || "Component";
+      const testResult = await testGenerator.generateTest(
+        filePath,
+        finalCode,
+        { componentName }
+      );
+      const testPath = path.resolve(projectPath, testResult.filePath);
+      const testExisted = await fs
+        .access(testPath)
+        .then(() => true)
+        .catch(() => false);
+      if (rollbackManager && testExisted) {
+        await rollbackManager.backupFile(testPath);
+      }
+      await testGenerator.writeTest(testResult);
+      if (rollbackManager && !testExisted) {
+        rollbackManager.addCreatedFile(testPath);
+      }
+      testFilesGeneratedDelta = 1;
+    } catch (error) {
+      warnings.push(
+        `Could not generate test for ${filePath}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

@@ -621,6 +621,38 @@ program
   });
 
 program
+  .command("generate-tests <path>")
+  .description("Regenerate Vitest tests for Vue components (Pinia/Router support)")
+  .action(async (projectPath: string) => {
+    const spinner = ora("Generating tests...").start();
+    try {
+      const { glob } = await import("glob");
+      const { TestGenerator } = await import("./utils/codegen");
+      const fs = await import("fs/promises");
+      const resolvedPath = path.resolve(projectPath);
+      const vueFiles = await glob("**/*.vue", {
+        cwd: resolvedPath,
+        ignore: ["node_modules/**", "dist/**", "**/__tests__/**"],
+        absolute: true,
+      });
+      const gen = new TestGenerator();
+      let count = 0;
+      for (const filePath of vueFiles) {
+        const content = await fs.readFile(filePath, "utf-8");
+        const componentName = filePath.split("/").pop()?.replace(".vue", "") || "Component";
+        const result = await gen.generateTest(filePath, content, { componentName });
+        await gen.writeTest(result);
+        count++;
+      }
+      spinner.succeed(`Generated ${count} test file(s)`);
+    } catch (error) {
+      spinner.fail("Test generation failed");
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+  });
+
+program
   .command("merge-store")
   .description(
     "Merge split Vuex store (actions.js, mutations.js, getters.js) into a single store/index.js - required before Vuex→Pinia migration",
