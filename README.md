@@ -39,6 +39,7 @@ Automatic Vue 2 → Vue 3 migration combining:
 - [Features](#-features)
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
+- [GitHub Action](#-github-action)
 - [Usage](#-usage)
 - [Configuration](#-configuration)
 - [Supported Transformations](#-supported-transformations)
@@ -77,6 +78,7 @@ Automatic Vue 2 → Vue 3 migration combining:
   - Typed function parameters and return types
   - Intelligent type inference from Vue 2 code
   - See [TypeScript Support](#typescript-support) section for detailed examples
+- **GitHub Action**: Run migration validation (dry-run) or full migration in your CI/CD pipeline
 
 ## 🏗️ Architecture
 
@@ -411,6 +413,26 @@ function capitalize(value: string) {
 }
 </script>
 ```
+
+### GitHub Action
+
+Validate your Vue 2 project in CI with a dry-run, or run full migration:
+
+```yaml
+# .github/workflows/vue-migrate.yml
+on: [push, pull_request]
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: TylerDurden75/vue-ai-migrator/.github/actions/migrate@main
+        with:
+          command: migrate
+          dry-run: 'true'
+```
+
+See [.github/actions/migrate/README.md](.github/actions/migrate/README.md) for all options (path, version, ai, typescript, etc.).
 
 ## 🎯 Usage
 

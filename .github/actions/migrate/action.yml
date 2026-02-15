@@ -1,0 +1,79 @@
+name: 'Vue AI Migrator'
+description: 'Run vue-ai-migrator (analyze, migrate, fix) in your CI/CD pipeline'
+branding:
+  icon: 'arrow-right-circle'
+  color: 'green'
+
+inputs:
+  command:
+    description: 'CLI command to run'
+    required: false
+    default: 'migrate'
+  path:
+    description: 'Path to the Vue 2 project (relative to workspace)'
+    required: false
+    default: '.'
+  version:
+    description: 'vue-ai-migrator version (e.g. "0.7.0" or "latest")'
+    required: false
+    default: 'latest'
+  dry-run:
+    description: 'Preview changes without modifying files (recommended for CI)'
+    required: false
+    default: 'true'
+  ai:
+    description: 'Enable AI assistance (requires OPENAI_API_KEY secret)'
+    required: false
+    default: 'false'
+  typescript:
+    description: 'Add TypeScript annotations to migrated code'
+    required: false
+    default: 'false'
+  generate-tests:
+    description: 'Generate Vitest tests for migrated components'
+    required: false
+    default: 'false'
+  extra-args:
+    description: 'Additional CLI arguments (e.g. "--no-rollback -o report.json")'
+    required: false
+    default: ''
+
+outputs:
+  exit-code:
+    description: 'Exit code of the vue-ai-migrator command'
+    value: ${{ steps.migrate.outputs.exit-code }}
+  report-path:
+    description: 'Path to report file if -o was passed in extra-args'
+    value: ${{ steps.migrate.outputs.report-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Run vue-ai-migrator
+      id: migrate
+      shell: bash
+      run: |
+        set -e
+        CMD="${{ inputs.command }}"
+        PATH_ARG="${{ inputs.path }}"
+        EXTRA="${{ inputs.extra-args }}"
+        
+        ARGS=("$CMD" "$PATH_ARG")
+        
+        if [ "$CMD" = "migrate" ]; then
+          [ "${{ inputs.dry-run }}" = "true" ] && ARGS+=(--dry-run --no-rollback)
+          [ "${{ inputs.ai }}" = "true" ] && ARGS+=(--ai)
+          [ "${{ inputs.typescript }}" = "true" ] && ARGS+=(--typescript)
+          [ "${{ inputs.generate-tests }}" = "true" ] && ARGS+=(--generate-tests)
+        fi
+        
+        [ -n "$EXTRA" ] && ARGS+=($EXTRA)
+        
+        npx vue-ai-migrator@"${{ inputs.version }}" "${ARGS[@]}"
+        echo "exit-code=0" >> "$GITHUB_OUTPUT"
