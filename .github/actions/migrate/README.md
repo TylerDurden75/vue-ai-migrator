@@ -75,6 +75,7 @@ jobs:
 
 | Input | Description | Default |
 |-------|-------------|---------|
+| `node-version` | Node.js version (16, 18, or 20). Use 18+ for Vue 3 + Vite. | `20` |
 | `command` | `migrate`, `analyze`, `fix`, or `report` | `migrate` |
 | `path` | Path to the Vue 2 project | `.` |
 | `version` | vue-ai-migrator npm version | `latest` |
@@ -83,6 +84,12 @@ jobs:
 | `typescript` | Add TypeScript annotations | `false` |
 | `generate-tests` | Generate Vitest tests | `false` |
 | `extra-args` | Additional CLI flags | `` |
+
+## Node.js version
+
+- **vue-ai-migrator** runs on Node 16+.
+- **Migrated projects** (Vue 3 + Vite) require Node 18+. The migration sets `engines.node` in package.json.
+- Use `node-version: '20'` (default) or `'18'` in the action. Match your project's `.nvmrc` or `package.json` engines if needed.
 
 ## Recommendations
 

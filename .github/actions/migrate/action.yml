@@ -5,6 +5,10 @@ branding:
   color: 'green'
 
 inputs:
+  node-version:
+    description: 'Node.js version (16, 18, or 20). Vue 3 + Vite recommend 18 or 20.'
+    required: false
+    default: '20'
   command:
     description: 'CLI command to run'
     required: false
@@ -52,7 +56,7 @@ runs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: ${{ inputs.node-version }}
         cache: 'npm'
 
     - name: Run vue-ai-migrator

@@ -2,6 +2,7 @@ export {
   migratePackageJson,
   migratePackageJsonForViteSSR,
   addVitestConfigToVite,
+  ensureNvmrc,
   type PackageMigrationResult,
 } from "./package-migrator";
 export {

@@ -205,7 +205,8 @@ graph LR
 
 ### Requirements
 
-- Node.js >= 16.0.0
+- **Node.js >= 16** to run vue-ai-migrator
+- **Node.js >= 18** for the migrated project (Vue 3 + Vite). The migration sets `engines.node` in package.json and creates `.nvmrc` (run `nvm use` to switch automatically).
 - npm or yarn
 - **(Optional)** OpenAI/Mistral/Claude API key - **Only needed if you want AI assistance** (free mode works without it!)
 
@@ -1298,6 +1299,10 @@ When using `slot="name"` on an element that contains nested elements with the sa
 - Run the migration as-is; run `npm install` **after** migration to resolve conflicts
 - Or use `--clean-install` only **after** migration (e.g. `vue-ai-migrator migrate ./my-project --install` to reinstall deps, or run `npm install` manually in the project afterward)
 - Avoid manually removing `node_modules` before migrating
+
+#### Node version: "The engine "node" is incompatible" or build fails after migration
+
+**Solution**: Vue 3 + Vite require Node 18+. The migration adds `engines.node` to package.json. Use `nvm use 18` or `nvm use 20`, or update your CI (e.g. `node-version: '20'` in the GitHub Action).
 
 #### Rollback not working
 

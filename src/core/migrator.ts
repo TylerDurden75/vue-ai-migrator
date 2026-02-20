@@ -13,7 +13,7 @@ import {
   MigrationError,
 } from "../utils/safety";
 import { RollbackManager } from "../utils/safety";
-import { migratePackageJson, migratePackageJsonForViteSSR, addVitestConfigToVite, mergeVuexStore } from "../utils/migration";
+import { migratePackageJson, migratePackageJsonForViteSSR, addVitestConfigToVite, ensureNvmrc, mergeVuexStore } from "../utils/migration";
 import {
   migrateWebpackConfig,
   migrateVueConfig,
@@ -774,6 +774,20 @@ export async function migrate(
             ...packageResult.changes.map((c) => `Package: ${c}`)
           );
           result.warnings.push(...packageResult.warnings);
+        }
+
+        // Create .nvmrc for Node 18+ when Vue 2 → 3 (enables `nvm use`)
+        const migratedToVue3 = packageResult.changes.some(
+          (c) => c.includes("engines.node") || c.includes("Vue:")
+        );
+        if (migratedToVue3) {
+          const nvmrcResult = await ensureNvmrc(projectPath, dryRun, "18");
+          if (nvmrcResult.created && rollbackManager && !dryRun) {
+            rollbackManager.addCreatedFile(
+              path.join(projectPath, ".nvmrc")
+            );
+            result.warnings.push("Created .nvmrc (Node 18 for Vue 3 + Vite)");
+          }
         }
 
         // Create or update tsconfig.json if TypeScript is enabled (ALWAYS, regardless of package.json modification)

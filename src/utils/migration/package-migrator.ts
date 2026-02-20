@@ -60,6 +60,13 @@ export async function migratePackageJson(
         result.changes.push(`Vue (dev): ${vueVersion} → ^3.4.0`);
         result.modified = true;
       }
+
+      // Vue 3 + Vite recommend Node 18+. Set engines.node for npm/CI/README.
+      const recommendedNode = ">=18.0.0";
+      if (!packageJson.engines) packageJson.engines = {};
+      packageJson.engines.node = recommendedNode;
+      result.changes.push(`engines.node: ${recommendedNode} (Vue 3 + Vite)`);
+      result.modified = true;
     }
 
     // Migrate Vue Router 3 → 4
@@ -321,6 +328,27 @@ export async function migratePackageJson(
       );
     }
     return result;
+  }
+}
+
+/**
+ * Create .nvmrc with Node 18 if it doesn't exist (Vue 3 + Vite recommend Node 18+).
+ * Enables `nvm use` to pick the correct version automatically.
+ */
+export async function ensureNvmrc(
+  projectPath: string,
+  dryRun: boolean = false,
+  nodeVersion: string = "18"
+): Promise<{ created: boolean }> {
+  const nvmrcPath = path.join(projectPath, ".nvmrc");
+  try {
+    await fs.access(nvmrcPath);
+    return { created: false }; // Already exists, don't overwrite
+  } catch {
+    if (!dryRun) {
+      await fs.writeFile(nvmrcPath, `${nodeVersion}\n`, "utf-8");
+    }
+    return { created: true };
   }
 }
 
