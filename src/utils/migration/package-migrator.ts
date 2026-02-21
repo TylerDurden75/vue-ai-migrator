@@ -352,6 +352,252 @@ export async function ensureNvmrc(
   }
 }
 
+const EVENT_BUS_JS = `/**
+ * Event bus (replaces Vue 2 $on/$off/$once)
+ * Vue 3 removed instance event API - use for cross-component communication
+ */
+import mitt from 'mitt';
+
+const emitter = mitt();
+
+export const eventBus = {
+  on: emitter.on.bind(emitter),
+  off: emitter.off.bind(emitter),
+  emit: emitter.emit.bind(emitter),
+  once(type, handler) {
+    const wrapper = (...args) => {
+      emitter.off(type, wrapper);
+      handler(...args);
+    };
+    emitter.on(type, wrapper);
+  },
+};
+
+export default eventBus;
+`;
+
+/** Generate event-bus.ts with typed Events (event names from mitt usage) */
+function getEventBusTsContent(eventNames: string[]): string {
+  const entries =
+    eventNames.length > 0
+      ? eventNames.map((e) => `  '${e}': void;`).join("\n")
+      : "  [key: string]: unknown;";
+  return `/**
+ * Event bus (replaces Vue 2 $on/$off/$once)
+ * Vue 3 removed instance event API - use for cross-component communication
+ */
+import mitt, { type Emitter } from 'mitt';
+
+type Events = {
+${entries}
+};
+
+const emitter: Emitter<Events> = mitt<Events>();
+
+export const eventBus = {
+  on<K extends keyof Events>(event: K, handler: (payload: Events[K]) => void) {
+    emitter.on(event, handler as any);
+  },
+  off<K extends keyof Events>(event: K, handler?: (payload: Events[K]) => void) {
+    emitter.off(event, handler as any);
+  },
+  emit<K extends keyof Events>(event: K, payload?: Events[K]) {
+    emitter.emit(event, payload as any);
+  },
+  once<K extends keyof Events>(event: K, handler: (payload: Events[K]) => void) {
+    const wrapper = (payload: Events[K]) => {
+      emitter.off(event, wrapper as any);
+      handler(payload);
+    };
+    emitter.on(event, wrapper as any);
+  },
+};
+
+export default eventBus;
+`;
+}
+
+const EVENT_BUS_PLUGIN_JS = `/**
+ * Vue 3 plugin: exposes eventBus as this.$bus on all components
+ */
+import eventBus from '@/event-bus';
+
+export default {
+  install(app) {
+    app.config.globalProperties.$bus = eventBus;
+  },
+};
+`;
+
+const EVENT_BUS_PLUGIN_TS = `/**
+ * Vue 3 plugin: exposes eventBus as this.$bus on all components
+ */
+import type { App } from 'vue';
+import eventBus from '@/event-bus';
+
+export default {
+  install(app: App) {
+    app.config.globalProperties.$bus = eventBus;
+  },
+};
+`;
+
+const VUE_BUS_TYPES = `declare module '@vue/runtime-core' {
+  interface ComponentCustomProperties {
+    $bus: typeof import('@/event-bus').default;
+  }
+}
+`;
+
+/**
+ * Create event-bus.js/ts and add mitt when project uses $on/$off/$once
+ */
+export async function ensureEventBus(
+  projectPath: string,
+  dryRun: boolean = false,
+  rollbackManager?: { addCreatedFile: (path: string) => void },
+  options?: { enableTypeScript?: boolean; eventNames?: string[] }
+): Promise<{ created: boolean }> {
+  const busPaths = [
+    path.join(projectPath, "src", "event-bus.js"),
+    path.join(projectPath, "src", "event-bus.ts"),
+    path.join(projectPath, "event-bus.js"),
+  ];
+  for (const busPath of busPaths) {
+    try {
+      await fs.access(busPath);
+      return { created: false };
+    } catch {
+      continue;
+    }
+  }
+
+  const enableTypeScript = options?.enableTypeScript ?? false;
+  const eventNames = options?.eventNames ?? [];
+  const ext = enableTypeScript ? ".ts" : ".js";
+  const busPath = path.join(projectPath, "src", `event-bus${ext}`);
+  const content =
+    enableTypeScript && eventNames.length > 0
+      ? getEventBusTsContent(eventNames)
+      : enableTypeScript
+        ? getEventBusTsContent([])
+        : EVENT_BUS_JS;
+
+  if (!dryRun) {
+    await fs.mkdir(path.dirname(busPath), { recursive: true });
+    await fs.writeFile(busPath, content, "utf-8");
+    rollbackManager?.addCreatedFile(busPath);
+    const pkgPath = path.join(projectPath, "package.json");
+    const pkg = JSON.parse(await fs.readFile(pkgPath, "utf-8"));
+    if (!pkg.dependencies) pkg.dependencies = {};
+    if (!pkg.dependencies.mitt) {
+      pkg.dependencies.mitt = "^3.0.1";
+      await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2), "utf-8");
+    }
+  }
+  return { created: true };
+}
+
+/**
+ * Create plugin to expose eventBus as this.$bus (app.config.globalProperties.$bus)
+ */
+export async function ensureEventBusPlugin(
+  projectPath: string,
+  dryRun: boolean = false,
+  rollbackManager?: { addCreatedFile: (path: string) => void },
+  enableTypeScript: boolean = false
+): Promise<{ created: boolean }> {
+  const pluginPaths = [
+    path.join(projectPath, "src", "plugins", "event-bus.js"),
+    path.join(projectPath, "src", "plugins", "event-bus.ts"),
+  ];
+  for (const p of pluginPaths) {
+    try {
+      await fs.access(p);
+      return { created: false };
+    } catch {
+      continue;
+    }
+  }
+
+  const ext = enableTypeScript ? ".ts" : ".js";
+  const pluginPath = path.join(projectPath, "src", "plugins", `event-bus${ext}`);
+  const content = enableTypeScript ? EVENT_BUS_PLUGIN_TS : EVENT_BUS_PLUGIN_JS;
+
+  if (!dryRun) {
+    await fs.mkdir(path.dirname(pluginPath), { recursive: true });
+    await fs.writeFile(pluginPath, content, "utf-8");
+    rollbackManager?.addCreatedFile(pluginPath);
+    if (enableTypeScript) {
+      const typesPath = path.join(projectPath, "src", "types", "vue-bus.d.ts");
+      const typesDir = path.dirname(typesPath);
+      try {
+        await fs.access(typesPath);
+      } catch {
+        await fs.mkdir(typesDir, { recursive: true });
+        await fs.writeFile(typesPath, VUE_BUS_TYPES, "utf-8");
+        rollbackManager?.addCreatedFile(typesPath);
+      }
+    }
+  }
+  return { created: true };
+}
+
+/**
+ * Inject app.use(EventBusPlugin) into main.ts/main.js
+ */
+export async function injectEventBusPluginInMain(
+  projectPath: string,
+  dryRun: boolean = false
+): Promise<boolean> {
+  const mainPaths = [
+    path.join(projectPath, "src", "main.ts"),
+    path.join(projectPath, "src", "main.js"),
+    path.join(projectPath, "main.ts"),
+    path.join(projectPath, "main.js"),
+  ];
+  let mainPath: string | null = null;
+  for (const p of mainPaths) {
+    if (fsSync.existsSync(p)) {
+      mainPath = p;
+      break;
+    }
+  }
+  if (!mainPath) return false;
+
+  let content = await fs.readFile(mainPath, "utf-8");
+  if (content.includes("EventBusPlugin") || content.includes("event-bus")) {
+    return false;
+  }
+
+  const _isTs = mainPath.endsWith(".ts");
+  const importLine = `import EventBusPlugin from '@/plugins/event-bus';\n`;
+  const useLine = `app.use(EventBusPlugin);\n`;
+
+  if (!content.includes("createApp")) return false;
+
+  if (!content.includes("from '@/plugins/event-bus'") && !content.includes('from "@/plugins/event-bus"')) {
+    const firstImport = content.match(/^\s*import\s/m);
+    const insertPos = firstImport ? (firstImport.index ?? 0) : 0;
+    content = content.slice(0, insertPos) + importLine + content.slice(insertPos);
+  }
+
+  if (!content.includes("app.use(EventBusPlugin)")) {
+    const mountMatch = content.match(/\n?\s*app\.mount\s*\(/);
+    if (mountMatch) {
+      content =
+        content.slice(0, mountMatch.index!) +
+        useLine +
+        content.slice(mountMatch.index!);
+    }
+  }
+
+  if (!dryRun) {
+    await fs.writeFile(mainPath, content, "utf-8");
+  }
+  return true;
+}
+
 const TEST_SETUP_CONTENT = `/**
  * Vitest setup: stub directives + global Pinia.
  * Avoids "Failed to resolve directive" and "getActivePinia()" errors in tests.

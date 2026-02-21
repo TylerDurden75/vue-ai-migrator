@@ -84,6 +84,47 @@ function extractDefaultExportObject(content: string): { content: string; imports
 }
 
 /**
+ * Check if project has a split Vuex store (actions.js, mutations.js, getters.js).
+ * Use before migration to warn or auto-merge.
+ */
+export async function hasSplitVuexStore(
+  projectPath: string
+): Promise<{ hasSplit: boolean; storePath: string }> {
+  for (const storePath of STORE_PATHS) {
+    const fullPath = path.join(projectPath, storePath);
+    try {
+      const stat = await fs.stat(fullPath);
+      if (stat.isDirectory()) {
+        const indexJs = path.join(fullPath, "index.js");
+        const indexTs = path.join(fullPath, "index.ts");
+        let indexPath: string | null = null;
+        if (await fileExists(indexJs)) indexPath = indexJs;
+        else if (await fileExists(indexTs)) indexPath = indexTs;
+        if (indexPath) {
+          const content = await fs.readFile(indexPath, "utf-8");
+          const { hasActions, hasMutations, hasGetters } =
+            detectSplitStore(content);
+          const storeDir = path.dirname(indexPath);
+          const splitFilesExist =
+            (hasActions && (await fileExists(path.join(storeDir, "actions.js")))) ||
+            (hasMutations && (await fileExists(path.join(storeDir, "mutations.js")))) ||
+            (hasGetters && (await fileExists(path.join(storeDir, "getters.js"))));
+          const hasSplit =
+            (hasActions || hasMutations || hasGetters) && splitFilesExist;
+          return {
+            hasSplit,
+            storePath: path.relative(projectPath, indexPath),
+          };
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  return { hasSplit: false, storePath: "" };
+}
+
+/**
  * Check if store/index.js imports from ./actions, ./mutations, ./getters
  */
 function detectSplitStore(content: string): {
@@ -104,12 +145,17 @@ function detectSplitStore(content: string): {
   return { hasActions, hasMutations, hasGetters };
 }
 
+export interface VuexMergeRollbackManager {
+  backupFile(filePath: string): Promise<void>;
+}
+
 /**
  * Merge Vuex store split across actions.js, mutations.js, getters.js into a single index.js
  */
 export async function mergeVuexStore(
   projectPath: string,
   dryRun: boolean = false,
+  rollbackManager?: VuexMergeRollbackManager
 ): Promise<VuexStoreMergeResult> {
   const result: VuexStoreMergeResult = {
     success: false,
@@ -334,6 +380,20 @@ export async function mergeVuexStore(
 
   if (!dryRun) {
     try {
+      // Backup store files for rollback (before modifying)
+      if (rollbackManager) {
+        await rollbackManager.backupFile(storeIndexPath);
+        if (hasActions && (await fileExists(actionsPath))) {
+          await rollbackManager.backupFile(actionsPath);
+        }
+        if (hasMutations && (await fileExists(mutationsPath))) {
+          await rollbackManager.backupFile(mutationsPath);
+        }
+        if (hasGetters && (await fileExists(gettersPath))) {
+          await rollbackManager.backupFile(gettersPath);
+        }
+      }
+
       await fs.writeFile(storeIndexPath, newIndexContent, "utf-8");
       result.merged = true;
       result.success = true;

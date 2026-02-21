@@ -13,6 +13,8 @@ import { formatWithPrettier } from "../prettier-formatter";
 import { astCache } from "./utils/ast-cache";
 import { loadConfig } from "../../config";
 import { getMainStoreInfo } from "./utils/store-analysis-cache";
+import { getEventBusClassification } from "../event-bus-composable";
+import { getMixinComposablesMap } from "../mixins-to-composables";
 
 const _req = createRequire(require.resolve("./rule-engine"));
 
@@ -90,6 +92,14 @@ export async function fixPostMigrationIssues(
     }
   }
 
+  const eventBusClassification = projectRoot
+    ? getEventBusClassification(projectRoot) ?? undefined
+    : undefined;
+
+  const mixinComposablesMap = projectRoot
+    ? getMixinComposablesMap(projectRoot) ?? undefined
+    : undefined;
+
   const context: FixContext = {
     enableTypeScript,
     projectRoot,
@@ -100,6 +110,8 @@ export async function fixPostMigrationIssues(
     mainStoreInfo,
     fixerRulesDisable,
     fixerRulesEnable,
+    eventBusClassification,
+    mixinComposablesMap,
   };
 
   // Execute all rules in a single optimized pass (use custom engine if fixerRulesAdd)
@@ -148,6 +160,11 @@ export { clearStoreAnalysisCache } from "./utils/store-analysis-cache";
  * Re-export fixImportPaths for migration pipeline compatibility
  */
 export { fixImportPaths } from "../import-paths";
+
+/**
+ * Event bus detection (for migrator: create event-bus.js when needed)
+ */
+export { hasEventBusUsage } from "./rules/event-bus/event-bus-fixes";
 
 /**
  * Pre-migration SFC structure fix: move script/style from inside template to correct position.

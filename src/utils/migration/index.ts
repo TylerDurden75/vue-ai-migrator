@@ -3,10 +3,14 @@ export {
   migratePackageJsonForViteSSR,
   addVitestConfigToVite,
   ensureNvmrc,
+  ensureEventBus,
+  ensureEventBusPlugin,
+  injectEventBusPluginInMain,
   type PackageMigrationResult,
 } from "./package-migrator";
 export {
   mergeVuexStore,
+  hasSplitVuexStore,
   type VuexStoreMergeResult,
 } from "./vuex-store-merge";
 export {

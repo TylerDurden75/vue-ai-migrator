@@ -57,6 +57,16 @@ export interface FixContext {
   fixerRulesDisable?: string[];
   /** If set, only run these rule IDs (from vue-migrator.config.js fixerRulesEnable) */
   fixerRulesEnable?: string[];
+  /** Event bus classification: composable vs mitt per event name (set during migration) */
+  eventBusClassification?: {
+    composable: Set<string>;
+    mitt: Set<string>;
+  };
+  /** Mixin → composable map (mixin file absolute path -> { composableName, returnKeys, composablePath }) */
+  mixinComposablesMap?: Map<
+    string,
+    { composableName: string; returnKeys: string[]; composablePath: string }
+  >;
 }
 
 export interface FixRuleResult {

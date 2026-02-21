@@ -30,8 +30,11 @@ export class RollbackManager {
   /**
    * Create a backup of a file before modification
    * If file doesn't exist, create an empty backup to mark it as "created during migration"
+   * Does not overwrite existing backup (preserves first backup, e.g. store files before merge)
    */
   async backupFile(filePath: string): Promise<void> {
+    const normalized = path.normalize(filePath);
+    if (this.backups.has(normalized)) return; // Preserve earlier backup (e.g. pre-merge store)
     try {
       const content = await safeReadFile(filePath);
       this.backups.set(filePath, {

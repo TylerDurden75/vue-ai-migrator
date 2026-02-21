@@ -741,6 +741,15 @@ program
         });
       }
 
+      // Check for split Vuex store
+      const { hasSplitVuexStore } = await import("./utils/migration");
+      const splitStore = await hasSplitVuexStore(path);
+      if (splitStore.hasSplit) {
+        console.log(chalk.blue("\n📦 Split Vuex store detected:"));
+        console.log(chalk.cyan(`  • ${splitStore.storePath} (imports actions.js, mutations.js, getters.js)`));
+        console.log(chalk.cyan(`  • Will be auto-merged during migration (run "vue-ai-migrator merge-store" to merge manually first)`));
+      }
+
       // Classify files if requested
       if (options.classify && analysis.vueFiles.length > 0) {
         spinner.start("Classifying files...");

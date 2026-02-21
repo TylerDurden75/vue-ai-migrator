@@ -202,6 +202,7 @@ import {
   mathCeilPaginationFallbackRule,
 } from "../rules/final/final-fixes";
 import { eventBusDetectionRule } from "../rules/event-bus/event-bus-fixes";
+import { mixinsToComposablesRule } from "../rules/mixins/mixins-to-composables";
 import {
   destructuringKeyValueParamRule,
   incorrectEventTypeRule,
@@ -320,6 +321,7 @@ export const computedAndScriptSetupRules: FixRule[] = [
   duplicateSymbolDeclarationRule,
   computedSyntaxRule,
   storeScriptSetupRule,
+  mixinsToComposablesRule,
   addMissingComposableDeclarationsRule,
   replaceThisRouterRouteRule,
   missingUseRouteImportRule,

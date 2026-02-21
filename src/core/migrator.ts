@@ -13,7 +13,7 @@ import {
   MigrationError,
 } from "../utils/safety";
 import { RollbackManager } from "../utils/safety";
-import { migratePackageJson, migratePackageJsonForViteSSR, addVitestConfigToVite, ensureNvmrc, mergeVuexStore } from "../utils/migration";
+import { migratePackageJson, migratePackageJsonForViteSSR, addVitestConfigToVite, ensureNvmrc, ensureEventBus, ensureEventBusPlugin, injectEventBusPluginInMain, mergeVuexStore } from "../utils/migration";
 import {
   migrateWebpackConfig,
   migrateVueConfig,
@@ -32,6 +32,24 @@ import {
   fixImportPaths,
   fixSFCStructureBeforeMigration,
 } from "../utils/migration/post-migration-fixer";
+import { hasEventBusUsage } from "../utils/migration/post-migration-fixer/rules/event-bus/event-bus-fixes";
+import {
+  analyzeEventBusUsage,
+  buildClassification,
+  setEventBusClassification,
+  clearEventBusClassification,
+  generateComposableContent,
+  eventNameToComposableName,
+} from "../utils/migration/event-bus-composable";
+import {
+  setMixinComposablesMap,
+  clearMixinComposablesMap,
+  looksLikeMixin,
+  analyzeMixin,
+  generateComposableFromMixin,
+  mixinNameToComposable,
+  getMixinReturnKeys,
+} from "../utils/migration/mixins-to-composables";
 import {
   checkDependencyConflicts,
   verifyDependencyConsistency,
@@ -160,18 +178,34 @@ export async function migrate(
     const defaultIgnore = ["node_modules/**", "dist/**", "build/**"];
     const ignorePatterns = options.ignore ?? defaultIgnore;
 
+    // Create rollback manager early so we can backup store files before merge
+    const rollbackManager = enableRollback
+      ? new RollbackManager(projectPath)
+      : null;
+    if (rollbackManager && !dryRun) {
+      await rollbackManager.loadBackups();
+    }
+
     // Merge split Vuex store BEFORE building file list (merge deletes actions.js, etc.)
-    if (!dryRun) {
-      try {
-        const mergeResult = await mergeVuexStore(projectPath, false);
-        if (mergeResult.merged) {
-          result.warnings.push(
-            ...mergeResult.changes.map((c) => `Store merge: ${c}`)
-          );
-        }
-      } catch {
-        /* merge-store may fail if store is not in expected format */
+    try {
+      const mergeResult = await mergeVuexStore(
+        projectPath,
+        dryRun,
+        rollbackManager ?? undefined
+      );
+      if (mergeResult.merged) {
+        result.warnings.push(
+          ...mergeResult.changes.map((c) => `Store merge: ${c}`)
+        );
+      } else if (mergeResult.mergedFiles.length > 0) {
+        // Dry-run: merge would happen, inform user
+        result.warnings.push(
+          "Split Vuex store detected - will be auto-merged during migration",
+          ...mergeResult.changes.map((c) => `Store merge (preview): ${c}`)
+        );
       }
+    } catch {
+      /* merge-store may fail if store is not in expected format */
     }
 
     // Find all Vue files
@@ -200,9 +234,6 @@ export async function migrate(
     const classifier = new MigrationClassifier();
     const testGenerator = options.generateTests ? new TestGenerator() : null;
     const reporter = new MigrationReporter();
-    const rollbackManager = enableRollback
-      ? new RollbackManager(projectPath)
-      : null;
     const cacheManager = useCache ? new CacheManager(projectPath) : null;
 
     // Load cache early for better performance
@@ -216,10 +247,8 @@ export async function migrate(
     const classificationCounts = { simple: 0, medium: 0, complex: 0 };
     const explanations: Record<string, string> = {};
 
-    // Load existing backups if rollback is enabled
+    // Backup important configuration files before migration (backups already loaded earlier)
     if (rollbackManager && !dryRun) {
-      await rollbackManager.loadBackups();
-
       // Backup important configuration files before migration
       const configFiles = [
         path.join(projectPath, "package.json"),
@@ -240,6 +269,151 @@ export async function migrate(
           // File doesn't exist, skip silently
         }
       }
+    }
+
+    // Event bus: analyze → composables (eligible) + mitt (fallback)
+    clearEventBusClassification();
+    clearMixinComposablesMap();
+    const eventBusFileContents = await Promise.all(
+      vueFiles.map(async (f) => {
+        try {
+          const c = await safeReadFile(f);
+          return { filePath: f, content: c };
+        } catch {
+          return null;
+        }
+      })
+    );
+    const validEventBusFiles = eventBusFileContents.filter(
+      (f): f is { filePath: string; content: string } => f !== null
+    );
+    const needsEventBus = validEventBusFiles.some(({ content }) =>
+      hasEventBusUsage(content)
+    );
+    if (needsEventBus) {
+      try {
+        const usages = analyzeEventBusUsage(validEventBusFiles);
+        const classification = buildClassification(usages);
+        setEventBusClassification(projectPath, classification);
+
+        // Generate composables for eligible events
+        const composablesDir = path.join(projectPath, "src", "composables");
+        for (const eventName of classification.composable) {
+          const composableName = eventNameToComposableName(eventName);
+          const composablePath = path.join(
+            composablesDir,
+            `${composableName}.ts`
+          );
+          if (!dryRun) {
+            await fs.mkdir(composablesDir, { recursive: true });
+            const composableContent = generateComposableContent(eventName);
+            await fs.writeFile(composablePath, composableContent, "utf-8");
+            rollbackManager?.addCreatedFile(composablePath);
+          }
+          result.warnings.push(
+            `Event bus '${eventName}' → composable ${composableName}`
+          );
+        }
+
+        // Mitt fallback for non-eligible events
+        if (classification.mitt.size > 0) {
+          const eventNames = [...classification.mitt];
+          const ebResult = await ensureEventBus(
+            projectPath,
+            dryRun,
+            rollbackManager ?? undefined,
+            {
+              enableTypeScript: options.enableTypeScript || false,
+              eventNames,
+            }
+          );
+          if (ebResult.created) {
+            result.warnings.push(
+              `Event bus (mitt) for: ${[...classification.mitt].slice(0, 3).join(", ")}${classification.mitt.size > 3 ? "…" : ""}`
+            );
+          }
+          const pluginResult = await ensureEventBusPlugin(
+            projectPath,
+            dryRun,
+            rollbackManager ?? undefined,
+            options.enableTypeScript || false
+          );
+          if (pluginResult.created) {
+            const injected = await injectEventBusPluginInMain(projectPath, dryRun);
+            if (injected) {
+              result.warnings.push("Event bus plugin added (this.$bus available)");
+            }
+          }
+        }
+      } catch {
+        /* event bus migration may fail */
+      }
+    }
+
+    // Mixins → composables: scan mixin files, generate composables, fill cache
+    try {
+      const mixinPatterns = [
+        "**/mixins/**/*.{js,ts}",
+        "**/*Mixin*.{js,ts}",
+      ];
+      const mixinFileSets = await Promise.all(
+        mixinPatterns.map((p) =>
+          glob(p, { cwd: projectPath, ignore: ignorePatterns, absolute: true })
+        )
+      );
+      const mixinFiles = [...new Set(mixinFileSets.flat())];
+
+      const mixinMap = new Map<
+        string,
+        { composableName: string; returnKeys: string[]; composablePath: string }
+      >();
+      const composablesDir = path.join(projectPath, "src", "composables");
+
+      for (const mixinPath of mixinFiles) {
+        try {
+          const content = await safeReadFile(mixinPath);
+          if (!looksLikeMixin(content, mixinPath)) continue;
+
+          const analysis = analyzeMixin(content);
+          const mixinBaseName = path.basename(mixinPath, path.extname(mixinPath));
+          const composableName = mixinNameToComposable(mixinBaseName);
+          const returnKeys = getMixinReturnKeys(analysis);
+          const composablePath = path.join(
+            composablesDir,
+            `${composableName}.ts`
+          );
+
+          if (!dryRun) {
+            await fs.mkdir(composablesDir, { recursive: true });
+            const composableContent = generateComposableFromMixin(
+              mixinBaseName,
+              analysis,
+              options.enableTypeScript || false,
+              content
+            );
+            await fs.writeFile(composablePath, composableContent, "utf-8");
+            rollbackManager?.addCreatedFile(composablePath);
+          }
+
+          const normalizedPath = path.resolve(mixinPath);
+          mixinMap.set(normalizedPath, {
+            composableName,
+            returnKeys,
+            composablePath,
+          });
+          result.warnings.push(
+            `Mixin ${path.relative(projectPath, mixinPath)} → composable ${composableName}`
+          );
+        } catch {
+          /* skip mixin that can't be processed */
+        }
+      }
+
+      if (mixinMap.size > 0) {
+        setMixinComposablesMap(projectPath, mixinMap);
+      }
+    } catch {
+      /* mixin migration may fail */
     }
 
     // Load cache if enabled
