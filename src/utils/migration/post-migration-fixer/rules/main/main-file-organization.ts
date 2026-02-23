@@ -9,8 +9,11 @@ const IMPORT_REGEX = /^import\s+(.+?)\s+from\s+['"]([^'"]+)['"]\s*;?\s*\n?/gm;
 /**
  * Extract import statement and the names it brings into scope
  */
-function parseImports(content: string): Array<{ fullMatch: string; names: string[]; from: string }> {
-  const imports: Array<{ fullMatch: string; names: string[]; from: string }> = [];
+function parseImports(
+  content: string,
+): Array<{ fullMatch: string; names: string[]; from: string }> {
+  const imports: Array<{ fullMatch: string; names: string[]; from: string }> =
+    [];
   let m: RegExpExecArray | null;
   const re = new RegExp(IMPORT_REGEX.source, "gms");
   while ((m = re.exec(content)) !== null) {
@@ -43,8 +46,17 @@ function isNameUsedInActiveCode(content: string, name: string): boolean {
   const lines = content.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) continue;
-    if (/^import\s+/.test(trimmed) && new RegExp(`\\b${escapeRegex(name)}\\b`).test(line)) continue; // skip own import
+    if (
+      trimmed.startsWith("//") ||
+      trimmed.startsWith("*") ||
+      trimmed.startsWith("/*")
+    )
+      continue;
+    if (
+      /^import\s+/.test(trimmed) &&
+      new RegExp(`\\b${escapeRegex(name)}\\b`).test(line)
+    )
+      continue; // skip own import
     const regex = new RegExp(`\\b${escapeRegex(name)}\\b`);
     if (regex.test(line)) return true;
   }
@@ -56,6 +68,65 @@ function escapeRegex(s: string): string {
 }
 
 /**
+ * Reorder app API calls: app.use(createPinia) and app.use(router) before app.provide/component/directive
+ * Required because app.provide(composable) may call useStore() which needs Pinia active
+ */
+function reorderMainAppCalls(rest: string): string {
+  const createAppMatch = rest.match(
+    /const\s+app\s*=\s*createApp\([^)]+\)\s*;?\s*\n?/,
+  );
+  if (!createAppMatch) return rest;
+
+  let remaining = rest;
+  const appUsePiniaRe =
+    /app\.use\s*\(\s*createPinia\s*\(\s*\)\s*\)\s*;?\s*\n?/g;
+  const appUseRouterRe = /app\.use\s*\(\s*router\s*\)\s*;?\s*\n?/g;
+  const appUseOtherRe = /app\.use\s*\([^)]+\)\s*;?\s*\n?/g; // VueI18n, etc. (after pinia/router)
+  const appProvideRe = /app\.provide\s*\([^;]+\)\s*;?\s*\n?/g;
+  const appOtherRe = /app\.(component|directive)\s*\([^;]+\)\s*;?\s*\n?/g;
+  const appMountRe = /app\.mount\s*\([^)]+\)\s*;?\s*\n?/g;
+
+  const extract = (re: RegExp): string => {
+    const matches = remaining.match(re) || [];
+    remaining = remaining.replace(re, "");
+    return matches.join("");
+  };
+
+  const piniaBlock = extract(appUsePiniaRe);
+  const routerBlock = extract(appUseRouterRe);
+  const otherUseBlock = extract(appUseOtherRe);
+  const provideBlock = extract(appProvideRe);
+  const otherBlock = extract(appOtherRe);
+  const mountBlock = extract(appMountRe);
+
+  // Remaining: createApp line + anything else not matched
+  const afterCreateApp = remaining.replace(createAppMatch[0], "").trim();
+  const trailingLines = afterCreateApp
+    ? afterCreateApp
+        .split("\n")
+        .filter((l) => l.trim())
+        .join("\n")
+    : "";
+
+  const ordered = [
+    createAppMatch[0],
+    piniaBlock,
+    routerBlock,
+    otherUseBlock,
+    otherBlock,
+    provideBlock,
+    mountBlock,
+    trailingLines,
+  ]
+    .filter(Boolean)
+    .join("")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return ordered;
+}
+
+/**
  * Remove useless comments from main.js rest content (orphan section headers, dead Vue.filter lines)
  */
 function removeUselessMainComments(rest: string): string {
@@ -64,12 +135,21 @@ function removeUselessMainComments(rest: string): string {
   for (const line of lines) {
     const trimmed = line.trim();
     // Orphan section headers from Vue 2 migration (Register global X)
-    if (/^\/\/\s*Register global (mixin|filters|directives|component)\s*$/.test(trimmed)) continue;
+    if (
+      /^\/\/\s*Register global (mixin|filters|directives|component)\s*$/.test(
+        trimmed,
+      )
+    )
+      continue;
     // Vue.filter commented lines (dead code - filters removed in Vue 3)
-    if (/\/\/.*Vue\.filter\s*\(.*Filters removed in Vue 3/i.test(trimmed)) continue;
+    if (/\/\/.*Vue\.filter\s*\(.*Filters removed in Vue 3/i.test(trimmed))
+      continue;
     cleaned.push(line);
   }
-  return cleaned.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return cleaned
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /**
@@ -79,21 +159,28 @@ function rewriteImportRemoveUnused(
   fullMatch: string,
   allNames: string[],
   usedNames: string[],
-  from: string
+  from: string,
 ): string {
-  const m = fullMatch.match(/^import\s+(.+?)\s+from\s+(['"][^'"]+['"])\s*;?\s*$/s);
+  const m = fullMatch.match(
+    /^import\s+(.+?)\s+from\s+(['"][^'"]+['"])\s*;?\s*$/s,
+  );
   if (!m) return fullMatch;
   const clause = m[1].trim();
   const quote = fullMatch.includes('"') ? '"' : "'";
   if (clause.startsWith("{")) {
-    const inner = clause.slice(1, -1).split(",").map((s) => s.trim());
+    const inner = clause
+      .slice(1, -1)
+      .split(",")
+      .map((s) => s.trim());
     const origMap = new Map<string, string>();
     for (const item of inner) {
       const aliasMatch = item.match(/(\w+)\s+as\s+(\w+)/);
       const localName = aliasMatch ? aliasMatch[2] : item.split(/\s+/)[0];
       origMap.set(localName, item);
     }
-    const kept = usedNames.map((n) => origMap.get(n)).filter(Boolean) as string[];
+    const kept = usedNames
+      .map((n) => origMap.get(n))
+      .filter(Boolean) as string[];
     const newClause = kept.length > 0 ? `{ ${kept.join(", ")} }` : "";
     if (newClause) {
       return `import ${newClause} from ${quote}${from}${quote};\n`;
@@ -104,14 +191,24 @@ function rewriteImportRemoveUnused(
 
 export const mainFileOrganizationRule: FixRule = {
   id: "main-file-organization",
-  description: "Organize main.js/main.ts: imports at top, remove unused imports",
+  description:
+    "Organize main.js/main.ts: imports at top, remove unused imports",
   priority: 93,
   dependencies: ["vue2-global-api"],
   shouldApply: (filePath) => {
     return filePath.includes("main.js") || filePath.includes("main.ts");
   },
-  apply: async (_filePath, content, _context: FixContext): Promise<FixRuleResult> => {
-    const result: FixRuleResult = { content, fixed: false, fixes: [], issues: [] };
+  apply: async (
+    _filePath,
+    content,
+    _context: FixContext,
+  ): Promise<FixRuleResult> => {
+    const result: FixRuleResult = {
+      content,
+      fixed: false,
+      fixes: [],
+      issues: [],
+    };
     let fixed = content;
 
     const imports = parseImports(fixed);
@@ -120,7 +217,9 @@ export const mainFileOrganizationRule: FixRule = {
     const importLines: string[] = [];
 
     for (const imp of imports) {
-      const usedNames = imp.names.filter((n) => isNameUsedInActiveCode(fixed, n));
+      const usedNames = imp.names.filter((n) =>
+        isNameUsedInActiveCode(fixed, n),
+      );
       const allUnused = usedNames.length === 0 && imp.names.length > 0;
       if (allUnused) {
         let toRemove = imp.fullMatch;
@@ -128,9 +227,16 @@ export const mainFileOrganizationRule: FixRule = {
         if (idx > 0) {
           const before = fixed.slice(0, idx);
           const lines = before.split("\n");
-          const prevLine = lines.length >= 2 ? lines[lines.length - 2] + "\n" : lines[lines.length - 1] || "";
+          const prevLine =
+            lines.length >= 2
+              ? lines[lines.length - 2] + "\n"
+              : lines[lines.length - 1] || "";
           const prevTrimmed = prevLine.trim();
-          if (prevTrimmed && /^\s*\/\/[^/].*$/.test(prevTrimmed) && !prevTrimmed.toLowerCase().includes("import")) {
+          if (
+            prevTrimmed &&
+            /^\s*\/\/[^/].*$/.test(prevTrimmed) &&
+            !prevTrimmed.toLowerCase().includes("import")
+          ) {
             toRemove = prevLine + toRemove;
             fixed = fixed.replace(toRemove, "\n");
           } else {
@@ -141,8 +247,17 @@ export const mainFileOrganizationRule: FixRule = {
         }
         result.fixed = true;
         result.fixes.push(`Removed unused import from ${imp.from}`);
-      } else if (usedNames.length > 0 && usedNames.length < imp.names.length && imp.fullMatch.includes("{")) {
-        const newLine = rewriteImportRemoveUnused(imp.fullMatch, imp.names, usedNames, imp.from);
+      } else if (
+        usedNames.length > 0 &&
+        usedNames.length < imp.names.length &&
+        imp.fullMatch.includes("{")
+      ) {
+        const newLine = rewriteImportRemoveUnused(
+          imp.fullMatch,
+          imp.names,
+          usedNames,
+          imp.from,
+        );
         fixed = fixed.replace(imp.fullMatch, newLine);
         result.fixed = true;
         result.fixes.push(`Removed unused names from import ${imp.from}`);
@@ -153,7 +268,11 @@ export const mainFileOrganizationRule: FixRule = {
     }
 
     if (importLines.length === 0) {
-      result.content = fixed.replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "").trim() + "\n";
+      result.content =
+        fixed
+          .replace(/\n{3,}/g, "\n\n")
+          .replace(/^\n+/, "")
+          .trim() + "\n";
       return result;
     }
 
@@ -170,7 +289,18 @@ export const mainFileOrganizationRule: FixRule = {
       result.fixes.push("Removed useless comments");
     }
 
-    const newContent = `${importBlock}\n\n${restWithoutImports}`.replace(/\n{3,}/g, "\n\n").trim();
+    // Reorder app calls: app.use(Pinia) and app.use(router) must come BEFORE app.provide
+    // (app.provide with composable that uses useStore requires Pinia to be active)
+    const reorderedRest = reorderMainAppCalls(restWithoutImports);
+    if (reorderedRest !== restWithoutImports) {
+      restWithoutImports = reorderedRest;
+      result.fixed = true;
+      result.fixes.push("Reordered app.use(Pinia) before app.provide");
+    }
+
+    const newContent = `${importBlock}\n\n${restWithoutImports}`
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
 
     if (newContent !== content.trim()) {
       result.content = newContent + "\n";

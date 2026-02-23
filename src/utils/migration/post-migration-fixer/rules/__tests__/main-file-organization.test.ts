@@ -62,6 +62,34 @@ app.mount('#app');
     expect(firstImportIdx).toBeLessThan(createAppIdx);
   });
 
+  it("should reorder app.use(Pinia) before app.provide when provide uses stores", async () => {
+    const content = `import { createApp } from 'vue';
+import { createPinia } from "pinia";
+import App from './App.vue';
+import router from './router';
+import { useUser } from '@/composables/useUser';
+import GlobalButton from './components/GlobalButton.vue';
+
+const app = createApp(App);
+app.component("GlobalButton", GlobalButton);
+app.provide("user", useUser());
+app.use(createPinia());
+app.use(router);
+app.mount('#app');
+`;
+
+    const result = await mainFileOrganizationRule.apply(
+      "src/main.js",
+      content,
+      { ...baseContext, scriptContent: content }
+    );
+
+    expect(result.fixed).toBe(true);
+    const piniaIdx = result.content.indexOf("app.use(createPinia()");
+    const provideIdx = result.content.indexOf("app.provide(");
+    expect(piniaIdx).toBeLessThan(provideIdx);
+  });
+
   it("should not remove imports that are used", async () => {
     const content = `import { createApp } from 'vue';
 import App from './App.vue';
