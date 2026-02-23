@@ -14,7 +14,10 @@ import { astCache } from "./utils/ast-cache";
 import { loadConfig } from "../../config";
 import { getMainStoreInfo } from "./utils/store-analysis-cache";
 import { getEventBusClassification } from "../event-bus-composable";
-import { getMixinComposablesMap } from "../mixins-to-composables";
+import {
+  getMixinComposablesMap,
+  buildMixinComposablesMapFromProject,
+} from "../mixins-to-composables";
 
 const _req = createRequire(require.resolve("./rule-engine"));
 
@@ -96,9 +99,14 @@ export async function fixPostMigrationIssues(
     ? getEventBusClassification(projectRoot) ?? undefined
     : undefined;
 
-  const mixinComposablesMap = projectRoot
-    ? getMixinComposablesMap(projectRoot) ?? undefined
-    : undefined;
+  let mixinComposablesMap: Map<string, { composableName: string; returnKeys: string[]; composablePath: string }> | undefined;
+  if (projectRoot) {
+    mixinComposablesMap = getMixinComposablesMap(projectRoot) ?? undefined;
+    if (!mixinComposablesMap) {
+      const built = buildMixinComposablesMapFromProject(projectRoot);
+      if (built.size > 0) mixinComposablesMap = built;
+    }
+  }
 
   const context: FixContext = {
     enableTypeScript,

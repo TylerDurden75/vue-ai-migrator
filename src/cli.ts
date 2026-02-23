@@ -503,13 +503,14 @@ program
   )
   .action(async (projectPath: string, options) => {
     const spinner = ora("Running post-migration fixes...").start();
+    const resolvedProjectPath = path.resolve(projectPath);
 
     try {
       const { glob } = await import("glob");
       const defaultIgnore = ["node_modules/**", "dist/**", "build/**"];
       let ignorePatterns = defaultIgnore;
       try {
-        const config = await loadConfig(projectPath);
+        const config = await loadConfig(resolvedProjectPath);
         if (config.ignore && config.ignore.length > 0) {
           ignorePatterns = config.ignore;
         }
@@ -517,17 +518,17 @@ program
         // No config, use defaults
       }
       const vueFiles = await glob("**/*.{vue,ts,js}", {
-        cwd: projectPath,
+        cwd: resolvedProjectPath,
         ignore: ignorePatterns,
         absolute: true,
       });
       const storeFiles = await glob("**/store/**/*.{ts,js}", {
-        cwd: projectPath,
+        cwd: resolvedProjectPath,
         ignore: ignorePatterns,
         absolute: true,
       });
       const mainFiles = await glob("**/main.{ts,js}", {
-        cwd: projectPath,
+        cwd: resolvedProjectPath,
         ignore: ignorePatterns,
         absolute: true,
       });
@@ -541,14 +542,14 @@ program
       const entryFiles = [
         ...new Set(
           (await Promise.all(
-            entryPatterns.map((p) => glob(p, { cwd: projectPath, ignore: ignorePatterns, absolute: true }))
+            entryPatterns.map((p) => glob(p, { cwd: resolvedProjectPath, ignore: ignorePatterns, absolute: true }))
           )).flat()
         ),
       ];
       const extraFiles = await Promise.all([
-        glob("index.html", { cwd: projectPath, absolute: true }),
-        glob("src/index.template.html", { cwd: projectPath, absolute: true }),
-        glob("manifest.json", { cwd: projectPath, absolute: true }),
+        glob("index.html", { cwd: resolvedProjectPath, absolute: true }),
+        glob("src/index.template.html", { cwd: resolvedProjectPath, absolute: true }),
+        glob("manifest.json", { cwd: resolvedProjectPath, absolute: true }),
       ]).then((arr) => arr.flat().filter((f): f is string => !!f));
       const filesToFix = [
         ...new Set([
@@ -570,14 +571,14 @@ program
             filePath,
             content,
             enableTypeScript,
-            projectPath,
+            resolvedProjectPath,
           );
           if (result.fixed) {
             await fs.writeFile(filePath, result.content);
             fixedCount++;
             if (options.verbose) {
               console.log(
-                chalk.green(`  ✓ ${path.relative(projectPath, filePath)}`),
+                chalk.green(`  ✓ ${path.relative(resolvedProjectPath, filePath)}`),
               );
               result.fixes.forEach((f) => console.log(chalk.gray(`    - ${f}`)));
             }
@@ -585,7 +586,7 @@ program
         } catch (err) {
           if (options.verbose) {
             console.log(
-              chalk.yellow(`  ⚠ ${path.relative(projectPath, filePath)}: ${err instanceof Error ? err.message : String(err)}`),
+              chalk.yellow(`  ⚠ ${path.relative(resolvedProjectPath, filePath)}: ${err instanceof Error ? err.message : String(err)}`),
             );
           }
         }
@@ -610,7 +611,7 @@ program
       // Validate: run npm run build to verify compilation
       if (options.validate) {
         spinner.start("Validating build...");
-        const buildResult = await runBuild(projectPath);
+        const buildResult = await runBuild(resolvedProjectPath);
         if (buildResult.success) {
           spinner.succeed("Build validation passed!");
         } else {

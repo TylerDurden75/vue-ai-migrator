@@ -224,19 +224,21 @@ function extractMisplacedImportsAndRemove(script: string): { cleaned: string; ex
 }
 
 /**
- * Section order for script setup (Vue style guide + common conventions)
- * 1. Imports
- * 2. Composables (useXxx)
- * 3. defineProps / defineEmits
- * 4. let/var
- * 5. refs
- * 6. computed
- * 7. Methods (before watch to avoid TDZ when watch calls fn() with immediate:true)
- * 8. watch
- * 9. Lifecycle
+ * Section order for script setup (Vue style guide + clean structure)
+ * 1. Imports (grouped: vue, store, components, other)
+ * 2. Stores (useXxxStore)
+ * 3. Composables (inject, useRoute, useRouter, etc.)
+ * 4. defineProps / defineEmits
+ * 5. let/var
+ * 6. refs
+ * 7. computed
+ * 8. methods
+ * 9. watch
+ * 10. lifecycle
  */
 function extractScriptSections(script: string): {
   imports: string[];
+  stores: string[];
   composables: string[];
   defineProps: string[];
   defineEmits: string[];
@@ -250,6 +252,7 @@ function extractScriptSections(script: string): {
 } {
   const sections = {
     imports: [] as string[],
+    stores: [] as string[],
     composables: [] as string[],
     defineProps: [] as string[],
     defineEmits: [] as string[],
@@ -282,7 +285,21 @@ function extractScriptSections(script: string): {
       sections.imports.push(block.join("\n"));
       continue;
     }
-    if (/^const\s+\w+\s*=\s*use\w+Store?\s*\(/.test(trimmed) || /^const\s+\w+\s*=\s*useRoute\s*\(/.test(trimmed) || /^const\s+\w+\s*=\s*useRouter\s*\(/.test(trimmed) || /^const\s+\w+\s*=\s*getCurrentInstance\s*\(/.test(trimmed)) {
+    // Stores: useXxxStore()
+    if (/^const\s+\w+\s*=\s*use\w+Store\s*\(/.test(trimmed)) {
+      const block = extractBlock(lines, i);
+      sections.stores.push(block.text);
+      i = block.next;
+      continue;
+    }
+    // Composables: inject, useRoute, useRouter, getCurrentInstance
+    if (
+      /^const\s+\w+\s*=\s*useRoute\s*\(/.test(trimmed) ||
+      /^const\s+\w+\s*=\s*useRouter\s*\(/.test(trimmed) ||
+      /^const\s+\w+\s*=\s*getCurrentInstance\s*\(/.test(trimmed) ||
+      /^const\s+\{[^}]*\}\s*=\s*inject\s*\(/.test(trimmed) ||
+      /^const\s+\w+\s*=\s*use\w+\s*\(/.test(trimmed)
+    ) {
       const block = extractBlock(lines, i);
       sections.composables.push(block.text);
       i = block.next;
@@ -375,18 +392,42 @@ function extractBlock(lines: string[], start: number): { text: string; next: num
   return { text: block.join("\n").replace(/\s*$/, ""), next: i };
 }
 
+/** Sort imports: vue first, then @/store, then @/components/composables, then others */
+function sortImports(importLines: string[]): string[] {
+  const allImports = importLines.flatMap((block) => block.split("\n").filter((l) => l.trim()));
+  return allImports.sort((a, b) => {
+    const fromA = a.match(/from\s+['"]([^'"]+)['"]/)?.[1] ?? "";
+    const fromB = b.match(/from\s+['"]([^'"]+)['"]/)?.[1] ?? "";
+    const tier = (s: string) => {
+      if (s === "vue") return 0;
+      if (s.includes("@/store") || s.includes("@/stores")) return 2;
+      if (s.includes("@/components") || s.includes("@/composables")) return 3;
+      return 4;
+    };
+    const tA = tier(fromA);
+    const tB = tier(fromB);
+    if (tA !== tB) return tA - tB;
+    return fromA.localeCompare(fromB);
+  });
+}
+
 function buildOrganizedScript(sections: ReturnType<typeof extractScriptSections>): string {
   const parts: string[] = [];
-  if (sections.imports.length) parts.push(sections.imports.join("\n\n"));
-  if (sections.composables.length) parts.push(sections.composables.join("\n\n"));
-  if (sections.defineProps.length) parts.push(sections.defineProps.join("\n\n"));
-  if (sections.defineEmits.length) parts.push(sections.defineEmits.join("\n\n"));
-  if (sections.letVar.length) parts.push(sections.letVar.join("\n\n"));
-  if (sections.refs.length) parts.push(sections.refs.join("\n\n"));
-  if (sections.computed.length) parts.push(sections.computed.join("\n\n"));
-  if (sections.methods.length) parts.push(sections.methods.join("\n\n"));
-  if (sections.watch.length) parts.push(sections.watch.join("\n\n"));
-  if (sections.lifecycle.length) parts.push(sections.lifecycle.join("\n\n"));
+  // Imports: grouped together, sorted (vue → store → components → other)
+  if (sections.imports.length) {
+    parts.push(sortImports(sections.imports).join("\n"));
+  }
+  // Stores, composables, etc.: each block on one line, groups separated by blank line
+  if (sections.stores.length) parts.push(sections.stores.join("\n"));
+  if (sections.composables.length) parts.push(sections.composables.join("\n"));
+  if (sections.defineProps.length) parts.push(sections.defineProps.join("\n"));
+  if (sections.defineEmits.length) parts.push(sections.defineEmits.join("\n"));
+  if (sections.letVar.length) parts.push(sections.letVar.join("\n"));
+  if (sections.refs.length) parts.push(sections.refs.join("\n"));
+  if (sections.computed.length) parts.push(sections.computed.join("\n"));
+  if (sections.methods.length) parts.push(sections.methods.join("\n"));
+  if (sections.watch.length) parts.push(sections.watch.join("\n"));
+  if (sections.lifecycle.length) parts.push(sections.lifecycle.join("\n"));
   if (sections.other.length) parts.push(sections.other.join("\n"));
   return parts.filter(Boolean).join("\n\n");
 }

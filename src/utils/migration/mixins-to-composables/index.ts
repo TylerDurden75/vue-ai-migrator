@@ -17,5 +17,6 @@ export {
   setMixinComposablesMap,
   getMixinComposablesMap,
   clearMixinComposablesMap,
+  buildMixinComposablesMapFromProject,
   type MixinComposableInfo,
 } from "./cache";

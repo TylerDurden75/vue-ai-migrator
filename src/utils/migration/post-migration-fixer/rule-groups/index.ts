@@ -204,6 +204,7 @@ import {
 } from "../rules/final/final-fixes";
 import { eventBusDetectionRule } from "../rules/event-bus/event-bus-fixes";
 import { mixinsToComposablesRule } from "../rules/mixins/mixins-to-composables";
+import { injectGlobalComposableRule } from "../rules/mixins/inject-global-composable";
 import {
   destructuringKeyValueParamRule,
   incorrectEventTypeRule,
@@ -324,6 +325,7 @@ export const computedAndScriptSetupRules: FixRule[] = [
   computedSyntaxRule,
   storeScriptSetupRule,
   mixinsToComposablesRule,
+  injectGlobalComposableRule,
   addMissingComposableDeclarationsRule,
   replaceThisRouterRouteRule,
   missingUseRouteImportRule,
