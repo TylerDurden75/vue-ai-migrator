@@ -1,6 +1,7 @@
 # Usage Guide - vue-ai-migrator
 
-> 📘 **Migration strategy** — Vue 2.7 support, compat build vs full migration: see [Migration Guide](./docs/MIGRATION_GUIDE.md).
+> 📘 **Migration strategy** — Vue 2.7 support, compat build vs full migration: see [Migration Guide](./docs/MIGRATION_GUIDE.md).  
+> ⚡ **Quick reference** — [Cheat Sheet](./docs/CHEATSHEET.md) for CLI commands and options.
 
 ## 📦 Installation
 

@@ -5,6 +5,7 @@
 **The most comprehensive and performant Vue 2 → Vue 3 migration tool**  
 _AST-based transformations + AI integration for reliable migrations_
 
+[![Getting Started](https://img.shields.io/badge/Getting_Started-5_min-10B981?style=for-the-badge&logo=rocket)](#quick-start-5-minutes)
 [![npm version](https://img.shields.io/npm/v/vue-ai-migrator?style=for-the-badge)](https://www.npmjs.com/package/vue-ai-migrator)
 [![npm downloads](https://img.shields.io/npm/dm/vue-ai-migrator?style=for-the-badge)](https://www.npmjs.com/package/vue-ai-migrator)
 [![license](https://img.shields.io/npm/l/vue-ai-migrator?style=for-the-badge)](LICENSE)
@@ -14,7 +15,7 @@ _AST-based transformations + AI integration for reliable migrations_
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D16.0.0-green?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 
-[Documentation](./USAGE.md) • [Migration Guide](./docs/MIGRATION_GUIDE.md) • [API Keys](./API_KEYS.md) • [Changelog](./CHANGELOG.md) • [Roadmap](./docs/ROADMAP.md)
+**[⚡ Getting Started (5 min)](#-quick-start-5-minutes)** • [Usage](./USAGE.md) • [Cheat Sheet](./docs/CHEATSHEET.md) • [Migration Guide](./docs/MIGRATION_GUIDE.md) • [API Keys](./API_KEYS.md) • [Changelog](./CHANGELOG.md)
 
 </div>
 
@@ -34,8 +35,21 @@ Automatic Vue 2 → Vue 3 migration combining:
 
 > ✅ **Successfully tested** on [vue-hackernews-2.0](https://github.com/vuejs/vue-hackernews-2.0) — full migration, build and runtime verified (Vuex, slots, SSR).
 
+### ⚡ Quick Start (5 minutes)
+
+```bash
+npm install -g vue-ai-migrator          # 1. Install
+vue-ai-migrator analyze ./my-project --classify   # 2. Analyze
+vue-ai-migrator migrate ./my-project             # 3. Migrate (no API key needed)
+```
+
+**That's it.** Free mode covers ~83% of cases. Use `--dry-run` to preview, `--ai` for complex files. → [Cheat sheet](./docs/CHEATSHEET.md) | [Full usage](./USAGE.md)
+
+---
+
 ## 📑 Table of Contents
 
+- [⚡ Quick Start (5 min)](#-quick-start-5-minutes)
 - [Features](#-features)
 - [Installation](#-installation)
 - [Quick Start](#-quick-start)
@@ -55,151 +69,32 @@ Automatic Vue 2 → Vue 3 migration combining:
 
 ## 🚀 Features
 
-- **🆓 Free mode by default**: AST-based transformations work without API keys
-- **Composition API + script setup**: Migrated components target `<script setup>` format
-- **Automatic codemods**: Comprehensive transformations from Vue 2 to Vue 3
-- **🤖 Optional AI assistance**: Use AI for complex migrations (opt-in with `--ai` flag)
-- **Vue SFC support**: Full parsing and transformation of `.vue` files (template, script, style)
-- **Template transformations**: Slots, scoped slots, filters, v-model in templates
-- **Code analysis**: Automatic detection of Vue 2 patterns
-- **Progressive migration**: Support for step-by-step migrations
-- **Rollback system**: Automatic backups with easy rollback capability
-- **Detailed reports**: Statistics and post-migration suggestions
-- **Parallel processing**: Process multiple files simultaneously for better performance
-- **Smart caching**: Avoids reprocessing unchanged files
-- **Robust error handling**: Comprehensive error handling with retry mechanisms
-- **Well tested**: 620+ unit tests covering all modules and transformations
-- **Classification system**: Automatic complexity classification (Simple/Medium/Complex)
-- **Test generation**: Automatic Vitest test generation for migrated components
-- **Enhanced reporting**: Detailed reports with classification and recommendations
-- **TypeScript support**: Automatic TypeScript type annotations with `--typescript` flag
-  - Typed props with interfaces for complex cases
-  - Typed refs, computed, and reactive values
-  - Typed function parameters and return types
-  - Intelligent type inference from Vue 2 code
-  - See [TypeScript Support](#typescript-support) section for detailed examples
-- **GitHub Action**: Run migration validation (dry-run) or full migration in your CI/CD pipeline
+- **🆓 Free mode by default**: AST-based transformations — no API key required
+- **Composition API + script setup**: Migrated components use `<script setup>` format
+- **Vuex → Pinia, Router 3 → 4**: Automatic store and router transformations
+- **Template & SFC**: Slots, filters, v-model, directives, full `.vue` support
+- **🤖 Optional AI**: Complex cases with `--ai` (OpenAI)
+- **TypeScript**: `--typescript` adds type annotations
+- **Safety**: Rollback, dry-run, validation, 677+ tests
+- **GitHub Action**: CI/CD integration
+
+→ [Full feature list](./USAGE.md) • [Cheat sheet](./docs/CHEATSHEET.md)
 
 ## 🏗️ Architecture
 
-### Migration Workflow
+Vue 2 → **Analyze** → **Classify** (🟢 Simple / 🟡 Medium / 🔴 Complex) → **AST Transform** (or AI for complex) → **Validate** → Vue 3
 
-> **Note**: For interactive diagrams, view this README on [GitHub](https://github.com/TylerDurden75/vue-ai-migrator).
-
-```
-Vue 2 Project
-    ↓
-[Analyze Project]
-    ↓
-[Classify Files]
-    ↓
-{Complexity Assessment}
-    ├─→ 🟢 Simple → [AST Transform]
-    ├─→ 🟡 Medium → [AST + Validation]
-    └─→ 🔴 Complex → [AI Agent]
-    ↓
-[Generate Vue 3 Code]
-    ↓
-[Validate Syntax]
-    ↓
-{Valid?}
-    ├─→ Yes → [Generate Tests] → [Create Report]
-    └─→ No → [Report Issues] → [Create Report]
-    ↓
-Vue 3 Project
-```
-
-**Workflow Steps:**
-
-1. **Analyze Project**: Scans all Vue files and detects patterns
-2. **Classify Files**: Categorizes files by complexity (Simple/Medium/Complex)
-3. **Transform**:
-   - 🟢 **Simple**: Direct AST transformation (fast, deterministic)
-   - 🟡 **Medium**: AST transformation with validation
-   - 🔴 **Complex**: AI-assisted transformation with retry logic
-4. **Generate Vue 3 Code**: Produces migrated code
-5. **Validate Syntax**: Ensures generated code is valid
-6. **Generate Tests** (optional): Creates Vitest tests for migrated components
-7. **Create Report**: Generates detailed migration report
-
-<details>
-<summary>View interactive Mermaid diagram (GitHub only)</summary>
-
-```mermaid
-graph TD
-    A[Vue 2 Project] --> B[Analyze Project]
-    B --> C[Classify Files]
-    C --> D{Complexity?}
-    D -->|Simple| E[AST Transform]
-    D -->|Medium| F[AST + Validation]
-    D -->|Complex| G[AI Agent]
-    E --> H[Generate Vue 3 Code]
-    F --> H
-    G --> H
-    H --> I[Validate Syntax]
-    I --> J{Valid?}
-    J -->|Yes| K[Generate Tests]
-    J -->|No| L[Report Issues]
-    K --> M[Create Report]
-    L --> M
-    M --> N[Vue 3 Project]
-
-    style A fill:#4FC08D,stroke:#333,stroke-width:2px,color:#fff
-    style N fill:#42B883,stroke:#333,stroke-width:2px,color:#fff
-    style G fill:#3B82F6,stroke:#333,stroke-width:2px,color:#fff
-    style D fill:#FBBF24,stroke:#333,stroke-width:2px
-    style E fill:#10B981,stroke:#333,stroke-width:2px,color:#fff
-    style F fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
-```
-
-</details>
-
-### Hybrid Approach: AST + AI
-
-```
-Vue 2 Code
-    ↓
-[AST Parser]
-    ↓
-{Pattern Detection}
-    ├─→ Deterministic → [AST Transform] → Vue 3 Code
-    └─→ Complex → [AI Analysis] → [AI Suggestions] → [AST Validation] → Vue 3 Code
-```
-
-**Hybrid Strategy:**
-
-- **Deterministic patterns** (90% of cases): Fast AST-based transformation
-- **Complex patterns** (10% of cases): AI analysis with AST validation for reliability
-
-<details>
-<summary>View interactive Mermaid diagram (GitHub only)</summary>
-
-```mermaid
-graph LR
-    A[Vue 2 Code] --> B[AST Parser]
-    B --> C{Pattern Detection}
-    C -->|Deterministic| D[AST Transform]
-    C -->|Complex| E[AI Analysis]
-    D --> F[Vue 3 Code]
-    E --> G[AI Suggestions]
-    G --> H[AST Validation]
-    H --> F
-
-    style D fill:#4FC08D,stroke:#333,stroke-width:2px,color:#fff
-    style E fill:#3B82F6,stroke:#333,stroke-width:2px,color:#fff
-    style F fill:#42B883,stroke:#333,stroke-width:2px,color:#fff
-```
-
-</details>
+→ [Full workflow & diagrams](./docs/ARCHITECTURE.md)
 
 ## 📖 Documentation
 
 - **[USAGE.md](./USAGE.md)** — Installation, commands, configuration, examples (main user guide)
+- **[Cheat Sheet](./docs/CHEATSHEET.md)** — Quick reference: CLI commands & most used options
 - **[API_KEYS.md](./API_KEYS.md)** — Configure AI provider API keys (optional, for `--ai` mode)
+- **[docs/MIGRATION_GUIDE.md](./docs/MIGRATION_GUIDE.md)** — Vue 2.7, compat build, workflow
+- **[docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)** — Common errors and solutions
 - **[CHANGELOG.md](./CHANGELOG.md)** — Version history
 - **[docs/ROADMAP.md](./docs/ROADMAP.md)** — Roadmap and planned features
-- **[docs/README.md](./docs/README.md)** — Documentation layout (root vs `docs/` vs `docs/internal/`)
-- **Contributors** — Internal/technical docs (fixer architecture, benchmarks, stabilization) are in [docs/internal/](./docs/internal/)
 
 ## 📦 Installation
 
@@ -265,112 +160,11 @@ vue-ai-migrator migrate ./my-project --ai
 
 ## 🚀 Quick Start
 
-### 📸 CLI in Action
+1. **Analyze** `vue-ai-migrator analyze ./my-project --classify`
+2. **Dry-run** `vue-ai-migrator migrate ./my-project --dry-run --show-diff`
+3. **Migrate** `vue-ai-migrator migrate ./my-project`
 
-<details>
-<summary>View CLI output examples</summary>
-
-#### Analyze with Classification
-
-```
-$ vue-ai-migrator analyze ./my-project --classify
-
-✔ Analyzing project...
-✔ Classification completed!
-
-📋 File Classification:
-  🟢 Simple: 1
-  🟡 Medium: 0
-  🔴 Complex: 1
-
-  Sample classifications:
-    🟢 App.vue: simple
-    🔴 HelloWorld.vue: complex
-      Reasons: Filters in template
-```
-
-#### Migrate (Free Mode - Default)
-
-```
-$ vue-ai-migrator migrate ./my-project --dry-run
-
-Running in free mode (AST transformations only, no AI required)
-✔ Starting migration (free mode - AST transformations only)...
-✔ Migration completed!
-
-✓ Migration results:
-  - Files analyzed: 2
-  - Files modified: 1
-  - Transformations applied: 2
-  
-  🆓 Mode: Free (AST transformations only)
-  💰 Cost: $0.00 (no API key required)
-
-  Classification:
-    🟢 Simple: 1 (free mode handles these)
-    🟡 Medium: 0 (free mode usually handles these)
-    🔴 Complex: 1 (may benefit from AI)
-    
-  💡 Free Mode Coverage: 50% of files can be migrated without AI
-  💡 Tip: 1 complex file(s) detected. Consider using --ai for better results.
-```
-
-</details>
-
-> **📸 Screenshots**: See [SCREENSHOTS_GUIDE.md](./SCREENSHOTS_GUIDE.md) for creating visual screenshots
-
-1. **Analyze your Vue 2 project** (see what needs migration):
-
-```bash
-vue-ai-migrator analyze ./my-vue2-project --classify
-```
-
-This shows you:
-- 🟢 Simple files (free mode handles these)
-- 🟡 Medium files (free mode usually handles these)
-- 🔴 Complex files (may benefit from AI)
-
-2. **Run migration in dry-run mode** (preview changes, **no API key required**):
-
-```bash
-vue-ai-migrator migrate ./my-vue2-project --dry-run --show-diff
-```
-
-3. **Run actual migration** (free mode - works immediately, no setup needed):
-
-```bash
-vue-ai-migrator migrate ./my-vue2-project
-```
-
-**That's it!** Most projects migrate successfully in free mode.
-
-4. **Optional: Enable AI assistance** (only if you have complex files):
-
-```bash
-export OPENAI_API_KEY=sk-your-api-key-here
-vue-ai-migrator migrate ./my-vue2-project --ai
-```
-
-> 💡 **Tip**: Start with free mode! The classification will tell you if you need AI.
-
-### 🔄 Complete Migration
-
-vue-ai-migrator automatically migrates **ALL** of your Vue 2 project to Vue 3 - **works in free mode!**
-
-- ✅ **Vue Components** (`.vue` files) - AST transformations
-- ✅ **Vuex → Pinia Stores** (files with `new Vuex.Store()`) - AST transformations
-- ✅ **Router** (Vue Router 3 → Vue Router 4) - AST transformations
-- ✅ **Plugins, Mixins, Directives** - AST transformations
-- ✅ **All JS/TS files** in the project - AST transformations
-- ✅ **Post-migration fixes** - Automatic corrections (free mode)
-
-> 🆓 All of this works in **free mode** - no API key needed!
-
-**Example: Migrate only stores**
-
-```bash
-vue-ai-migrator migrate ./src/store --transformations "vuex-pinia"
-```
+All migrations work in **free mode** (Vue components, Vuex→Pinia, Router, mixins, etc.). Use `--ai` only for complex files. → [Cheat sheet](./docs/CHEATSHEET.md) | [Full usage](./USAGE.md)
 
 ### Before & After Example
 
@@ -437,690 +231,63 @@ See [.github/actions/migrate/README.md](.github/actions/migrate/README.md) for a
 
 ## 🎯 Usage
 
-### CLI Commands
-
-vue-ai-migrator provides several commands:
-
-#### `analyze` - Analyze Project
-
-Analyze a Vue 2 project to detect migration needs:
-
-```bash
-vue-ai-migrator analyze <project-path> [options]
-```
-
-**Options:**
-
-- `--classify`: Classify files by migration complexity (Simple/Medium/Complex)
-- `--output <file>`: Save analysis report to file
-
-**Example:**
-
-```bash
-vue-ai-migrator analyze ./my-project --classify
-```
-
-#### `migrate` - Migrate Project
-
-Migrate a Vue 2 project to Vue 3:
-
-```bash
-vue-ai-migrator migrate <project-path> [options]
-```
-
-**Options:**
-
-- `--ai, --use-ai`: Enable AI assistance for complex migrations (requires API key) - **Free mode by default**
-- `-k, --ai-api-key <key>`: API key for AI (or use environment variable) - Required only if `--ai` is used
-- `-p, --provider <provider>`: AI provider (openai, mistral, claude, anthropic) - default: openai (or set `VUE_AI_MIGRATOR_AI_PROVIDER`)
-- `-d, --dry-run`: Test migration without modifying files
-- `--show-diff`: Show detailed diff for each file in dry-run mode
-- `--generate-tests`: Automatically generate Vitest tests for migrated components
-- `--no-ai`: Explicitly disable AI usage (default behavior)
-- `--transformations <list>`: Comma-separated list of transformations to apply
-- `--no-rollback`: Disable automatic backups
-- `-o, --output <file>`: Output file for migration report
-- `--typescript`: Enable TypeScript type annotations in migrated code (see [TypeScript Support](#typescript-support))
-- `--install`: Automatically reinstall dependencies after migration
-- `--clean-install`: Remove `node_modules` and `package-lock.json` before reinstalling dependencies (recommended after migration)
-- `--validate`: Run `npm run build` after migration to verify the project compiles (exits with error code if build fails)
-**Examples:**
-
-```bash
-# Free mode (default) - AST transformations only, no API key required
-vue-ai-migrator migrate ./my-project --dry-run --show-diff
-
-# Full migration in free mode
-vue-ai-migrator migrate ./my-project --generate-tests
-
-# Migration with AI assistance (requires API key)
-export OPENAI_API_KEY=sk-your-key
-vue-ai-migrator migrate ./my-project --ai --generate-tests
-
-# Explicitly disable AI (same as default)
-vue-ai-migrator migrate ./my-project --no-ai
-
-# Migration with TypeScript types (generates <script setup lang="ts">)
-vue-ai-migrator migrate ./my-project --typescript
-
-# Migrate only Vuex stores to Pinia
-vue-ai-migrator migrate ./src/store --transformations "vuex-pinia"
-
-# Migrate with specific transformations
-vue-ai-migrator migrate ./src --transformations "async-components,render-functions"
-
-# Explicitly generate <script setup lang="ts">
-vue-ai-migrator migrate ./my-project --transformations "script-setup" --typescript
-
-# Migrate and automatically reinstall dependencies
-vue-ai-migrator migrate ./my-project --install
-
-# Migrate with clean install (removes node_modules first, recommended)
-vue-ai-migrator migrate ./my-project --clean-install
-
-# Migrate with TypeScript and clean install
-vue-ai-migrator migrate ./my-project --typescript --clean-install
-```
-
-> 💡 **Note**: With `--typescript`, the migrated code automatically generates `<script setup lang="ts">` if the code is transformed to Composition API. See [EXPLICATION_SCRIPT_SETUP.md](EXPLICATION_SCRIPT_SETUP.md) for more details.
-
-#### `fix` - Re-run Post-Migration Fixes
-
-Re-apply post-migration fixes on an already migrated project (e.g. fix `indexStore.fetchUser` → `userStore.fetchUser`):
-
-```bash
-vue-ai-migrator fix <project-path> [options]
-```
-
-**Options:**
-
-- `--typescript`: Enable TypeScript mode for fixes
-- `-v, --verbose`: Show detailed fix information
-- `--validate`: Run `npm run build` after fixes to verify the project compiles (exits with error code if build fails)
-
-**Examples:**
-
-```bash
-vue-ai-migrator fix ./my-project
-vue-ai-migrator fix ./my-project --typescript -v
-vue-ai-migrator fix ./my-project --validate
-```
-
-**Output:**
-
-```
-✔ Post-migration fixes completed!
-✓ 5 file(s) fixed out of 14 processed
-```
-
-#### `migrate` - Output
-
-```
-✔ Migration completed!
-
-✓ Migration results:
-  - Files analyzed: 2
-  - Files modified: 1
-  - Transformations applied: 2
-```
-
-#### `plan` - Generate Migration Plan
-
-Generate a prioritized migration plan with AI assistance:
-
-```bash
-vue-ai-migrator plan <project-path> [options]
-```
-
-**Options:**
-
-- `-k, --ai-api-key <key>`: API key for AI
-- `-p, --provider <provider>`: AI provider - default: openai
-- `-o, --output <file>`: Output file for the plan - default: migration-plan.json
-
-**Example:**
-
-```bash
-export OPENAI_API_KEY=sk-your-key
-vue-ai-migrator plan ./my-project --output migration-plan.json
-```
-
-#### `report` - View Migration Report
-
-View or export a migration report:
-
-```bash
-vue-ai-migrator report <report-file> [options]
-```
-
-**Options:**
-
-- `-f, --format <format>`: Output format (json, markdown, console) - default: console
-- `-o, --output <file>`: Output file (for json/markdown formats)
-
-**Example:**
-
-```bash
-vue-ai-migrator report migration-report.json --format markdown --output report.md
-```
-
-#### `rollback` - Rollback Migration
-
-Rollback a migration (restore files from backup):
-
-```bash
-vue-ai-migrator rollback <project-path> [options]
-```
-
-**Options:**
-
-- `-a, --all`: Rollback all files
-- `-f, --file <file>`: Rollback a specific file
-- `--install`: Automatically reinstall dependencies after rollback
-- `--clean-install`: Remove `node_modules` and `package-lock.json` before reinstalling dependencies (recommended after rollback)
-
-**Examples:**
-
-```bash
-# Rollback all files
-vue-ai-migrator rollback ./my-project
-
-# Rollback specific file
-vue-ai-migrator rollback ./my-project --file src/components/MyComponent.vue
-
-# Rollback and automatically reinstall dependencies
-vue-ai-migrator rollback ./my-project --all --install
-
-# Rollback with clean install (removes node_modules first)
-vue-ai-migrator rollback ./my-project --all --clean-install
-```
-
-### Programmatic API
-
-```typescript
-import { migrate, UnifiedAIService } from "vue-ai-migrator";
-
-// Basic usage with environment variable
-await migrate({
-  projectPath: "./my-project",
-  aiApiKey: process.env.OPENAI_API_KEY,
-  aiProvider: "openai",
-  dryRun: false,
-  enableTypeScript: true, // Enable TypeScript type annotations
-});
-
-// Advanced usage with custom AI service
-const aiService = new UnifiedAIService({
-  provider: "openai",
-  apiKey: process.env.OPENAI_API_KEY || "sk-your-key",
-  model: "gpt-4-turbo-preview",
-  temperature: 0.3,
-});
-```
+| Command | Description |
+|---------|-------------|
+| `analyze <path>` | Detect migration needs, use `--classify` for complexity |
+| `migrate <path>` | Full migration; `--dry-run` to preview |
+| `fix <path>` | Re-apply post-migration fixes |
+| `rollback <path>` | Restore from backup |
+| `plan <path>` | AI migration plan (requires `--ai`) |
+
+→ [Cheat sheet](./docs/CHEATSHEET.md) — all options • [USAGE.md](./USAGE.md) — Programmatic API & configuration
 
 ## 🔧 Configuration
 
-### API Keys Setup (Optional - Only for AI Mode)
+**API keys** (optional, for `--ai` mode): `export OPENAI_API_KEY=sk-...` → [API_KEYS.md](./API_KEYS.md)
 
-> 🆓 **Free mode works without any API key!** Only set this up if you want to use AI assistance.
-
-**Recommended**: Use environment variables for API keys:
-
-```bash
-# OpenAI
-export OPENAI_API_KEY=sk-your-api-key-here
-
-# Mistral (coming soon)
-export MISTRAL_API_KEY=your-mistral-key
-
-# Anthropic/Claude (coming soon)
-export ANTHROPIC_API_KEY=sk-ant-your-key
-```
-
-**Then enable AI mode:**
-
-```bash
-vue-ai-migrator migrate ./my-project --ai
-```
-
-See [API_KEYS.md](./API_KEYS.md) for detailed configuration guide.
-
-### Configuration File
-
-Create a `vue-migrator.config.js` file at the root of your project:
-
-```javascript
-module.exports = {
-  // Glob patterns to ignore during migration
-  ignore: ["node_modules/**", "dist/**", "build/**", "**/*.spec.js"],
-
-  // Custom store paths (for store analyzer)
-  storePaths: ["src/store", "src/stores", "store"],
-  // Custom filter/router paths (override detection)
-  filterPaths: ["src/filters", "src/util/filters"],
-  routerPaths: ["src/router", "src/routes"],
-
-  // Fixer rules to disable (by rule id)
-  fixerRulesDisable: ["detail-view-store-rule"],
-  // Custom fixer rules (paths relative to project root - module exports FixRule or FixRule[])
-  // fixerRulesAdd: ["./my-custom-rules.js"],
-
-  // Fixer rules to enable only (if set, only these run)
-  // fixerRulesEnable: ["missing-vue-imports", "fix-store-member-mismatch"],
-
-  // Use AI for complex cases
-  useAI: true,
-
-  // AI Configuration
-  ai: {
-    provider: "openai", // 'openai' | 'mistral' | 'claude' | 'anthropic'
-    apiKey: process.env.OPENAI_API_KEY,
-    model: "gpt-4-turbo-preview", // Optional
-    temperature: 0.3, // Optional
-  },
-
-  // Transformations to apply
-  transformations: ["composition-api", "global-api", "router", "vuex-pinia"],
-};
-```
+**Config file** `vue-migrator.config.js`: ignore patterns, custom rules, store paths → [USAGE.md](./USAGE.md#-advanced-configuration)
 
 ## 📋 Supported Transformations
 
-### Script Transformations
+**Script**: Options API → Composition API, script setup, Vuex → Pinia, Router 3 → 4, filters, mixins, directives, async components, render functions.
 
-- ✅ **Options API → Composition API**: Complete transformation using AST manipulation
-  - `data()` → `ref()`/`reactive()`
-  - `computed` → `computed()` (including writable computed with get/set)
-  - `methods` → functions
-  - `props` → `defineProps()`
-  - `emits` → `defineEmits()`
-  - `watch` → `watch()`
-  - `provide`/`inject` → `provide()`/`inject()` (Composition API)
-  - Lifecycle hooks → `onMounted()`, `onUpdated()`, etc.
-  - `$listeners` → `$attrs`
-- ✅ **Script Setup Conversion**: Automatic conversion to `<script setup lang="ts">` format
-- ✅ **Global API changes**: `new Vue()` → `createApp()`, Vue.component() → app.component()
-- ✅ **Router Vue 2 → Vue Router 4**: `new Router()` → `createRouter()`, mode → history functions
-- ✅ **Vuex → Pinia**: Complete store transformation using Setup Store syntax
-  - `new Vuex.Store()` → `defineStore('name', () => { ... })`
-  - `state` → `ref()`/`reactive()` declarations
-  - `getters` → `computed()` declarations
-  - `mutations` → functions (direct state mutation)
-  - `actions` → functions
-  - Automatic import updates (`vuex` → `pinia`)
-  - See [Vuex → Pinia Example](#vuex--pinia-migration) below
-- ✅ **Filters removal**: Automatic filter detection and removal from script
-- ✅ **Event API changes**: `$on`/`$off`/`$once` detection and marking for AI
-- ✅ **v-model changes**: Props/emits transformation (value → modelValue, input → update:modelValue); v-model proxy (computed get/set + emit) supported
-- ✅ **Mixins**: Detection and transformation of mixins
-- ✅ **Plugins**: Vue.use() → app.use() transformation
-- ✅ **Directives**: Full custom directive support
-  - Hook renames: bind→beforeMount, inserted→mounted, update/componentUpdated→updated, unbind→unmounted
-  - `vnode.context` → `binding.instance`
-  - `Vue.directive()` → `app.directive()` (global API)
-  - Warning when `binding.expression` is used (removed in Vue 3; use `binding.value`)
-- ✅ **Provide/Inject**: Full transformation to `provide()`/`inject()` (Composition API, including default factory)
-- ✅ **Async Components**: `() => import('./Comp.vue')` → `defineAsyncComponent(() => import('./Comp.vue'))`
-  - Handles both arrow functions and object component definitions
-- ✅ **Render Functions**: Vue 3 Render Function API (Composition API / script setup compatible)
-  - **Render-only .vue** → converted to **script setup + template**
-  - `render(h)` → `render()` with `import { h } from 'vue'` (for .js/.ts with render)
-  - `h('ComponentName')` → `h(resolveComponent('ComponentName'))` for registered components
-  - VNode props flattening: `attrs`, `domProps`, `on`, `staticClass`, `staticStyle` → Vue 3 flat structure
+**Template**: Slots, filters, v-model, v-for/v-if, transitions, $listeners → $attrs.
 
-### Template Transformations
-
-- ✅ **Scoped slots**: `slot-scope` → `v-slot` syntax, `this.$scopedSlots` → `useSlots()`
-- ✅ **Named slots**: `slot="name"` → `v-slot:name` (any attribute order)
-- ✅ **Filters in templates**: `{{ value | filter }}` → `{{ filter(value) }}`
-- ✅ **$listeners**: `$listeners` → `$attrs` in templates
-- ✅ **Functional components**: Full transformation
-  - Removal of `functional` attribute and `{ functional: true }`
-  - `props` → `$props`, `attrs` → `$attrs`, removal of `listeners`
-- ✅ **v-for template key**: Moves `key` from inner element to `<template>` in `v-for`
-  - Example: `<template v-for="..."><div :key="id">` → `<template v-for="..." :key="id"><div>`
-- ✅ **v-else-if key**: Automatically adds `key` to `v-else-if` when `v-if` has one
-- ✅ **v-for/v-if precedence**: Wraps elements with both `v-for` and `v-if` in `<template>`
-  - Example: `<div v-for="..." v-if="...">` → `<template v-for="..."><div v-if="...">`
-- ✅ **transition-group root**: Ensures `<transition-group>` has single root element
-  - Example: `<transition-group><div></div><div></div>` → `<transition-group><div><div></div><div></div></div>`
-- ✅ **v-bind.sync**: `v-bind:prop.sync` / `:prop.sync` → `v-model:prop`
-- ✅ **Keyboard modifiers**: Keycodes (`.112`, `.13`) → key names (`.f1`, `.enter`)
-- ✅ **@hook lifecycle**: `@hook:mounted` → `@vnode-mounted`
-- ✅ **Custom Elements Interop**: `is` attribute on non-`<component>` tags
-  - Restricted elements (tr, li, option, etc.): `is="x"` → `is="vue:x"`
-  - Other elements: `<div is="x">` → `<component is="x">`
-- ✅ **Vue.config.ignoredElements**: → `app.config.compilerOptions.isCustomElement` (plugins + post-fixer)
-- ✅ **.native modifier**: Removed (events in `$attrs` in Vue 3)
-- ✅ **Transition classes** (in `<style>`): `.v-enter` → `.v-enter-from`, `.v-leave` → `.v-leave-from`
-- ✅ **Vue.set / $set**: Replaced with direct assignment (`obj[key] = value`)
-- ✅ **Vue.delete / $delete**: Replaced with `delete obj[key]`
-- ⚠️ **ref with v-for**: Detection and warning (Vue 3 behavior changed)
-
-### File Support
-
-- ✅ **Vue SFC**: Full `.vue` file parsing (template, script, style sections)
-- ✅ **JavaScript/TypeScript**: `.js`, `.ts`, `.jsx`, `.tsx` files
+→ [Complete list](./docs/TRANSFORMATIONS.md)
 
 ## 📘 TypeScript Support
 
-The `--typescript` flag enables automatic TypeScript type annotations in migrated code, **including components and stores**.
-
-### Features
-
-- ✅ **Typed refs**: `const count = ref<number>(0)` (in components and stores)
-- ✅ **Typed computed**: `const double = computed<number>(() => count.value * 2)` (in components and stores)
-- ✅ **Typed props**: Generates interfaces for complex props
-- ✅ **Typed functions**: Function parameters and return types (in components, mutations, and actions)
-- ✅ **Intelligent type inference**: Infers types from Vue 2 code patterns
-- ✅ **Script setup conversion**: Automatically converts to `<script setup lang="ts">`
-- ✅ **Store types**: Pinia stores get TypeScript types for state properties, getters, mutations, and actions
-
-### Example
-
-**Before (Vue 2):**
-
-```vue
-<script>
-export default {
-  props: {
-    count: Number,
-    message: String,
-  },
-  data() {
-    return {
-      items: [],
-    };
-  },
-  computed: {
-    total() {
-      return this.items.length;
-    },
-  },
-  methods: {
-    addItem(item) {
-      this.items.push(item);
-    },
-  },
-};
-</script>
-```
-
-**After (Vue 3 with `--typescript`):**
-
-```vue
-<script setup lang="ts">
-import { ref, computed } from "vue";
-
-interface Props {
-  count: number;
-  message: string;
-}
-
-const props = defineProps<Props>();
-
-const items = ref<unknown[]>([]);
-
-const total = computed<number>(() => items.value.length);
-
-function addItem(item: unknown): void {
-  items.value.push(item);
-}
-</script>
-```
-
-### Usage
+`--typescript` adds type annotations: typed refs, computed, props, functions. Generates `<script setup lang="ts">` and Pinia store types.
 
 ```bash
-# Enable TypeScript types in migration
 vue-ai-migrator migrate ./my-project --typescript
-
-# With programmatic API
-import { migrate } from 'vue-ai-migrator';
-
-await migrate({
-  projectPath: './my-project',
-  enableTypeScript: true,
-});
 ```
 
-## 🔄 Vuex → Pinia Migration
+→ [USAGE.md](./USAGE.md) for full examples
 
-vue-ai-migrator automatically migrates Vuex stores to Pinia Setup Stores.
+## 🔄 Vuex → Pinia
 
-### Example
-
-**Before (Vuex):**
-
-```javascript
-import Vue from "vue";
-import Vuex from "vuex";
-
-Vue.use(Vuex);
-
-export default new Vuex.Store({
-  state: {
-    count: 0,
-    user: {
-      name: "John",
-      email: "john@example.com",
-    },
-  },
-  getters: {
-    doubleCount: (state) => state.count * 2,
-    userName: (state) => state.user.name,
-  },
-  mutations: {
-    INCREMENT(state) {
-      state.count++;
-    },
-    SET_USER(state, user) {
-      state.user = user;
-    },
-  },
-  actions: {
-    increment({ commit }) {
-      commit("INCREMENT");
-    },
-    async fetchUser({ commit }, userId) {
-      const user = await api.getUser(userId);
-      commit("SET_USER", user);
-      return user;
-    },
-  },
-});
-```
-
-**After (Pinia Setup Store):**
-
-```typescript
-import { defineStore } from "pinia";
-import { ref, computed } from "vue";
-
-export const useStore = defineStore("store", () => {
-  // State
-  const count = ref(0);
-  const user = ref({
-    name: "John",
-    email: "john@example.com",
-  });
-
-  // Getters
-  const doubleCount = computed(() => count.value * 2);
-  const userName = computed(() => user.value.name);
-
-  // Mutations (now functions)
-  function INCREMENT() {
-    count.value++;
-  }
-
-  function SET_USER(newUser: typeof user.value) {
-    user.value = newUser;
-  }
-
-  // Actions
-  function increment() {
-    INCREMENT();
-  }
-
-  async function fetchUser(userId: string) {
-    const fetchedUser = await api.getUser(userId);
-    SET_USER(fetchedUser);
-    return fetchedUser;
-  }
-
-  return {
-    count,
-    user,
-    doubleCount,
-    userName,
-    increment,
-    fetchUser,
-  };
-});
-```
-
-### Migration Command
+Converts `new Vuex.Store()` to Pinia Setup Store (`defineStore` + `ref`/`computed`).
 
 ```bash
-# Migrate all Vuex stores in the project
-vue-ai-migrator migrate ./my-project --transformations "vuex-pinia"
-
-# Migrate only stores directory
-vue-ai-migrator migrate ./src/store --transformations "vuex-pinia"
-
-# With TypeScript types
-vue-ai-migrator migrate ./src/store --transformations "vuex-pinia" --typescript
+vue-ai-migrator migrate ./src/store --transformations vuex-pinia --typescript
 ```
 
-**Note:** The `--typescript` flag works for both components and stores. When migrating stores with `--typescript`, you'll get:
+→ [docs/TRANSFORMATIONS.md](./docs/TRANSFORMATIONS.md) | [USAGE.md](./USAGE.md) for full Vuex→Pinia example
 
-- Typed refs: `const count = ref<number>(0)`
-- Typed computed: `const doubleCount = computed<number>(() => count.value * 2)`
-- Typed functions: `function INCREMENT(): void { ... }`
-- Typed parameters: `function SET_MESSAGE(message: string): void { ... }`
+## 🤖 AI Integration
 
-````
-
-## 🤖 AI Integration (Optional)
-
-> 🆓 **Note**: AI is **optional**! The tool works great in free mode (AST only). Use AI only for complex cases.
-
-For complex cases that codemods cannot handle automatically, vue-ai-migrator can use AI to:
-
-- Analyze code context
-- Propose intelligent refactorings
-- Generate equivalent Vue 3 code
-- Detect custom patterns
-- Classify migration complexity
-- Generate tests for migrated code
-- Explain migration changes
-
-**Features:**
-
-- **Provider choice**: Set via `--provider` or env `VUE_AI_MIGRATOR_AI_PROVIDER` (default: `openai`). **Currently only OpenAI is implemented**; Mistral/Claude planned for a future release—no vendor lock-in by design.
-- **Multi-provider support**: OpenAI (today), Mistral, Claude (extensible, coming)
-- **Advanced AI Agent**: Intelligent migration assistance with explanation and test generation
-- **Classification**: Automatic complexity analysis (Simple/Medium/Complex)
-- Automatic retry with exponential backoff (2-3 attempts)
-- Input validation and size limits
-- API key validation
-
-**When to use AI:**
-
-- ✅ Complex custom patterns not covered by AST
-- ✅ Legacy code with unusual structures
-- ✅ Need for automatic test generation
-- ✅ Want AI-powered migration planning
-
-**When free mode is enough:**
-
-- ✅ Standard Vue 2 projects
-- ✅ Projects using common patterns
-- ✅ Most components and stores
-- ✅ ~83% of migration cases (covered by AST)
+Optional: `--ai` for complex cases. OpenAI today; Mistral/Claude planned. → [API_KEYS.md](./API_KEYS.md)
 
 ## ⚡ Performance
 
-vue-ai-migrator is **highly performant** compared to competitors:
-
-- **Parallel processing**: Files are processed in batches (10-20 files) for optimal performance
-- **~10x faster** than sequential tools, **~60x faster** with caching (incremental mode)
-- **Vue SFC parsing**: Efficient parsing of `.vue` files with separate template/script/style processing
-- **Smart caching**: SHA256 hash-based cache with persistent storage avoids reprocessing unchanged files
-- **Incremental mode**: Process only changed files for faster subsequent migrations
-- **Dynamic batch sizing**: Automatically adjusts batch size based on project size (10-20 files/batch)
-- **AST-based transformations**: Direct AST manipulation (no string operations) for better performance
-- **Early validation**: Validates before processing to avoid unnecessary work
-- **Zero runtime overhead**: Unlike compatibility layers, generates native Vue 3 code
-
-**Performance Benchmarks:**
-
-- Small projects (< 50 files): < 5 seconds
-- Medium projects (50-200 files): 5-30 seconds
-- Large projects (200-1000 files): 30-120 seconds (first run), < 10 seconds (incremental)
-- Very large projects (1000+ files): 2-5 minutes (first run), < 30 seconds (incremental)
-
-### Performance Comparison
-
-```mermaid
-graph LR
-    A[Sequential Processing] -->|~100s| B[100 files]
-    C[Parallel Processing] -->|~10s| B
-    D[With Cache] -->|~1.5s| B
-
-    style A fill:#EF4444,stroke:#333,stroke-width:2px,color:#fff
-    style C fill:#F59E0B,stroke:#333,stroke-width:2px,color:#fff
-    style D fill:#10B981,stroke:#333,stroke-width:2px,color:#fff
-```
-
-See [PERFORMANCE.md](./PERFORMANCE.md) for detailed performance analysis and comparison with competitors.
+Parallel processing, smart caching, ~10x faster than sequential. Incremental mode: < 10s for 200 files. → [docs/internal/PERFORMANCE_OPTIMIZATION.md](./docs/internal/PERFORMANCE_OPTIMIZATION.md)
 
 ## 🛡️ Safety & Rollback
 
-### Safety Features
+Backups, dry-run, validation, rollback. Tested on [vue-hackernews-2.0](https://github.com/vuejs/vue-hackernews-2.0). AI code validated against AST.
 
-- **Automatic backups**: All modified files are backed up before changes
-- **Dry-run mode**: Test migrations without modifying files (with diff visualization)
-- **Post-migration validation**: Automatic validation of migrated code
-- **Rollback system**: Easy rollback with `vue-ai-migrator rollback` command
-
-### Validation
-
-- ✅ **Syntax validation**: Post-migration syntax checking
-- ✅ **AST validation**: Ensures generated code is valid
-- ✅ **Type checking**: TypeScript validation (when applicable)
-- ✅ **Tested on real projects**: [vue-hackernews-2.0](https://github.com/vuejs/vue-hackernews-2.0) — full migration, build and runtime verified
-
-### Hallucination Management
-
-- ✅ **Strict rules**: Official Vue 3 migration guide rules enforced
-- ✅ **AST validation**: All AI-generated code validated against AST
-- ✅ **No execution**: Generated code never executed without validation
-
-### Security
-
-- ✅ **No code execution**: Generated code validated but not executed
-- ✅ **Path validation**: Protection against path traversal
-- ✅ **Input validation**: Size limits and format checking
-
-### Explicability
-
-- ✅ **Diff visualization**: Clear before/after comparison
-- ✅ **Change justification**: AI explains why changes were made
-- ✅ **Migration reports**: Comprehensive reports with statistics and suggestions
-
-### Rollback
-
-If something goes wrong, you can rollback the migration:
-
-```bash
-# Rollback all files
-vue-ai-migrator rollback ./my-vue2-project
-
-# Rollback a specific file
-vue-ai-migrator rollback ./my-vue2-project --file src/components/MyComponent.vue
-```
+`vue-ai-migrator rollback ./my-project` — [Cheat sheet](./docs/CHEATSHEET.md)
 
 ## 🧪 Testing
 
@@ -1137,13 +304,13 @@ vue-ai-migrator rollback ./my-vue2-project --file src/components/MyComponent.vue
 
 ## 📚 Documentation
 
-- **[Usage Guide](./USAGE.md)** — Complete usage instructions and examples
-- **[Migration Guide](./docs/MIGRATION_GUIDE.md)** — Vue 2.7 support, compat build vs full migration, workflow
-- **[Troubleshooting](./docs/TROUBLESHOOTING.md)** — Common errors and solutions
-- **[API Keys](./API_KEYS.md)** — Configure AI provider API keys
-- **[Roadmap](./docs/ROADMAP.md)** — Future development plans
-- **[Changelog](./CHANGELOG.md)** — Version history and changes
-- **More** — See [docs/README.md](./docs/README.md) for full documentation layout.
+- **[USAGE.md](./USAGE.md)** — Full guide, Programmatic API
+- **[Cheat Sheet](./docs/CHEATSHEET.md)** — CLI commands & options
+- **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — Workflow diagrams
+- **[docs/TRANSFORMATIONS.md](./docs/TRANSFORMATIONS.md)** — Complete transformations list
+- **[docs/MIGRATION_GUIDE.md](./docs/MIGRATION_GUIDE.md)** — Vue 2.7, compat build
+- **[docs/TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md)** — Common errors
+- **[API_KEYS.md](./API_KEYS.md)** — AI providers
 
 ## 🗺️ Roadmap
 
