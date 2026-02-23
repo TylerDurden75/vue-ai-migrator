@@ -5,7 +5,7 @@
 import * as path from "path";
 import { injectGlobalComposableRule } from "../inject-global-composable";
 
-const projectRoot = path.join(__dirname, "../../../../../../../test-project");
+const projectRoot = path.join(__dirname, "../../../__fixtures__/provide-inject-project");
 
 // Build mock map: useUser -> mixinData, isUserAdmin, getUserDisplayName
 function makeMap() {

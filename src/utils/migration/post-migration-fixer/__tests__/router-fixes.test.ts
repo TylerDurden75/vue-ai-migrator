@@ -165,13 +165,13 @@ app.mixin({
 app.mount("#app");`;
 
       const result = await vue2GlobalApiRule.apply(
-        "test-project/src/main.js",
+        "provide-inject-project/src/main.js",
         content,
         {
           enableTypeScript: false,
           isVueFile: false,
           scriptContent: content,
-          projectRoot: path.join(__dirname, "../../../../../test-project"),
+          projectRoot: path.join(__dirname, "../__fixtures__/provide-inject-project"),
         }
       );
 
