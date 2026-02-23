@@ -6,6 +6,11 @@
 import jscodeshift from "jscodeshift";
 import type { MixinAnalysis } from "./mixin-analyzer";
 import { mixinNameToComposable } from "./composable-gen";
+import {
+  getStoreMethodMap,
+  getStoreConfigForModule,
+  getMainStoreInfo,
+} from "../post-migration-fixer/utils/store-analysis-cache";
 
 export interface MixinTransformResult {
   success: boolean;
@@ -16,6 +21,53 @@ export interface MixinTransformResult {
 
 function findProperty(properties: any[] | undefined, name: string) {
   return properties?.find((prop: any) => prop.key && prop.key.name === name);
+}
+
+/** Check if node is this.$store.getters.XXX */
+function isStoreGettersChain(node: any): { getter: string } | null {
+  if (
+    node?.type !== "MemberExpression" ||
+    node?.property?.type !== "Identifier"
+  ) {
+    return null;
+  }
+  const obj = node.object;
+  if (obj?.type !== "MemberExpression" || obj?.property?.name !== "getters") {
+    return null;
+  }
+  const storeObj = obj.object;
+  if (
+    storeObj?.type !== "MemberExpression" ||
+    storeObj?.property?.name !== "$store" ||
+    storeObj?.object?.type !== "ThisExpression"
+  ) {
+    return null;
+  }
+  return { getter: node.property.name };
+}
+
+function transformStoreRefs(
+  j: any,
+  root: any,
+  storeReplacements: Map<string, { storeVar: string; storeName: string; importPath: string }>
+) {
+  root.find(j.MemberExpression).forEach((path: any) => {
+    const info = isStoreGettersChain(path.value);
+    if (!info) return;
+    const config = storeReplacements.get(info.getter) ?? storeReplacements.get("__default") ?? {
+      storeVar: "userStore",
+      storeName: "useUserStore",
+      importPath: "@/store/modules/user",
+    };
+    const { storeVar } = config;
+    // Pinia store properties are refs - use .value to get the unwrapped value
+    j(path).replaceWith(
+      j.memberExpression(
+        j.memberExpression(j.identifier(storeVar), j.identifier(info.getter)),
+        j.identifier("value")
+      )
+    );
+  });
 }
 
 function transformThisRefs(
@@ -55,11 +107,12 @@ function transformThisRefs(
  * Transform mixin content to composable using AST.
  * Returns generated code or fallback to stub generation if parsing fails.
  */
-export function transformMixinToComposableAST(
+export async function transformMixinToComposableAST(
   content: string,
   mixinName: string,
-  enableTypeScript: boolean
-): MixinTransformResult {
+  enableTypeScript: boolean,
+  projectRoot?: string
+): Promise<MixinTransformResult> {
   const analysis: MixinAnalysis = {
     dataKeys: [],
     methodNames: [],
@@ -76,6 +129,7 @@ export function transformMixinToComposableAST(
   }
 
   const imports = new Set<string>();
+  const storeImportLines: Array<{ storeName: string; importPath: string }> = [];
   const statements: any[] = [];
   const dataProps = new Set<string>();
   const computedProps = new Set<string>();
@@ -84,6 +138,7 @@ export function transformMixinToComposableAST(
 
   let componentObj: any = null;
 
+  // export default { ... } or export default defineComponent({ ... })
   root.find(j.ExportDefaultDeclaration).forEach((path: any) => {
     const decl = path.value.declaration;
     if (decl?.type === "ObjectExpression") {
@@ -97,11 +152,72 @@ export function transformMixinToComposableAST(
     }
   });
 
+  // export const X = { ... } (named export)
+  if (!componentObj) {
+    root.find(j.ExportNamedDeclaration).forEach((path: any) => {
+      const decl = path.value.declaration;
+      if (decl?.type === "VariableDeclaration" && decl.declarations?.length > 0) {
+        const init = decl.declarations[0]?.init;
+        if (init?.type === "ObjectExpression") {
+          componentObj = init;
+        } else if (
+          init?.type === "CallExpression" &&
+          init.callee?.name === "defineComponent" &&
+          init.arguments?.[0]?.type === "ObjectExpression"
+        ) {
+          componentObj = init.arguments[0];
+        }
+      }
+    });
+  }
+
   if (!componentObj?.properties) {
-    return { success: false, analysis, error: "No export default object" };
+    return { success: false, analysis, error: "No export default or named mixin object" };
   }
 
   const props = componentObj.properties;
+
+  // Resolve store getters used in mixin (this.$store.getters.XXX → useUserStore)
+  const storeReplacements = new Map<
+    string,
+    { storeVar: string; storeName: string; importPath: string }
+  >();
+  if (projectRoot) {
+    try {
+      const storeMethodMap = await getStoreMethodMap(projectRoot);
+      const mainStoreInfo = await getMainStoreInfo(projectRoot);
+      const gettersUsed = new Set<string>();
+      j(componentObj).find(j.MemberExpression).forEach((path: any) => {
+        const info = isStoreGettersChain(path.value);
+        if (info) gettersUsed.add(info.getter);
+      });
+      for (const getter of gettersUsed) {
+        const module = storeMethodMap[getter] ?? "user";
+        const config = getStoreConfigForModule(module, mainStoreInfo);
+        storeReplacements.set(getter, config);
+      }
+    } catch {
+      /* store analysis may fail */
+    }
+  }
+
+  // Store init statements (before other statements)
+  const storeStatements: any[] = [];
+  const seenStores = new Set<string>();
+  for (const [, config] of storeReplacements) {
+    if (seenStores.has(config.storeVar)) continue;
+    seenStores.add(config.storeVar);
+    storeImportLines.push({ storeName: config.storeName, importPath: config.importPath });
+    storeStatements.push(
+      j.variableDeclaration("const", [
+        j.variableDeclarator(
+          j.identifier(config.storeVar),
+          j.callExpression(j.identifier(config.storeName), [])
+        ),
+      ])
+    );
+  }
+  statements.push(...storeStatements);
 
   // Inject (first - may be used in data/computed/methods)
   const injectProp = findProperty(props, "inject");
@@ -214,8 +330,11 @@ export function transformMixinToComposableAST(
       let arrowArg: any;
 
       if (compBody?.type === "BlockStatement" && compBody.body) {
-        const ret = compBody.body.find((s: any) => s?.type === "ReturnStatement");
-        arrowArg = ret?.argument ?? j.identifier("undefined");
+        // Use full body when multiple statements (e.g. const x = this.$store...; return x)
+        const hasMultipleStmts = compBody.body.filter((s: any) => s?.type).length > 1;
+        arrowArg = hasMultipleStmts
+          ? compBody
+          : (compBody.body.find((s: any) => s?.type === "ReturnStatement")?.argument ?? j.identifier("undefined"));
       } else {
         arrowArg = compBody ?? j.identifier("undefined");
       }
@@ -441,9 +560,13 @@ export function transformMixinToComposableAST(
     return { success: false, analysis, error: "No data/methods/computed/inject/watch/lifecycle found" };
   }
 
-  // Transform this. references in all statements
+  // Transform this.$store.getters.XXX and this.xxx references in all statements
   const tempProgram = j.program([...statements]);
-  transformThisRefs(j, j(tempProgram), dataProps, computedProps, methodNames, injectNames);
+  const tempCollection = j(tempProgram);
+  if (storeReplacements.size > 0) {
+    transformStoreRefs(j, tempCollection, storeReplacements);
+  }
+  transformThisRefs(j, tempCollection, dataProps, computedProps, methodNames, injectNames);
   const transformedStatements = tempProgram.body;
 
   const composableName = mixinNameToComposable(mixinName);
@@ -467,10 +590,16 @@ export function transformMixinToComposableAST(
   const importSpecs = Array.from(imports).map((name) =>
     j.importSpecifier(j.identifier(name), j.identifier(name))
   );
-  const importDecl = j.importDeclaration(importSpecs, j.literal("vue"));
+  const vueImportDecl = j.importDeclaration(importSpecs, j.literal("vue"));
+  const storeImportDecls = storeImportLines.map(({ storeName, importPath }) =>
+    j.importDeclaration(
+      [j.importSpecifier(j.identifier(storeName), j.identifier(storeName))],
+      j.literal(importPath)
+    )
+  );
   const exportDecl = j.exportNamedDeclaration(fnDecl, []);
 
-  const outProgram = j.program([importDecl, exportDecl]);
+  const outProgram = j.program([...storeImportDecls, vueImportDecl, exportDecl]);
 
   let code: string;
   try {

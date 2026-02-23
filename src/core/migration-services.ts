@@ -23,6 +23,7 @@ export type RollbackManagerLike = {
   loadBackups(): Promise<void>;
   hasBackup(filePath: string): boolean;
   getBackupCount(): number;
+  getCreatedFilesCount?(): number;
   saveBackups(): Promise<void>;
 };
 

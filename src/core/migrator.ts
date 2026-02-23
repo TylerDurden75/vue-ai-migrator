@@ -385,11 +385,12 @@ export async function migrate(
 
           if (!dryRun) {
             await fs.mkdir(composablesDir, { recursive: true });
-            const composableContent = generateComposableFromMixin(
+            const composableContent = await generateComposableFromMixin(
               mixinBaseName,
               analysis,
               options.enableTypeScript || false,
-              content
+              content,
+              projectPath
             );
             await fs.writeFile(composablePath, composableContent, "utf-8");
             rollbackManager?.addCreatedFile(composablePath);
@@ -950,17 +951,21 @@ export async function migrate(
           result.warnings.push(...packageResult.warnings);
         }
 
-        // Create .nvmrc for Node 18+ when Vue 2 → 3 (enables `nvm use`)
+        // Create or update .nvmrc for Node 20 when Vue 2 → 3 (Vite requires Node 18+, Node 20 avoids crypto errors)
         const migratedToVue3 = packageResult.changes.some(
           (c) => c.includes("engines.node") || c.includes("Vue:")
         );
         if (migratedToVue3) {
-          const nvmrcResult = await ensureNvmrc(projectPath, dryRun, "18");
-          if (nvmrcResult.created && rollbackManager && !dryRun) {
+          const nvmrcResult = await ensureNvmrc(projectPath, dryRun, "20");
+          if (rollbackManager && !dryRun && nvmrcResult.created) {
             rollbackManager.addCreatedFile(
               path.join(projectPath, ".nvmrc")
             );
-            result.warnings.push("Created .nvmrc (Node 18 for Vue 3 + Vite)");
+          }
+          if (nvmrcResult.created) {
+            result.warnings.push("Created .nvmrc (Node 20 for Vue 3 + Vite)");
+          } else if (nvmrcResult.updated) {
+            result.warnings.push("Updated .nvmrc to Node 20 (previous version incompatible with Vite)");
           }
         }
 
@@ -1359,8 +1364,12 @@ export async function migrate(
       await cacheManager.saveCache();
     }
 
-    // Save backups if rollback is enabled
-    if (rollbackManager && !dryRun && result.filesModified > 0) {
+    // Save backups if rollback is enabled (persist when files modified OR created e.g. composables)
+    if (
+      rollbackManager &&
+      !dryRun &&
+      (result.filesModified > 0 || (rollbackManager.getCreatedFilesCount?.() ?? 0) > 0)
+    ) {
       await rollbackManager.saveBackups();
     }
 

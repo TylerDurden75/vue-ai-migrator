@@ -14,11 +14,25 @@ function toPascalCase(str: string): string {
   return camel.charAt(0).toUpperCase() + camel.slice(1);
 }
 
-/** Derive composable name from mixin file name: userMixin -> useUserMixin, user-mixin -> useUserMixin */
+/** Derive composable name from mixin file name: userMixin -> useUser, authMixin -> useAuth (no Mixin suffix) */
 export function mixinNameToComposable(mixinName: string): string {
-  const base = mixinName.replace(/\.(js|ts)$/, "");
+  let base = mixinName.replace(/\.(js|ts)$/, "");
+  // Remove "Mixin" suffix - we generate composables, not mixins
+  if (base.endsWith("Mixin")) {
+    base = base.slice(0, -5);
+  }
   const pascal = toPascalCase(base);
   return `use${pascal}`;
+}
+
+/** Derive provide key from composable name: useUser -> user, useUserMixin -> user (for app.provide) */
+export function composableNameToProvideKey(composableName: string): string {
+  if (composableName.startsWith("use") && composableName.length > 3) {
+    let rest = composableName.slice(3);
+    if (rest.endsWith("Mixin")) rest = rest.slice(0, -5);
+    return rest.charAt(0).toLowerCase() + rest.slice(1);
+  }
+  return composableName;
 }
 
 export function getMixinReturnKeys(analysis: MixinAnalysis): string[] {
@@ -80,17 +94,19 @@ function generateStubComposable(
  * Generate composable content from mixin source.
  * Tries AST-based migration first (real logic); falls back to stubs on parse failure.
  */
-export function generateComposableFromMixin(
+export async function generateComposableFromMixin(
   mixinName: string,
   analysis: MixinAnalysis,
   enableTypeScript: boolean = false,
-  mixinSource?: string
-): string {
+  mixinSource?: string,
+  projectRoot?: string
+): Promise<string> {
   if (mixinSource) {
-    const astResult = transformMixinToComposableAST(
+    const astResult = await transformMixinToComposableAST(
       mixinSource,
       mixinName,
-      enableTypeScript
+      enableTypeScript,
+      projectRoot
     );
     if (astResult.success && astResult.code) {
       return astResult.code;

@@ -9,6 +9,7 @@ export {
 } from "./mixin-analyzer";
 export {
   mixinNameToComposable,
+  composableNameToProvideKey,
   getMixinReturnKeys,
   generateComposableFromMixin,
 } from "./composable-gen";

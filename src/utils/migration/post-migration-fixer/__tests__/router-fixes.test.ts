@@ -2,6 +2,7 @@
  * Unit tests for router fixes rules
  */
 
+import * as path from "path";
 import { createAppSyntaxRule, vue2GlobalApiRule, createWebHistoryRule, catchAllRouteRule, routerDefineAsyncComponentUnwrapRule } from "../rules/router/router-fixes";
 
 describe("Router Fixes Rules", () => {
@@ -148,6 +149,36 @@ app.mount("#app");`;
       expect(result.fixed).toBe(true);
       expect(result.content).toContain("// Vue.use(Vuex)");
       expect(result.content).toContain("Vuex removed - use Pinia");
+    });
+
+    it("should replace app.mixin wrapper with app.provide (provide/inject pattern)", async () => {
+      const content = `import { createApp } from "vue";
+import App from "./App.vue";
+import { useUserMixin } from "@/composables/useUserMixin";
+
+const app = createApp(App);
+app.mixin({
+  setup() {
+    return useUserMixin();
+  },
+});
+app.mount("#app");`;
+
+      const result = await vue2GlobalApiRule.apply(
+        "test-project/src/main.js",
+        content,
+        {
+          enableTypeScript: false,
+          isVueFile: false,
+          scriptContent: content,
+          projectRoot: path.join(__dirname, "../../../../../test-project"),
+        }
+      );
+
+      expect(result.fixed).toBe(true);
+      // Prefers useUser over useUserMixin when useUser.ts exists (new naming)
+      expect(result.content).toMatch(/app\.provide\s*\(\s*['"]user['"]\s*,\s*useUser\(\)\s*\)/);
+      expect(result.content).not.toContain("app.mixin");
     });
 
     it("should comment out Vue.use(VueRouter) - not needed in Vue 3", async () => {

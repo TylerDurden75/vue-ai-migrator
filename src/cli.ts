@@ -430,15 +430,26 @@ program
       // Show helpful next steps
       if (result.filesModified > 0) {
         console.log(chalk.blue("\n📝 Next steps:"));
-        console.log(chalk.gray("  1. Review the migrated code"));
+        const needsNode20 = result.warnings?.some(
+          (w) =>
+            w.includes("engines.node") ||
+            w.includes(".nvmrc") ||
+            w.includes("Node 20"),
+        );
+        if (needsNode20) {
+          console.log(
+            chalk.yellow("  1. Switch to Node 20: nvm use (required for Vite)"),
+          );
+        }
+        console.log(chalk.gray(`  ${needsNode20 ? "2" : "1"}. Review the migrated code`));
         if (!options.install && !options.cleanInstall) {
-          console.log(chalk.gray("  2. Install dependencies: npm install"));
-          console.log(chalk.gray("  3. Verify build: npm run build"));
-          console.log(chalk.gray("  4. Run tests: npm test"));
+          console.log(chalk.gray(`  ${needsNode20 ? "3" : "2"}. Install dependencies: npm install`));
+          console.log(chalk.gray(`  ${needsNode20 ? "4" : "3"}. Verify build: npm run build`));
+          console.log(chalk.gray(`  ${needsNode20 ? "5" : "4"}. Run tests: npm test`));
         } else {
-          console.log(chalk.green("  2. ✓ Dependencies already installed"));
-          console.log(chalk.gray("  3. Verify build: npm run build"));
-          console.log(chalk.gray("  4. Run tests: npm test"));
+          console.log(chalk.green(`  ${needsNode20 ? "3" : "2"}. ✓ Dependencies already installed`));
+          console.log(chalk.gray(`  ${needsNode20 ? "4" : "3"}. Verify build: npm run build`));
+          console.log(chalk.gray(`  ${needsNode20 ? "5" : "4"}. Run tests: npm test`));
         }
         if (result.classification && result.classification.complex > 0 && (!shouldUseAI || !apiKey)) {
           console.log(chalk.yellow("  5. Consider using --ai for complex files if needed"));

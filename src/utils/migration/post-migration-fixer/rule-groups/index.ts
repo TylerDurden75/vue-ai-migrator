@@ -27,6 +27,7 @@ import {
 } from "../rules/vue-script/vue-structure-fixes";
 
 // Router
+import { mainFileOrganizationRule } from "../rules/main/main-file-organization";
 import {
   createAppSyntaxRule,
   createRouterConflictRule,
@@ -235,6 +236,7 @@ export const coreRules: FixRule[] = [
   ssrContextToInjectRule,
   createRouterConflictRule,
   vue2GlobalApiRule,
+  mainFileOrganizationRule,
   createWebHistoryRule,
   routerGuardPiniaRule,
   catchAllRouteRule,

@@ -34,7 +34,7 @@ describe("mixinsToComposablesRule", () => {
     const map = makeMap([
       {
         mixinPath: "src/mixins/userMixin.js",
-        composableName: "useUserMixin",
+        composableName: "useUser",
         returnKeys: ["name", "load"],
       },
     ]);
@@ -54,8 +54,8 @@ export default {
     );
 
     expect(result.fixed).toBe(true);
-    expect(result.content).toContain("import { useUserMixin } from '@/composables/useUserMixin'");
-    expect(result.content).toContain("const { name, load } = useUserMixin();");
+    expect(result.content).toContain("import { useUser } from '@/composables/useUser'");
+    expect(result.content).toContain("const { name, load } = useUser();");
     expect(result.content).not.toContain("mixins: [userMixin]");
     expect(result.content).not.toContain("mixins:");
   });
@@ -64,7 +64,7 @@ export default {
     const map = makeMap([
       {
         mixinPath: "src/mixins/userMixin.js",
-        composableName: "useUserMixin",
+        composableName: "useUser",
         returnKeys: [],
       },
     ]);
@@ -83,9 +83,9 @@ export default {
       isVueFile: true,
     });
 
-    // Heuristic: userMixin matches useUserMixin
+    // Heuristic: userMixin matches useUser
     expect(result.fixed).toBe(true);
-    expect(result.content).toContain("useUserMixin");
+    expect(result.content).toContain("useUser");
   });
 
   it("does not apply when no mixins in map", async () => {

@@ -61,7 +61,7 @@ export async function migratePackageJson(
         result.modified = true;
       }
 
-      // Vue 3 + Vite recommend Node 18+. Set engines.node for npm/CI/README.
+      // Vue 3 + Vite require Node 18+. Node 20 recommended (Vite 5+ crypto API, Vite 6).
       const recommendedNode = ">=18.0.0";
       if (!packageJson.engines) packageJson.engines = {};
       packageJson.engines.node = recommendedNode;
@@ -332,23 +332,35 @@ export async function migratePackageJson(
 }
 
 /**
- * Create .nvmrc with Node 18 if it doesn't exist (Vue 3 + Vite recommend Node 18+).
+ * Create or update .nvmrc for Node 20 (Vue 3 + Vite require Node 18+, Vite 5/6 work best with Node 20).
+ * Overwrites existing .nvmrc if it specifies Node < 18 (avoids crypto.getRandomValues errors).
  * Enables `nvm use` to pick the correct version automatically.
  */
 export async function ensureNvmrc(
   projectPath: string,
   dryRun: boolean = false,
-  nodeVersion: string = "18"
-): Promise<{ created: boolean }> {
+  nodeVersion: string = "20"
+): Promise<{ created: boolean; updated: boolean }> {
   const nvmrcPath = path.join(projectPath, ".nvmrc");
+  const targetVersion = nodeVersion;
+
   try {
-    await fs.access(nvmrcPath);
-    return { created: false }; // Already exists, don't overwrite
+    const existing = await fs.readFile(nvmrcPath, "utf-8");
+    const match = existing.trim().match(/^v?(\d+)/);
+    const existingVersion = match ? parseInt(match[1], 10) : NaN;
+    // Overwrite if existing version is < 18 (Node 16 causes crypto.getRandomValues errors with Vite)
+    if (!Number.isNaN(existingVersion) && existingVersion < 18) {
+      if (!dryRun) {
+        await fs.writeFile(nvmrcPath, `${targetVersion}\n`, "utf-8");
+      }
+      return { created: false, updated: true };
+    }
+    return { created: false, updated: false };
   } catch {
     if (!dryRun) {
-      await fs.writeFile(nvmrcPath, `${nodeVersion}\n`, "utf-8");
+      await fs.writeFile(nvmrcPath, `${targetVersion}\n`, "utf-8");
     }
-    return { created: true };
+    return { created: true, updated: false };
   }
 }
 

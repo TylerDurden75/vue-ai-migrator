@@ -7,6 +7,10 @@ import * as path from "path";
 import type { FixRule, FixContext, FixRuleResult } from "../../types";
 import { getCachedRegex } from "../../utils/regex-cache";
 import { getStoreMethodMap, getStoreConfigForModule } from "../../utils/store-analysis-cache";
+import {
+  mixinNameToComposable,
+  composableNameToProvideKey,
+} from "../../../mixins-to-composables";
 
 /**
  * Fix: createApp syntax in main.js/main.ts
@@ -172,14 +176,13 @@ export const vue2GlobalApiRule: FixRule = {
     const projectRoot = _context.projectRoot;
 
     // Vue.filter → comment out (filters removed in Vue 3 - use functions/computed instead)
-    const filterPattern = /Vue\.filter\s*\([^)]+\)\s*;?/g;
-    let filterMatch;
-    while ((filterMatch = filterPattern.exec(fixed)) !== null) {
-      const match = filterMatch[0];
-      fixed = fixed.replace(match, `// ${match} // Filters removed in Vue 3 - use functions/computed instead`);
+    // Only process lines that are NOT already commented (avoid re-commenting on each run)
+    const filterPattern = /^(\s*)(Vue\.filter\s*\([^)]+\)\s*;?)\s*$/gm;
+    fixed = fixed.replace(filterPattern, (_, indent, match) => {
       result.fixed = true;
       result.fixes.push("Commented out Vue.filter() - filters removed in Vue 3");
-    }
+      return `${indent}// ${match} // Filters removed in Vue 3 - use functions/computed instead`;
+    });
 
     // Vue.directive() → app.directive()
     if (fixed.includes("Vue.directive")) {
@@ -220,7 +223,41 @@ export const vue2GlobalApiRule: FixRule = {
       return match.replace(/Vue\.use\s*\(/, "app.use(");
     });
 
-    // Remove or comment app.mixin(mixinName) when mixin was transformed to composable or not imported
+    // Replace app.mixin({ setup() { return useXxx(); } }) with app.provide (wrapper from previous migration)
+    const appMixinWrapperPattern =
+      /app\.mixin\s*\(\s*\{\s*setup\s*\(\s*\)\s*\{[\s\S]*?return\s+(\w+)\s*\(\s*\)\s*;[\s\S]*?\},?\s*\}\s*\)\s*;?\s*\n?/g;
+    let wrapperTargetComposable: string | null = null; // Track for import update
+    fixed = fixed.replace(appMixinWrapperPattern, (_, composableName) => {
+      const provideKey = composableNameToProvideKey(composableName);
+      // Prefer useUser over useUserMixin when both exist (new composable naming)
+      let targetComposable = composableName;
+      if (projectRoot && composableName.endsWith("Mixin")) {
+        const newName = composableName.replace(/Mixin$/, "");
+        const newPath = path.join(projectRoot, "src", "composables", `${newName}.ts`);
+        if (fsSync.existsSync(newPath)) {
+          targetComposable = newName;
+          wrapperTargetComposable = newName; // Update import from old to new
+        }
+      }
+      result.fixed = true;
+      result.fixes.push(`Replaced app.mixin wrapper with app.provide('${provideKey}')`);
+      return `app.provide('${provideKey}', ${targetComposable}());\n`;
+    });
+    // When we switched to useUser, update the import too
+    if (wrapperTargetComposable) {
+      const oldComposable = wrapperTargetComposable + "Mixin";
+      const importPattern = new RegExp(
+        `import\\s+\\{\\s*${oldComposable}\\s*\\}\\s+from\\s+['"]([^'"]*composables/${oldComposable})['"]\\s*;?`,
+        "g"
+      );
+      fixed = fixed.replace(importPattern, () => {
+        result.fixed = true;
+        result.fixes.push(`Updated import to ${wrapperTargetComposable}`);
+        return `import { ${wrapperTargetComposable} } from "@/composables/${wrapperTargetComposable}";`;
+      });
+    }
+
+    // Replace app.mixin(mixinName) with app.provide when mixin was transformed to composable
     const appMixinPattern = /app\.mixin\((\w+)\)\s*;?\s*\n?/g;
     const appMixinMatches: Array<{ match: string; mixinName: string; index: number }> = [];
     let appMixinMatch;
@@ -245,80 +282,110 @@ export const vue2GlobalApiRule: FixRule = {
         result.fixes.push(`Removed app.mixin(${mixinName}) - mixin not imported`);
         continue;
       }
-      const baseName = mixinName.replace(/Mixin$/i, "");
-      const composableName = `use${baseName.charAt(0).toUpperCase() + baseName.slice(1)}`;
+      const composableName = mixinNameToComposable(mixinName);
       let composableExists = false;
       let willBeTransformed = false;
       if (projectRoot) {
         try {
-          const mixinPathTs = path.join(projectRoot, "src", "mixins", `${mixinName}.ts`);
-          const mixinPathJs = path.join(projectRoot, "src", "mixins", `${mixinName}.js`);
-          if (fsSync.existsSync(mixinPathTs) || fsSync.existsSync(mixinPathJs)) {
-            const mixinContent = fsSync.existsSync(mixinPathTs)
-              ? fsSync.readFileSync(mixinPathTs, "utf-8")
-              : fsSync.readFileSync(mixinPathJs, "utf-8");
-            composableExists =
-              mixinContent.includes(`export const ${composableName}`) ||
-              mixinContent.includes(`export function ${composableName}`);
-            willBeTransformed =
-              !composableExists &&
-              mixinContent.includes("data()") &&
-              mixinContent.includes(`export const ${mixinName}`);
+          const composableFilePath = path.join(projectRoot, "src", "composables", `${composableName}.ts`);
+          composableExists = fsSync.existsSync(composableFilePath);
+          if (!composableExists) {
+            const mixinPathTs = path.join(projectRoot, "src", "mixins", `${mixinName}.ts`);
+            const mixinPathJs = path.join(projectRoot, "src", "mixins", `${mixinName}.js`);
+            if (fsSync.existsSync(mixinPathTs) || fsSync.existsSync(mixinPathJs)) {
+              const mixinContent = fsSync.existsSync(mixinPathTs)
+                ? fsSync.readFileSync(mixinPathTs, "utf-8")
+                : fsSync.readFileSync(mixinPathJs, "utf-8");
+              willBeTransformed =
+                mixinContent.includes("data()") &&
+                (mixinContent.includes(`export const ${mixinName}`) || mixinContent.includes(`export default`));
+            }
           }
         } catch {
           // ignore
         }
       }
-      if (composableExists || willBeTransformed) {
+      // Only replace when composable file exists - otherwise we'd reference a non-existent module
+      if (composableExists) {
+        const idx = fixed.indexOf(match);
+        if (idx >= 0) {
+          // Replace with app.provide() - coherent naming: useUserMixin -> 'user' (not 'userMixin')
+          const provideKey = composableNameToProvideKey(composableName);
+          fixed =
+            fixed.slice(0, idx) +
+            `app.provide('${provideKey}', ${composableName}());\n` +
+            fixed.slice(idx + match.length);
+          result.fixed = true;
+          result.fixes.push(`Replaced app.mixin(${mixinName}) with app.provide('${provideKey}')`);
+        }
+      } else if (willBeTransformed) {
+        // Composable wasn't created (e.g. mixin uses Vuex) - comment out to avoid ReferenceError
         const idx = fixed.indexOf(match);
         if (idx >= 0) {
           fixed =
             fixed.slice(0, idx) +
-            `// ${match} // Mixin transformed to composable ${composableName} - use it in components instead` +
+            `// ${match.trim()} // Mixin → composable ${composableName} - add ${composableName}() in components that need it` +
             fixed.slice(idx + match.length);
           result.fixed = true;
-          result.fixes.push(`Commented out app.mixin(${mixinName}) - use composable ${composableName}`);
+          result.fixes.push(`Commented out app.mixin(${mixinName}) - use composable ${composableName} in components`);
         }
       }
     }
 
-    // Comment out mixin import when composable exists
-    const mixinImportPattern = /import\s+\{\s*(\w+)\s*\}\s+from\s+['"]\.\/mixins\/(\w+)['"]\s*;?\n?/g;
+    // Replace mixin import with composable import when mixin was transformed to composable
+    const mixinImportPatterns = [
+      /import\s+\{\s*(\w+)\s*\}\s+from\s+['"]([^'"]*mixins\/[^'"]+)['"]\s*;?\n?/g,
+      /import\s+(\w+)\s+from\s+['"]([^'"]*mixins\/[^'"]+)['"]\s*;?\n?/g,
+    ];
     const mixinImports: Array<{ match: string; mixinName: string; index: number }> = [];
-    let importMatch;
-    while ((importMatch = mixinImportPattern.exec(fixed)) !== null) {
-      mixinImports.push({ match: importMatch[0], mixinName: importMatch[1], index: importMatch.index });
+    for (const pattern of mixinImportPatterns) {
+      let importMatch;
+      while ((importMatch = pattern.exec(fixed)) !== null) {
+        mixinImports.push({ match: importMatch[0], mixinName: importMatch[1], index: importMatch.index });
+      }
     }
     for (const { match, mixinName } of mixinImports.reverse()) {
-      const composableName = `use${mixinName.charAt(0).toUpperCase() + mixinName.slice(1)}`;
-      let composableExists = false;
-      let willBeTransformed = false;
+      const composableName = mixinNameToComposable(mixinName);
+      const composablePath = "@/composables/" + composableName;
+      let composableExistsImport = false;
+      let mixinQualifies = false;
       if (projectRoot) {
         try {
-          const mixinPathTs = path.join(projectRoot, "src", "mixins", `${mixinName}.ts`);
-          const mixinPathJs = path.join(projectRoot, "src", "mixins", `${mixinName}.js`);
-          if (fsSync.existsSync(mixinPathTs) || fsSync.existsSync(mixinPathJs)) {
-            const mixinContent = fsSync.existsSync(mixinPathTs)
-              ? fsSync.readFileSync(mixinPathTs, "utf-8")
-              : fsSync.readFileSync(mixinPathJs, "utf-8");
-            composableExists =
-              mixinContent.includes(`export const ${composableName}`) ||
-              mixinContent.includes(`export function ${composableName}`);
-            willBeTransformed =
-              !composableExists &&
-              mixinContent.includes("data()") &&
-              mixinContent.includes(`export const ${mixinName}`);
+          const composableFilePath = path.join(projectRoot, "src", "composables", `${composableName}.ts`);
+          composableExistsImport = fsSync.existsSync(composableFilePath);
+          if (!composableExistsImport) {
+            const mixinPathTs = path.join(projectRoot, "src", "mixins", `${mixinName}.ts`);
+            const mixinPathJs = path.join(projectRoot, "src", "mixins", `${mixinName}.js`);
+            if (fsSync.existsSync(mixinPathTs) || fsSync.existsSync(mixinPathJs)) {
+              const mixinContent = fsSync.existsSync(mixinPathTs)
+                ? fsSync.readFileSync(mixinPathTs, "utf-8")
+                : fsSync.readFileSync(mixinPathJs, "utf-8");
+              mixinQualifies =
+                mixinContent.includes("data()") &&
+                (mixinContent.includes(`export const ${mixinName}`) || mixinContent.includes(`export default`));
+            }
           }
         } catch {
           // ignore
         }
       }
-      if (composableExists || willBeTransformed) {
+      if (composableExistsImport) {
         const idx = fixed.indexOf(match);
         if (idx >= 0) {
           fixed =
             fixed.slice(0, idx) +
-            `// ${match} // Use composable ${composableName} instead\n` +
+            `import { ${composableName} } from '${composablePath}';\n` +
+            fixed.slice(idx + match.length);
+          result.fixed = true;
+          result.fixes.push(`Replaced mixin import with composable ${composableName}`);
+        }
+      } else if (mixinQualifies) {
+        // Composable not created (mixin uses Vuex etc.) - comment out to avoid ReferenceError
+        const idx = fixed.indexOf(match);
+        if (idx >= 0) {
+          fixed =
+            fixed.slice(0, idx) +
+            `// ${match.trim()} // Use composable ${composableName} when available\n` +
             fixed.slice(idx + match.length);
           result.fixed = true;
           result.fixes.push(`Commented out mixin import - use composable ${composableName}`);
@@ -333,7 +400,10 @@ export const vue2GlobalApiRule: FixRule = {
       const createAppEnd = createAppIndex + createAppMatch[0].length;
 
       const appApiPatterns = [
-        /app\.mixin\([^)]+\)\s*;?/g,
+        // app.provide('key', value) - e.g. app.provide('userMixin', useUserMixin())
+        /app\.provide\s*\([^;]+\)\s*;?/g,
+        // app.mixin: support both simple (app.mixin(x)) and wrapper (app.mixin({ setup() { return useXxx(); } }))
+        /app\.mixin\((?:\w+\)|[\s\S]*?\}\s*\))\s*;?/g,
         /app\.directive\([^)]+\)\s*;?/g,
         /app\.component\([^)]+\)\s*;?/g,
         /app\.config\.globalProperties\.\w+\s*=\s*\w+\s*;?/g,

@@ -130,26 +130,27 @@ export class RollbackManager {
   }
 
   /**
-   * Remove generated test files and empty __tests__ directories
+   * Remove generated files (tests, composables, etc.) and empty parent directories
    */
-  private async cleanupCreatedTestFiles(_projectRoot: string): Promise<void> {
+  private async cleanupCreatedFiles(_projectRoot: string): Promise<void> {
     const toDelete = [...this.createdFiles];
-    const testsDirs = new Set<string>();
+    const dirsToClean = new Set<string>();
 
     for (const filePath of toDelete) {
       try {
         await fs.unlink(filePath);
         const dir = path.dirname(filePath);
-        if (dir.endsWith("__tests__")) {
-          testsDirs.add(dir);
+        // Track composables/ and __tests__ dirs for cleanup when empty
+        if (dir.endsWith("composables") || dir.endsWith("__tests__")) {
+          dirsToClean.add(dir);
         }
       } catch {
         // File might not exist, ignore
       }
     }
 
-    // Remove empty __tests__ directories (bottom-up so parents can be removed)
-    const sorted = [...testsDirs].sort((a, b) => b.length - a.length);
+    // Remove empty directories (bottom-up so parents can be removed)
+    const sorted = [...dirsToClean].sort((a, b) => b.length - a.length);
     for (const dir of sorted) {
       try {
         const entries = await fs.readdir(dir);
@@ -222,8 +223,16 @@ export class RollbackManager {
         // Ignore errors reading directory
       }
 
-      // Remove generated test files and empty __tests__ directories
-      await this.cleanupCreatedTestFiles(projectRoot);
+      // Remove generated files (tests, composables) and empty directories
+      await this.cleanupCreatedFiles(projectRoot);
+
+      // Fallback: remove src/composables if it still exists (Vue 2 has no composables, rollback = restore Vue 2)
+      const composablesDir = path.join(projectRoot, "src", "composables");
+      try {
+        await fs.rm(composablesDir, { recursive: true });
+      } catch {
+        // Dir doesn't exist or already removed
+      }
 
       // Restore index.html from root to public/ if it was migrated (Vue 2 convention)
       const rootIndexHtml = path.join(projectRoot, "index.html");
@@ -553,9 +562,19 @@ export class RollbackManager {
 
       if (this.createdFiles.size > 0) {
         const createdFilesPath = path.join(this.backupDir, CREATED_FILES_KEY);
+        const projectRoot = path.dirname(this.backupDir);
+        const projectBaseName = path.basename(projectRoot);
+        const toSave = [...this.createdFiles].map((p) => {
+          if (path.isAbsolute(p)) return p;
+          const toResolve =
+            p.startsWith(`${projectBaseName}/`) || p.startsWith(`${projectBaseName}\\`)
+              ? p.slice(projectBaseName.length + 1)
+              : p;
+          return path.resolve(projectRoot, toResolve);
+        });
         await fs.writeFile(
           createdFilesPath,
-          JSON.stringify([...this.createdFiles], null, 2)
+          JSON.stringify(toSave, null, 2)
         );
       }
     } catch (error) {
@@ -631,10 +650,20 @@ export class RollbackManager {
       try {
         const createdContent = await fs.readFile(createdFilesPath, "utf-8");
         const created = JSON.parse(createdContent) as string[];
+        const projectBaseName = path.basename(projectRoot);
         for (const p of created) {
-          const normalized = path.isAbsolute(p)
-            ? path.normalize(p)
-            : path.normalize(path.resolve(projectRoot, p));
+          let normalized: string;
+          if (path.isAbsolute(p)) {
+            normalized = path.normalize(p);
+          } else {
+            // Stored path may be "projectName/src/..." (relative to parent dir)
+            // projectRoot is the project dir, so avoid doubling: strip leading "projectName/" if present
+            const toResolve =
+              p.startsWith(`${projectBaseName}/`) || p.startsWith(`${projectBaseName}\\`)
+                ? p.slice(projectBaseName.length + 1)
+                : p;
+            normalized = path.normalize(path.resolve(projectRoot, toResolve));
+          }
           this.createdFiles.add(normalized);
         }
       } catch {
@@ -663,6 +692,13 @@ export class RollbackManager {
    */
   getBackupCount(): number {
     return this.backups.size;
+  }
+
+  /**
+   * Get count of files created during migration (to persist on save even with no backups)
+   */
+  getCreatedFilesCount(): number {
+    return this.createdFiles.size;
   }
 
   /**

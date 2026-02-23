@@ -67,9 +67,10 @@ export function looksLikeMixin(content: string, _filePath: string): boolean {
   const hasInject = /inject\s*:\s*(\[|\{)/.test(content);
   const hasWatch = /watch\s*:\s*\{/.test(content);
   const hasLifecycle = /(?:beforeCreate|created|mounted|beforeDestroy|destroyed)\s*\(/.test(content);
-  const hasExport = /export\s+default\s+(\{|defineComponent)/.test(content);
+  const hasDefaultExport = /export\s+default\s+(\{|defineComponent)/.test(content);
+  const hasNamedExport = /export\s+(const|let|var)\s+\w+\s*=\s*(\{|defineComponent)/.test(content);
   return (
-    hasExport &&
+    (hasDefaultExport || hasNamedExport) &&
     (hasData || hasMethods || hasComputed || hasInject || hasWatch || hasLifecycle)
   );
 }
